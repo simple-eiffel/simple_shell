@@ -457,11 +457,15 @@ static LRESULT CALLBACK shell_strip_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_LBUTTONDOWN: {
             int x = (int)(short)LOWORD(l), y = (int)(short)HIWORD(l);
             shell_push(21, x, y, 0);
-            /* drag anywhere except the transport corner (right 90px, top 26px) */
-            if (!(y < 26 && x > 0)) { }
-            if (y >= 26 || x < 1) {
-                ReleaseCapture();
-                SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            {
+                RECT cr;
+                GetClientRect(h, &cr);
+                /* drag anywhere except the transport corner (right 90px of
+                   the top 26px), whose presses stay clicks for Eiffel */
+                if (!(y < 26 && x >= cr.right - 90)) {
+                    ReleaseCapture();
+                    SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                }
             }
             return 0;
         }

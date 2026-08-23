@@ -166,7 +166,8 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case WM_KEYDOWN:
             if (w == VK_LEFT || w == VK_RIGHT || w == VK_HOME || w == VK_END ||
-                w == VK_DELETE || w == VK_UP || w == VK_DOWN)
+                w == VK_DELETE || w == VK_UP || w == VK_DOWN ||
+                w == VK_PRIOR || w == VK_NEXT)
                 shell_push(4, (int)w, 0, 0);
             return 0;
         case WM_TIMER:

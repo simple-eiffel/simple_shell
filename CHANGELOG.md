@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.2.0 — 2026-08-23
+
+### Added
+- VK_PRIOR / VK_NEXT (PgUp/PgDn) cross the C keydown filter - the
+  toolkit's lists and grids stride by pages now.
+
 ## 1.1.0 — 2026-08-23
 
 ### Added

@@ -34,7 +34,7 @@
 <div class="wrap">
   <h1>simple_shell<span class="dot">.</span></h1>
   <p class="tag">The Win32 platform shell: window, pump, clipboard, keys, speller, desktop — so nothing above it ever declares an external again.</p>
-  <span class="pill ok">tests 8/8</span><span class="pill">Eiffel 25.02</span><span class="pill">void-safe · SCOOP · DBC</span><span class="pill">Win32</span>
+  <span class="pill ok">tests 9/9</span><span class="pill">Eiffel 25.02</span><span class="pill">void-safe · SCOOP · DBC</span><span class="pill">Win32</span>
 
   <h2>Where it sits</h2>
   <pre class="diagram">        application
@@ -70,7 +70,7 @@ end</pre>
   <h2>The classes</h2>
   <table>
     <tr><th>Class</th><th>Service</th></tr>
-    <tr><td><code>SHELL_WINDOW</code></td><td><em>(deferred)</em> native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock</td></tr>
+    <tr><td><code>SHELL_WINDOW</code></td><td><em>(deferred)</em> native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, cursor shaping</td></tr>
     <tr><td><code>SHELL_KEYS</code></td><td>physical Shift / Ctrl / Alt state</td></tr>
     <tr><td><code>SHELL_CLIPBOARD</code></td><td>Unicode text get/set, history-manager retry, 1M-character headroom</td></tr>
     <tr><td><code>SHELL_SPELLER</code></td><td>Windows inbox ISpellChecker: ranges + suggestions; degrades, never fails</td></tr>

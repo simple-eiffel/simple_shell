@@ -88,6 +88,26 @@ feature -- Measurement
 			Result := shell_shift_down = 1
 		end
 
+feature -- Cursor
+
+	Cursor_arrow: INTEGER = 0
+	Cursor_ibeam: INTEGER = 1
+	Cursor_hand: INTEGER = 2
+	Cursor_size_we: INTEGER = 3
+	Cursor_size_ns: INTEGER = 4
+	Cursor_cross: INTEGER = 5
+	Cursor_wait: INTEGER = 6
+
+	set_cursor_kind (a_kind: INTEGER)
+			-- The pointer shape while over this window's client area;
+			-- applied by the native WM_SETCURSOR path, so it costs
+			-- nothing until the pointer actually moves.
+		require
+			known: a_kind >= Cursor_arrow and a_kind <= Cursor_wait
+		do
+			c_set_cursor (a_kind)
+		end
+
 feature -- Element change
 
 	set_backdrop_rgb (a_rgb: INTEGER)
@@ -248,6 +268,13 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_text_menu($a_cut, $a_copy, $a_paste, $a_sel);"
+		end
+
+	c_set_cursor (a_kind: INTEGER)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_set_cursor_kind($a_kind);"
 		end
 
 end

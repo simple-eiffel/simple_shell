@@ -1,6 +1,6 @@
 # simple_shell
 
-![tests](https://img.shields.io/badge/tests-8%2F8-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
+![tests](https://img.shields.io/badge/tests-9%2F9-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
 
 **The Win32 platform shell for the Simple Eiffel ecosystem.** One header of
 battle-tested C, seven Eiffel classes, no rendering opinion. This is the
@@ -55,7 +55,7 @@ end
 
 | Class | Service |
 |---|---|
-| `SHELL_WINDOW` | *(deferred)* native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock |
+| `SHELL_WINDOW` | *(deferred)* native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, **cursor shaping** (`set_cursor_kind`: arrow, I-beam, hand, resize, cross, wait) |
 | `SHELL_KEYS` | physical Shift / Ctrl / Alt state |
 | `SHELL_CLIPBOARD` | Unicode text get/set with history-manager retry; 1M-character headroom |
 | `SHELL_SPELLER` | Windows inbox `ISpellChecker` (COM): misspelling ranges + suggestions; degrades to no findings, never to failure |
@@ -72,7 +72,7 @@ end
 
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
-offscreen, the spell checker is consulted. 8/8 under full DBC.
+offscreen, the spell checker is consulted. 9/9 under full DBC.
 
 ## Design rules it obeys
 

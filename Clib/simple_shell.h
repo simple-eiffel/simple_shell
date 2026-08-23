@@ -26,6 +26,12 @@ static int  s_shell_q[SHELL_QCAP][4];
 static wchar_t s_shell_drops[16384];
 static int  s_shell_drops_len = 0;
 static int  s_shell_qhead = 0, s_shell_qtail = 0;
+static int  s_shell_cursor = 0;
+
+/* 0 arrow, 1 ibeam, 2 hand, 3 size-we, 4 size-ns, 5 cross, 6 wait */
+static void shell_set_cursor_kind(int k) {
+    s_shell_cursor = k;
+}
 
 
 static void shell_push(int t, int a, int b, int c) {
@@ -173,6 +179,21 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             shell_push(6, 0, 0, 0);
             return 0;
         }
+        case WM_SETCURSOR:
+            if (LOWORD(l) == HTCLIENT) {
+                LPCWSTR c = (LPCWSTR)IDC_ARROW;
+                switch (s_shell_cursor) {
+                    case 1: c = (LPCWSTR)IDC_IBEAM; break;
+                    case 2: c = (LPCWSTR)IDC_HAND; break;
+                    case 3: c = (LPCWSTR)IDC_SIZEWE; break;
+                    case 4: c = (LPCWSTR)IDC_SIZENS; break;
+                    case 5: c = (LPCWSTR)IDC_CROSS; break;
+                    case 6: c = (LPCWSTR)IDC_WAIT; break;
+                }
+                SetCursor(LoadCursorW(0, c));
+                return 1;
+            }
+            break;
         case WM_DESTROY:
             KillTimer(h, 1);
             PostQuitMessage(0);

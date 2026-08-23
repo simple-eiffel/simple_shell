@@ -116,6 +116,16 @@ feature -- Window services
 				not w.add_font ("no_such_font_file.ttf"))
 		end
 
+	test_cursor_kind_accepted
+		local
+			w: SHELL_TEST_WINDOW
+		do
+			create w
+			w.set_cursor_kind (w.Cursor_ibeam)
+			w.set_cursor_kind (w.Cursor_arrow)
+			assert ("cursor kinds accepted across the range", True)
+		end
+
 	test_strip_window_really_creates
 			-- A REAL topmost tool window, parked far offscreen and
 			-- never activated - creation, DC, release, hide.

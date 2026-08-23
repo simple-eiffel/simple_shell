@@ -2,6 +2,14 @@
 
 All notable changes to simple_shell.
 
+## 1.1.0 — 2026-08-23
+
+### Added
+- Cursor shaping: `SHELL_WINDOW.set_cursor_kind` (arrow, I-beam, hand,
+  size-we, size-ns, cross, wait) applied through the native
+  WM_SETCURSOR path - zero cost until the pointer moves. Constants on
+  the class; contract-guarded. Assault grows to 9/9.
+
 ## 1.0.0 — 2026-08-23
 
 ### Added (the carve)

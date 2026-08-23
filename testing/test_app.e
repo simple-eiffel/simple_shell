@@ -28,6 +28,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_clipboard_roundtrip, "clipboard_roundtrip")
 			run_test (agent t.test_speller_degrades_never_fails, "speller_degrades_never_fails")
 			run_test (agent t.test_window_services_without_pump, "window_services_without_pump")
+			run_test (agent t.test_cursor_kind_accepted, "cursor_kind_accepted")
 			run_test (agent t.test_strip_window_really_creates, "strip_window_really_creates")
 
 			print ("%N========================%N")

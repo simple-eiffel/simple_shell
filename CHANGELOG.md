@@ -2,6 +2,22 @@
 
 All notable changes to simple_shell.
 
+## 1.3.0 — 2026-08-23
+
+### Added
+- SHELL_OUTLINES: up to four click-through coloured rectangle FRAMES
+  on the desktop (topmost, toolwindow, never activated, input-
+  transparent; the visible shape is a frame REGION, so the middle is
+  not part of the window). Born for simple_ocr_capture's region
+  outlines. Assault grows to 10/10 (real frame shown, reshown,
+  hidden, offscreen).
+
+### Changed
+- Overlay events renumbered 31..35 (were 12..16): the old numbers
+  collided with the main window's triple/move/leave/wheel/resize
+  types the moment one pump served both windows - the OCR capture
+  rebuild found it on day one.
+
 ## 1.2.0 — 2026-08-23
 
 ### Added

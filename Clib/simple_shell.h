@@ -15,7 +15,9 @@
 
 /* Event queue: [type, a, b, c] per slot.
    main window:  2 lbutton(x,y) | 3 char(code) | 4 keydown(vk) | 6 expose | 7 tick
-   overlay:     12 move(x,y)   | 13 down(x,y) | 14 up(x,y)    | 15 cancel | 16 expose */
+   overlay:     31 move(x,y)   | 32 down(x,y) | 33 up(x,y)    | 34 cancel | 35 expose
+   (overlay renumbered 2026-08-23: 12..16 collided with the main window's
+   triple/move/leave/wheel/resize types once one pump served both) */
 #define SHELL_QCAP 1024
 static HWND s_shell_hwnd = 0;
 static LONG s_shell_dbl_time = 0;
@@ -206,33 +208,91 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
 static LRESULT CALLBACK shell_overlay_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
         case WM_MOUSEMOVE:
-            shell_push(12, (int)(short)LOWORD(l), (int)(short)HIWORD(l), 0);
+            shell_push(31, (int)(short)LOWORD(l), (int)(short)HIWORD(l), 0);
             return 0;
         case WM_LBUTTONDOWN:
             SetCapture(h);
-            shell_push(13, (int)(short)LOWORD(l), (int)(short)HIWORD(l), 0);
+            shell_push(32, (int)(short)LOWORD(l), (int)(short)HIWORD(l), 0);
             return 0;
         case WM_LBUTTONUP:
             ReleaseCapture();
-            shell_push(14, (int)(short)LOWORD(l), (int)(short)HIWORD(l), 0);
+            shell_push(33, (int)(short)LOWORD(l), (int)(short)HIWORD(l), 0);
             return 0;
         case WM_KEYDOWN:
-            if (w == VK_ESCAPE) shell_push(15, 0, 0, 0);
+            if (w == VK_ESCAPE) shell_push(34, 0, 0, 0);
             return 0;
         case WM_RBUTTONDOWN:
-            shell_push(15, 0, 0, 0);
+            shell_push(34, 0, 0, 0);
             return 0;
         case WM_PAINT: {
             PAINTSTRUCT ps;
             BeginPaint(h, &ps);
             EndPaint(h, &ps);
-            shell_push(16, 0, 0, 0);
+            shell_push(35, 0, 0, 0);
             return 0;
         }
         case WM_ERASEBKGND:
             return 1;
     }
     return DefWindowProcW(h, m, w, l);
+}
+
+/* ---- outline frames: up to four click-through coloured rectangle
+   FRAMES on the desktop (topmost, no taskbar, no activation, no input -
+   WS_EX_TRANSPARENT). One window per slot; the visible shape is a frame
+   region (outer rect minus inner rect) so the middle is not even part
+   of the window. The pure-route replacement for four-popup-edges. ---- */
+static HWND   s_shell_outline[4]       = {0, 0, 0, 0};
+static HBRUSH s_shell_outline_brush[4] = {0, 0, 0, 0};
+
+static LRESULT CALLBACK shell_outline_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps;
+        RECT r;
+        int slot = (int)GetWindowLongPtrW(h, GWLP_USERDATA);
+        HDC dc = BeginPaint(h, &ps);
+        GetClientRect(h, &r);
+        if (slot >= 0 && slot < 4 && s_shell_outline_brush[slot])
+            FillRect(dc, &r, s_shell_outline_brush[slot]);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if (m == WM_ERASEBKGND) return 1;
+    return DefWindowProcW(h, m, w, l);
+}
+
+static void shell_outline_show(int slot, int x, int y, int w, int h, int thick, int rgb) {
+    WNDCLASSW wc;
+    HRGN outer, inner;
+    if (slot < 0 || slot > 3 || w <= 0 || h <= 0 || thick <= 0) return;
+    if (!s_shell_outline[slot]) {
+        ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = shell_outline_proc;
+        wc.hInstance = GetModuleHandleW(0);
+        wc.lpszClassName = L"SimpleShellOutline";
+        RegisterClassW(&wc);
+        s_shell_outline[slot] = CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+            L"SimpleShellOutline", L"", WS_POPUP,
+            x, y, w, h, 0, 0, GetModuleHandleW(0), 0);
+        SetWindowLongPtrW(s_shell_outline[slot], GWLP_USERDATA, (LONG_PTR)slot);
+    }
+    if (s_shell_outline_brush[slot]) DeleteObject(s_shell_outline_brush[slot]);
+    s_shell_outline_brush[slot] =
+        CreateSolidBrush(RGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF));
+    outer = CreateRectRgn(0, 0, w, h);
+    inner = CreateRectRgn(thick, thick, w - thick, h - thick);
+    CombineRgn(outer, outer, inner, RGN_DIFF);
+    DeleteObject(inner);
+    SetWindowRgn(s_shell_outline[slot], outer, TRUE);   /* system owns it now */
+    SetWindowPos(s_shell_outline[slot], HWND_TOPMOST, x, y, w, h,
+        SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    InvalidateRect(s_shell_outline[slot], 0, TRUE);
+}
+
+static void shell_outline_hide(int slot) {
+    if (slot >= 0 && slot < 4 && s_shell_outline[slot])
+        ShowWindow(s_shell_outline[slot], SW_HIDE);
 }
 
 static HBRUSH s_shell_backdrop = 0;

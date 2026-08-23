@@ -2,8 +2,8 @@ note
 	description: "[
 		The frozen-desktop drag overlay: a topmost popup covering the
 		whole virtual screen, crosshair cursor, its input arriving on
-		the shared event queue as 12 move / 13 down / 14 up /
-		15 cancel / 16 expose. The pure-route replacement for the
+		the shared event queue as 31 move / 32 down / 33 up /
+		34 cancel / 35 expose. The pure-route replacement for the
 		Vision2 region picker. One per process; `show' reuses it.
 	]"
 

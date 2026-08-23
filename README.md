@@ -1,6 +1,6 @@
 # simple_shell
 
-![tests](https://img.shields.io/badge/tests-9%2F9-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
+![tests](https://img.shields.io/badge/tests-10%2F10-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
 
 **The Win32 platform shell for the Simple Eiffel ecosystem.** One header of
 battle-tested C, seven Eiffel classes, no rendering opinion. This is the
@@ -62,6 +62,7 @@ end
 | `SHELL_DESKTOP` | virtual-screen metrics, **pure screen grab** into a caller ARGB32 buffer, `now_ms` (QPC), `minutes_of_day`, `open_externally` |
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |
 | `SHELL_STRIP` | small topmost tool-window strip (the dictation-bar pattern) |
+| `SHELL_OUTLINES` | click-through coloured frame regions on the desktop (the region-outline pattern) |
 
 ## Build and test
 
@@ -72,7 +73,7 @@ end
 
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
-offscreen, the spell checker is consulted. 9/9 under full DBC.
+offscreen, the spell checker is consulted. 10/10 under full DBC.
 
 ## Design rules it obeys
 

@@ -57,7 +57,8 @@ feature -- Operation
 			-- 4 key, 6 expose, 7 tick, 8 double, 9 drag, 10 release,
 			-- 11 context, 12 triple, 13 move, 14 leave, 15 wheel
 			-- (delta in `event_extra'), 16 resize, 17 middle, 18 drop;
-			-- 21..23 status strip.
+			-- 21..23 status strip; 31..35 overlay (renumbered
+			-- 2026-08-23 out of the main window's namespace).
 		deferred
 		end
 

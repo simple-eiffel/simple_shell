@@ -126,6 +126,21 @@ feature -- Window services
 			assert ("cursor kinds accepted across the range", True)
 		end
 
+	test_outline_frames_really_create
+			-- A REAL click-through frame, parked far offscreen:
+			-- shown, reshown (move path), hidden - and hide_all is
+			-- always safe, windows or none.
+		local
+			o: SHELL_OUTLINES
+		do
+			create o
+			o.show (0, -3000, -3000, 60, 40, 3, 0xFF8800)
+			o.show (0, -2900, -3000, 80, 50, 2, 0x00FF88)
+			o.hide (0)
+			o.hide_all
+			assert ("outline lifecycle survived", True)
+		end
+
 	test_strip_window_really_creates
 			-- A REAL topmost tool window, parked far offscreen and
 			-- never activated - creation, DC, release, hide.

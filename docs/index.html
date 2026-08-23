@@ -34,7 +34,7 @@
 <div class="wrap">
   <h1>simple_shell<span class="dot">.</span></h1>
   <p class="tag">The Win32 platform shell: window, pump, clipboard, keys, speller, desktop — so nothing above it ever declares an external again.</p>
-  <span class="pill ok">tests 9/9</span><span class="pill">Eiffel 25.02</span><span class="pill">void-safe · SCOOP · DBC</span><span class="pill">Win32</span>
+  <span class="pill ok">tests 10/10</span><span class="pill">Eiffel 25.02</span><span class="pill">void-safe · SCOOP · DBC</span><span class="pill">Win32</span>
 
   <h2>Where it sits</h2>
   <pre class="diagram">        application
@@ -77,6 +77,7 @@ end</pre>
     <tr><td><code>SHELL_DESKTOP</code></td><td>virtual-screen metrics, pure screen grab into ARGB32, QPC clock, minutes-of-day, open-externally</td></tr>
     <tr><td><code>SHELL_OVERLAY</code></td><td>frozen-desktop topmost overlay (region-picker pattern)</td></tr>
     <tr><td><code>SHELL_STRIP</code></td><td>topmost tool-window strip (dictation-bar pattern)</td></tr>
+    <tr><td><code>SHELL_OUTLINES</code></td><td>click-through coloured frame regions (region-outline pattern)</td></tr>
   </table>
 
   <h2>Build & assault</h2>

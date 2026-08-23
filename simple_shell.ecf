@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<system xmlns="http://www.eiffel.com/developers/xml/configuration-1-23-0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.eiffel.com/developers/xml/configuration-1-23-0 http://www.eiffel.com/developers/xml/configuration-1-23-0.xsd" name="simple_shell" uuid="976F8B2F-6BA3-4F90-983D-89A1AC457532" library_target="simple_shell">
+	<description>The Win32 platform shell: native window + queue-polled message pump (deferred SHELL_WINDOW - descend and effect dispatch), clipboard, keyboard state, spell checking, drag-drop, private fonts, virtual-screen metrics and grab, overlay and strip tool windows. Pure platform - no rendering opinion; marry it to any substrate.</description>
+
+	<target name="simple_shell">
+		<root all_classes="true"/>
+		<file_rule>
+			<exclude>/EIFGENs$</exclude>
+			<exclude>/\..*$</exclude>
+		</file_rule>
+		<option warning="warning">
+			<assertions precondition="true" postcondition="true" check="true" invariant="true" loop="true" supplier_precondition="true"/>
+		</option>
+		<setting name="dead_code_removal" value="feature"/>
+		<capability>
+			<concurrency support="scoop" use="thread"/>
+			<void_safety support="all"/>
+		</capability>
+		<external_include location="$(SIMPLE_EIFFEL)/simple_shell/Clib"/>
+		<library name="base" location="$ISE_LIBRARY\library\base\base.ecf"/>
+		<cluster name="src" location=".\src\" recursive="true"/>
+	</target>
+
+	<target name="simple_shell_tests" extends="simple_shell">
+		<root class="TEST_APP" feature="make"/>
+		<setting name="console_application" value="true"/>
+		<library name="simple_testing" location="$SIMPLE_EIFFEL/simple_testing/simple_testing.ecf"/>
+		<library name="testing" location="$ISE_LIBRARY\library\testing\testing.ecf"/>
+		<cluster name="test" location=".\testing\" recursive="true"/>
+	</target>
+</system>

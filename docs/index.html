@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>simple_shell</title>
+<style>
+  :root { --bg:#12141b; --panel:#1a1d27; --panel2:#20242f; --ink:#e8eaf0; --muted:#9aa1b0;
+          --accent:#5b9dd9; --ok:#4caf82; --line:#2c3140; --mono:"IBM Plex Mono","Consolas",monospace; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:16px/1.6 "Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:960px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:2.2rem; letter-spacing:-.5px; }
+  h1 .dot { color:var(--accent); }
+  .tag { color:var(--muted); margin:6px 0 28px; }
+  h2 { font-size:1.25rem; margin:40px 0 12px; color:var(--accent); }
+  p { margin:10px 0; color:var(--ink); }
+  .muted { color:var(--muted); }
+  pre { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+        padding:16px; overflow-x:auto; font-family:var(--mono); font-size:.85rem; line-height:1.5; }
+  code { font-family:var(--mono); font-size:.9em; color:#bcd3ea; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; }
+  th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; }
+  td code { color:var(--accent); }
+  .pill { display:inline-block; background:var(--panel2); border:1px solid var(--line);
+          border-radius:999px; padding:2px 12px; font-size:.78rem; color:var(--muted); margin-right:8px; }
+  .pill.ok { color:var(--ok); border-color:var(--ok); }
+  .diagram { font-family:var(--mono); font-size:.85rem; color:var(--muted); }
+  .diagram b { color:var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>simple_shell<span class="dot">.</span></h1>
+  <p class="tag">The Win32 platform shell: window, pump, clipboard, keys, speller, desktop — so nothing above it ever declares an external again.</p>
+  <span class="pill ok">tests 8/8</span><span class="pill">Eiffel 25.02</span><span class="pill">void-safe · SCOOP · DBC</span><span class="pill">Win32</span>
+
+  <h2>Where it sits</h2>
+  <pre class="diagram">        application
+            │
+     <b>simple_widgets</b>            pure Eiffel — zero C
+        │        │
+ <b>simple_cairo</b>  <b>simple_shell</b>
+   (drawing)    (platform)</pre>
+  <p class="muted">Two substrates, one meeting point. The toolkit above owns no platform code; this library owns no rendering opinion.</p>
+
+  <h2>The deferred model</h2>
+  <p><code>SHELL_WINDOW</code> is deferred. Events queue in C and drain through one polled loop — never <code>$</code>-callbacks, which SEGV under <code>EIF_THREADS</code>. A descendant supplies one thing: what an event means.</p>
+  <pre>class MY_WINDOW
+
+inherit
+    SHELL_WINDOW
+
+feature
+
+    run
+        do
+            shell_run ("My app", 100, 100, 800, 600)
+        end
+
+    dispatch (a_type, a_x, a_y: INTEGER)
+        do
+            -- 2 press · 3 char · 4 key · 6 expose · 7 tick
+            -- 9 drag · 10 release · 13 move · 15 wheel · 16 resize · 18 drop
+        end
+
+end</pre>
+
+  <h2>The classes</h2>
+  <table>
+    <tr><th>Class</th><th>Service</th></tr>
+    <tr><td><code>SHELL_WINDOW</code></td><td><em>(deferred)</em> native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock</td></tr>
+    <tr><td><code>SHELL_KEYS</code></td><td>physical Shift / Ctrl / Alt state</td></tr>
+    <tr><td><code>SHELL_CLIPBOARD</code></td><td>Unicode text get/set, history-manager retry, 1M-character headroom</td></tr>
+    <tr><td><code>SHELL_SPELLER</code></td><td>Windows inbox ISpellChecker: ranges + suggestions; degrades, never fails</td></tr>
+    <tr><td><code>SHELL_DESKTOP</code></td><td>virtual-screen metrics, pure screen grab into ARGB32, QPC clock, minutes-of-day, open-externally</td></tr>
+    <tr><td><code>SHELL_OVERLAY</code></td><td>frozen-desktop topmost overlay (region-picker pattern)</td></tr>
+    <tr><td><code>SHELL_STRIP</code></td><td>topmost tool-window strip (dictation-bar pattern)</td></tr>
+  </table>
+
+  <h2>Build & assault</h2>
+  <pre>/d/prod/ec.sh test -config simple_shell.ecf -target simple_shell_tests
+./EIFGENs/simple_shell_tests/F_code/simple_shell.exe</pre>
+  <p class="muted">The assault is real: the desktop is grabbed (alpha verified opaque), the clipboard round-trips a snowman, a strip window is genuinely created offscreen, the spell checker is consulted.</p>
+
+  <h2>Lineage</h2>
+  <p class="muted">Born as <code>ocr_cairo_win.h</code> in simple_ocr_capture, matured inside simple_widgets, carved into its own library 2026-08-23. simple_widgets 1.8 is its first descendant.</p>
+</div>
+</body>
+</html>

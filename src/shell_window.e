@@ -89,6 +89,36 @@ feature -- Measurement
 			Result := shell_shift_down = 1
 		end
 
+	set_fast_timer (a_ms: INTEGER)
+			-- Arm the app-settable fast tick: event 25 every `a_ms'
+			-- milliseconds, beside (not instead of) the 250ms
+			-- heartbeat. For polling loops that outpace it - the
+			-- OCR capture cycle runs at 50ms. Needs the window up.
+		require
+			positive: a_ms > 0
+			up: hwnd /= default_pointer
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_set_fast_timer($a_ms);"
+		end
+
+	kill_fast_timer
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_kill_fast_timer();"
+		end
+
+	close
+			-- Destroy the native window: the pump sees WM_QUIT and
+			-- `shell_run' returns. The programmatic quit.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_close_window();"
+		end
+
 feature -- Cursor
 
 	Cursor_arrow: INTEGER = 0

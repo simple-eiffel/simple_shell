@@ -29,6 +29,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_speller_degrades_never_fails, "speller_degrades_never_fails")
 			run_test (agent t.test_window_services_without_pump, "window_services_without_pump")
 			run_test (agent t.test_cursor_kind_accepted, "cursor_kind_accepted")
+			run_test (agent t.test_windowless_pump_returns_on_deadline, "windowless_pump_returns_on_deadline")
 			run_test (agent t.test_outline_frames_really_create, "outline_frames_really_create")
 			run_test (agent t.test_strip_window_really_creates, "strip_window_really_creates")
 

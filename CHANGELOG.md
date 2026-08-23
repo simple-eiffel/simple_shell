@@ -2,6 +2,20 @@
 
 All notable changes to simple_shell.
 
+## 1.4.0 - 2026-08-23
+
+### Added
+- App-settable FAST TIMER: set_fast_timer (ms) arms a second native
+  timer (event 25) beside the 250ms heartbeat - polling loops that
+  outpace it (the OCR capture cycle: 50ms) get their own clock.
+- close: programmatic DestroyWindow - the pump sees WM_QUIT and
+  shell_run returns. SW applications can finally quit themselves.
+- SHELL_DESKTOP.pump_for (ms): a WINDOWLESS PeekMessage pump so
+  facility windows (outlines, strip) paint during short CLI
+  diagnostics with no main window at all. Assault 11/11.
+- Strip drag law measured properly: the no-drag corner is exactly
+  the transport corner (right 90px of the top 26px).
+
 ## 1.3.0 — 2026-08-23
 
 ### Added

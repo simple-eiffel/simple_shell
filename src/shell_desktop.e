@@ -74,6 +74,21 @@ feature -- Time
 			"return shell_minutes_of_day();"
 		end
 
+feature -- Pumping
+
+	pump_for (a_ms: INTEGER)
+			-- Pump this thread's queue for `a_ms' milliseconds
+			-- WITHOUT a main window: lets facility windows
+			-- (outlines, the strip) paint during short windowless
+			-- diagnostics. Returns at the deadline regardless.
+		require
+			positive: a_ms > 0
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_pump_for($a_ms);"
+		end
+
 feature -- Shell
 
 	open_externally (a_path: READABLE_STRING_GENERAL): BOOLEAN

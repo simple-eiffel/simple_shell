@@ -126,6 +126,18 @@ feature -- Window services
 			assert ("cursor kinds accepted across the range", True)
 		end
 
+	test_windowless_pump_returns_on_deadline
+		local
+			d: SHELL_DESKTOP
+			t0: REAL_64
+		do
+			create d
+			t0 := d.now_ms
+			d.pump_for (60)
+			assert ("the deadline is honoured", d.now_ms - t0 >= 55.0)
+			assert ("and not wildly overshot", d.now_ms - t0 < 1000.0)
+		end
+
 	test_outline_frames_really_create
 			-- A REAL click-through frame, parked far offscreen:
 			-- shown, reshown (move path), hidden - and hide_all is

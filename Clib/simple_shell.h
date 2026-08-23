@@ -173,7 +173,11 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 shell_push(4, (int)w, 0, 0);
             return 0;
         case WM_TIMER:
-            shell_push(7, 0, 0, 0);
+            /* timer 1: the 250ms heartbeat; timer 2: the app-settable
+               fast tick (event 25) - polling loops that outpace the
+               heartbeat (the OCR capture cycle runs at 50ms) */
+            if (w == 2) shell_push(25, 0, 0, 0);
+            else        shell_push(7, 0, 0, 0);
             return 0;
         case WM_PAINT: {
             PAINTSTRUCT ps;
@@ -337,6 +341,34 @@ static void* shell_create_window(const wchar_t* title, int px, int py, int cw, i
         DragAcceptFiles(h, TRUE);
     }
     return (void*)h;
+}
+
+static void shell_set_fast_timer(int ms) {
+    if (s_shell_hwnd && ms > 0) SetTimer(s_shell_hwnd, 2, ms, 0);
+}
+
+static void shell_kill_fast_timer(void) {
+    if (s_shell_hwnd) KillTimer(s_shell_hwnd, 2);
+}
+
+static void shell_close_window(void) {
+    if (s_shell_hwnd) DestroyWindow(s_shell_hwnd);
+}
+
+/* Pump this thread's queue for ms milliseconds WITHOUT a main window:
+   paints windowless-facility windows (outlines, strip) in short CLI
+   diagnostics. PeekMessage so an empty queue cannot block past the
+   deadline. */
+static void shell_pump_for(int ms) {
+    DWORD deadline = GetTickCount() + (DWORD)ms;
+    MSG m;
+    while (GetTickCount() < deadline) {
+        while (PeekMessageW(&m, 0, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+        }
+        Sleep(5);
+    }
 }
 
 static int shell_pump(void) {

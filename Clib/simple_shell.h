@@ -696,6 +696,18 @@ static int shell_spell_check(const wchar_t *text, int *out, int cap_pairs) {
     return n;
 }
 
+/* teach the checker: Ignore is session-scoped, Add persists to the
+   user's Windows dictionary (the same one Edge and Office honour) */
+static int shell_spell_ignore(const wchar_t *word) {
+    if (!shell_spell_init()) return 0;
+    return SUCCEEDED(s_shell_spell->lpVtbl->Ignore(s_shell_spell, word)) ? 1 : 0;
+}
+
+static int shell_spell_add(const wchar_t *word) {
+    if (!shell_spell_init()) return 0;
+    return SUCCEEDED(s_shell_spell->lpVtbl->Add(s_shell_spell, word)) ? 1 : 0;
+}
+
 /* first few suggestions for word, newline-joined into buf */
 static int shell_spell_suggest(const wchar_t *word, wchar_t *buf, int cap) {
     IEnumString *sugg = 0;

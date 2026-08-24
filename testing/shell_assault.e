@@ -100,6 +100,25 @@ feature -- Speller
 				s.suggestions ("teh").count <= 5)
 		end
 
+	test_speller_ignore_is_session_scoped
+			-- Teach Ignore on a nonsense word: its finding vanishes
+			-- for the rest of the session. (Add is NOT tested - it
+			-- writes the user's real Windows dictionary.)
+		local
+			s: SHELL_SPELLER
+			had: BOOLEAN
+		do
+			create s
+			had := not s.misspellings ("zzqqv here").is_empty
+			if had then
+				assert ("the checker accepts the lesson", s.ignore ("zzqqv"))
+				assert ("and the finding is gone this session",
+					s.misspellings ("zzqqv here").is_empty)
+			else
+				assert ("no checker on this box - nothing to teach", True)
+			end
+		end
+
 feature -- Window services
 
 	test_window_services_without_pump

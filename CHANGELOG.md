@@ -2,6 +2,15 @@
 
 All notable changes to simple_shell.
 
+## 1.5.0 - 2026-08-23
+
+### Added
+- SHELL_SPELLER teaching: ignore (session-scoped) and
+  add_to_dictionary (persists to the user WINDOWS dictionary, the
+  same one Edge and Office honour). Ignore assaulted live on a
+  nonsense word; Add deliberately untested (it writes the real
+  dictionary). 12/12.
+
 ## 1.4.0 - 2026-08-23
 
 ### Added

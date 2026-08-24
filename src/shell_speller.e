@@ -90,6 +90,33 @@ feature -- Queries
 			few: Result.count <= 5
 		end
 
+feature -- Teaching
+
+	ignore (a_word: READABLE_STRING_GENERAL): BOOLEAN
+			-- Stop flagging `a_word' for THIS SESSION; the squiggle
+			-- returns next launch. False when the checker is absent.
+		require
+			something: not a_word.is_empty
+		local
+			ns: NATIVE_STRING
+		do
+			create ns.make (a_word)
+			Result := c_spell_ignore (ns.item) = 1
+		end
+
+	add_to_dictionary (a_word: READABLE_STRING_GENERAL): BOOLEAN
+			-- Teach `a_word' PERMANENTLY: it lands in the user's
+			-- Windows dictionary, the same one Edge and Office
+			-- honour. False when the checker is absent.
+		require
+			something: not a_word.is_empty
+		local
+			ns: NATIVE_STRING
+		do
+			create ns.make (a_word)
+			Result := c_spell_add (ns.item) = 1
+		end
+
 feature {NONE} -- Implementation
 
 	Cap_pairs: INTEGER = 64
@@ -102,6 +129,20 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_spell_check((const wchar_t*)$a_text, (int*)$a_out, (int)$a_cap);"
+		end
+
+	c_spell_ignore (a_word: POINTER): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_spell_ignore((const wchar_t*)$a_word);"
+		end
+
+	c_spell_add (a_word: POINTER): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_spell_add((const wchar_t*)$a_word);"
 		end
 
 	c_spell_suggest (a_word, a_buf: POINTER; a_cap: INTEGER): INTEGER

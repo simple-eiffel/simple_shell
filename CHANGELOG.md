@@ -2,6 +2,37 @@
 
 All notable changes to simple_shell.
 
+## 1.6.0 - 2026-08-25
+
+### Fixed
+- THE 1.8.0 LOCKUP: every mutable global in simple_shell.h was a
+  file-scope static in a header included by the inline externals of
+  FIVE classes - and finalized C compiles each class into its own
+  translation unit, so each generated file held a PRIVATE copy of
+  every static. The overlay's wndproc pushed its events (mouse,
+  Escape, right-click) into SHELL_OVERLAY's copy of the queue while
+  the pump drained SHELL_WINDOW's: nothing ever arrived, and the
+  fullscreen topmost picker ate every input in the session with
+  nothing alive to dismiss it. All mutable state is now SHELL_SHARED
+  (`__declspec(selectany)`, the INITGUID pattern) - linker-merged to
+  ONE process-wide instance however many generated files include the
+  header. The same fork silently killed strip input (21..23 went to
+  a third orphaned queue) and left the clipboard opening against a
+  null copy of the window handle; both healed by the same merge.
+  Cross-unit regression test: a marker pushed from one class's
+  translation unit must drain through another's - it cannot pass on
+  the 1.8.0 arrangement. Assault 13/13.
+
+### Added
+- Overlay escape hatches BELOW the Eiffel loop: the wndproc hides
+  the overlay itself on Escape, right-click and Alt+F4 (then still
+  reports 34), and a dead-man watchdog thread reads the PHYSICAL
+  Escape key via GetAsyncKeyState (no focus, no queue needed) -
+  held ~2s posts the normal cancel through the GUI thread; still
+  visible at ~5s exits the process, because only process death is
+  guaranteed to free the screen. A desktop-covering window must
+  never depend on a live event loop for its own dismissal.
+
 ## 1.5.0 - 2026-08-23
 
 ### Added

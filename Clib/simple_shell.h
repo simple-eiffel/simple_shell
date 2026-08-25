@@ -13,22 +13,41 @@
 #include <shellapi.h>
 #pragma comment(lib, "shell32.lib")
 
+/* Shared-state law (the 1.8.0 lockup): this header is included by the
+   inline externals of SEVERAL classes, and finalized C compiles each
+   class into its own translation unit - a file-scope `static' here is
+   one PRIVATE copy per generated file. The overlay's wndproc pushed
+   events into a queue copy the pump never drained, and the fullscreen
+   topmost overlay ate every input with no way out. SHELL_SHARED data
+   is linker-merged (COMDAT, the INITGUID pattern) into a single
+   process-wide instance however many files include this header.
+   Functions stay static - duplicated code is harmless once the DATA
+   is one. Every SHELL_SHARED variable needs an explicit initializer:
+   selectany applies only to an actual initialization. */
+#if defined(_MSC_VER)
+#define SHELL_SHARED __declspec(selectany)
+#else
+#define SHELL_SHARED __attribute__((selectany))
+#endif
+
 /* Event queue: [type, a, b, c] per slot.
    main window:  2 lbutton(x,y) | 3 char(code) | 4 keydown(vk) | 6 expose | 7 tick
    overlay:     31 move(x,y)   | 32 down(x,y) | 33 up(x,y)    | 34 cancel | 35 expose
    (overlay renumbered 2026-08-23: 12..16 collided with the main window's
    triple/move/leave/wheel/resize types once one pump served both) */
 #define SHELL_QCAP 1024
-static HWND s_shell_hwnd = 0;
-static LONG s_shell_dbl_time = 0;
-static int  s_shell_tracking = 0;
-static int  s_shell_dbl_x = 0, s_shell_dbl_y = 0;
-static HWND s_shell_overlay = 0;
-static int  s_shell_q[SHELL_QCAP][4];
-static wchar_t s_shell_drops[16384];
-static int  s_shell_drops_len = 0;
-static int  s_shell_qhead = 0, s_shell_qtail = 0;
-static int  s_shell_cursor = 0;
+SHELL_SHARED HWND s_shell_hwnd = 0;
+SHELL_SHARED LONG s_shell_dbl_time = 0;
+SHELL_SHARED int  s_shell_tracking = 0;
+SHELL_SHARED int  s_shell_dbl_x = 0;
+SHELL_SHARED int  s_shell_dbl_y = 0;
+SHELL_SHARED HWND s_shell_overlay = 0;
+SHELL_SHARED int  s_shell_q[SHELL_QCAP][4] = {{0}};
+SHELL_SHARED wchar_t s_shell_drops[16384] = {0};
+SHELL_SHARED int  s_shell_drops_len = 0;
+SHELL_SHARED int  s_shell_qhead = 0;
+SHELL_SHARED int  s_shell_qtail = 0;
+SHELL_SHARED int  s_shell_cursor = 0;
 
 /* 0 arrow, 1 ibeam, 2 hand, 3 size-we, 4 size-ns, 5 cross, 6 wait */
 static void shell_set_cursor_kind(int k) {
@@ -223,9 +242,24 @@ static LRESULT CALLBACK shell_overlay_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             shell_push(33, (int)(short)LOWORD(l), (int)(short)HIWORD(l), 0);
             return 0;
         case WM_KEYDOWN:
-            if (w == VK_ESCAPE) shell_push(34, 0, 0, 0);
+            if (w == VK_ESCAPE) {
+                /* dismiss in C FIRST: freeing the screen must never
+                   depend on the Eiffel loop hearing event 34 */
+                ReleaseCapture();
+                ShowWindow(h, SW_HIDE);
+                shell_push(34, 0, 0, 0);
+            }
             return 0;
         case WM_RBUTTONDOWN:
+            ReleaseCapture();
+            ShowWindow(h, SW_HIDE);
+            shell_push(34, 0, 0, 0);
+            return 0;
+        case WM_CLOSE:
+            /* Alt+F4 cancels the pick; the default DestroyWindow
+               would leave s_shell_overlay dangling for the next show */
+            ReleaseCapture();
+            ShowWindow(h, SW_HIDE);
             shell_push(34, 0, 0, 0);
             return 0;
         case WM_PAINT: {
@@ -246,8 +280,8 @@ static LRESULT CALLBACK shell_overlay_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
    WS_EX_TRANSPARENT). One window per slot; the visible shape is a frame
    region (outer rect minus inner rect) so the middle is not even part
    of the window. The pure-route replacement for four-popup-edges. ---- */
-static HWND   s_shell_outline[4]       = {0, 0, 0, 0};
-static HBRUSH s_shell_outline_brush[4] = {0, 0, 0, 0};
+SHELL_SHARED HWND   s_shell_outline[4]       = {0, 0, 0, 0};
+SHELL_SHARED HBRUSH s_shell_outline_brush[4] = {0, 0, 0, 0};
 
 static LRESULT CALLBACK shell_outline_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_PAINT) {
@@ -299,7 +333,7 @@ static void shell_outline_hide(int slot) {
         ShowWindow(s_shell_outline[slot], SW_HIDE);
 }
 
-static HBRUSH s_shell_backdrop = 0;
+SHELL_SHARED HBRUSH s_shell_backdrop = 0;
 
 /* Newly exposed pixels during a live resize are erased with the class
    brush BEFORE our next full frame lands - keep it the theme's ground
@@ -451,10 +485,40 @@ static int shell_grab_screen(int x, int y, int w, int h, void* bits, int stride)
 }
 
 /* ---- frozen-desktop drag overlay ---- */
+
+/* Dead-man watchdog: a desktop-covering overlay must never depend on
+   a live Eiffel loop for its own dismissal. A plain OS thread (never
+   touches the Eiffel runtime) polls the PHYSICAL Escape key -
+   GetAsyncKeyState needs no focus and no message queue. Held ~2s with
+   the overlay up: post the normal cancel through the GUI thread.
+   Still up at ~5s: the loop is gone, and only process death is
+   guaranteed to free the screen - losing the application beats
+   losing the session. */
+SHELL_SHARED HANDLE s_shell_watchdog = 0;
+
+static DWORD WINAPI shell_watchdog_main(LPVOID unused) {
+    int held = 0;
+    (void)unused;
+    for (;;) {
+        Sleep(100);
+        if (s_shell_overlay && IsWindowVisible(s_shell_overlay)
+            && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
+            held++;
+            if (held == 20)
+                PostMessageW(s_shell_overlay, WM_KEYDOWN, VK_ESCAPE, 0);
+            if (held >= 50)
+                ExitProcess(1);
+        } else
+            held = 0;
+    }
+}
+
 static void* shell_show_overlay(void) {
     WNDCLASSW wc;
     int vx = shell_screen_x(), vy = shell_screen_y();
     int vw = shell_screen_w(), vh = shell_screen_h();
+    if (!s_shell_watchdog)
+        s_shell_watchdog = CreateThread(0, 0, shell_watchdog_main, 0, 0, 0);
     if (!s_shell_overlay) {
         ZeroMemory(&wc, sizeof(wc));
         wc.lpfnWndProc = shell_overlay_proc;
@@ -482,7 +546,7 @@ static void  shell_overlay_release(void* dc){ if (s_shell_overlay && dc) Release
 
 /* ---- status strip: second topmost tool window ----
    events: 21 strip_lbutton(x,y) | 22 strip_moved(x,y) | 23 strip_expose */
-static HWND s_shell_strip = 0;
+SHELL_SHARED HWND s_shell_strip = 0;
 
 static LRESULT CALLBACK shell_strip_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
@@ -656,8 +720,8 @@ static const CLSID s_shell_clsid_scf =
 static const IID s_shell_iid_iscf =
     {0x8E018A9D,0x2415,0x4677,{0xBF,0x08,0x79,0x4E,0xA6,0x1F,0x94,0xBB}};
 
-static ISpellChecker *s_shell_spell = 0;
-static int s_shell_spell_tried = 0;
+SHELL_SHARED ISpellChecker *s_shell_spell = 0;
+SHELL_SHARED int s_shell_spell_tried = 0;
 
 static int shell_spell_init(void) {
     ISpellCheckerFactory *f = 0;

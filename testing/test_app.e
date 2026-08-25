@@ -33,6 +33,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_windowless_pump_returns_on_deadline, "windowless_pump_returns_on_deadline")
 			run_test (agent t.test_outline_frames_really_create, "outline_frames_really_create")
 			run_test (agent t.test_strip_window_really_creates, "strip_window_really_creates")
+			run_test (agent t.test_queue_is_one_instance_across_units, "queue_is_one_instance_across_units")
 
 			print ("%N========================%N")
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")

@@ -188,4 +188,23 @@ feature -- Window services
 			s.hide
 		end
 
+feature -- Shared state
+
+	test_queue_is_one_instance_across_units
+			-- THE 1.8.0 LOCKUP LAW: an event pushed from one class's
+			-- translation unit must come out of the pump's drain in
+			-- another. Before SHELL_SHARED each generated C file held
+			-- a PRIVATE copy of the queue - the overlay pushed where
+			-- nobody drained, and the fullscreen picker became an
+			-- inescapable input sink. This cannot pass on that build.
+		local
+			p: SHELL_PUSH_PROBE
+			w: SHELL_TEST_WINDOW
+		do
+			create p
+			create w
+			p.push_marker
+			assert ("the marker crossed translation units", w.drain_marker)
+		end
+
 end

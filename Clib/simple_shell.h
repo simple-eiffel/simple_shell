@@ -33,6 +33,7 @@
 /* Event queue: [type, a, b, c] per slot.
    main window:  2 lbutton(x,y) | 3 char(code) | 4 keydown(vk) | 6 expose | 7 tick
    overlay:     31 move(x,y)   | 32 down(x,y) | 33 up(x,y)    | 34 cancel | 35 expose
+                36 accept (Enter) | 37 arrow(vk) - the adjust-mode keys
    (overlay renumbered 2026-08-23: 12..16 collided with the main window's
    triple/move/leave/wheel/resize types once one pump served both) */
 #define SHELL_QCAP 1024
@@ -249,6 +250,10 @@ static LRESULT CALLBACK shell_overlay_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 ShowWindow(h, SW_HIDE);
                 shell_push(34, 0, 0, 0);
             }
+            else if (w == VK_RETURN)
+                shell_push(36, 0, 0, 0);
+            else if (w == VK_LEFT || w == VK_UP || w == VK_RIGHT || w == VK_DOWN)
+                shell_push(37, (int)w, 0, 0);
             return 0;
         case WM_RBUTTONDOWN:
             ReleaseCapture();

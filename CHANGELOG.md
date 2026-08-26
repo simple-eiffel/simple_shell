@@ -2,6 +2,14 @@
 
 All notable changes to simple_shell.
 
+## 1.7.0 - 2026-08-26
+
+### Added
+- Overlay adjust-mode keys: the overlay wndproc reports Enter as
+  event 36 (accept) and the four arrows as 37 (vk in the first
+  payload) - the region picker's micro-adjustment vocabulary.
+  Escape keeps its 34 with the C-level self-dismissal.
+
 ## 1.6.0 - 2026-08-25
 
 ### Fixed

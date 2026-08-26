@@ -41,6 +41,21 @@ feature -- Virtual screen
 			"return shell_screen_h();"
 		end
 
+feature -- Drives
+
+	logical_drives_mask: INTEGER
+			-- GetLogicalDrives: bit 0 = A:, bit 1 = B:, ... bit 25 = Z:.
+			-- Which drive letters exist, answered WITHOUT touching any
+			-- media - no network timeouts, no removable spin-up. The
+			-- probe-free way to build a drive picker (probing a dead
+			-- network letter with DIRECTORY.exists blocks for minutes -
+			-- simple_speed_reader hand-test, 2026-08-26).
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return (EIF_INTEGER)GetLogicalDrives();"
+		end
+
 feature -- Capture
 
 	grab_into (a_x, a_y, a_w, a_h: INTEGER; a_bits: POINTER; a_stride: INTEGER): BOOLEAN

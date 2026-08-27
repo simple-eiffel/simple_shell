@@ -90,6 +90,26 @@ feature -- Measurement
 			Result := shell_shift_down = 1
 		end
 
+	set_window_icon (a_ico_path: READABLE_STRING_GENERAL)
+			-- Title-bar and taskbar icon from a .ico file (multi-size;
+			-- Windows picks per surface). Needs the window up.
+		require
+			path_present: not a_ico_path.is_empty
+			up: hwnd /= default_pointer
+		local
+			l_ns: NATIVE_STRING
+		do
+			create l_ns.make (a_ico_path)
+			c_set_window_icon (l_ns.item)
+		end
+
+	c_set_window_icon (a_path: POINTER)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_set_window_icon((const wchar_t*)$a_path);"
+		end
+
 	set_fast_timer (a_ms: INTEGER)
 			-- Arm the app-settable fast tick: event 25 every `a_ms'
 			-- milliseconds, beside (not instead of) the 250ms

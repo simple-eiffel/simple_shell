@@ -402,6 +402,19 @@ static void shell_set_fast_timer(int ms) {
     if (s_shell_hwnd && ms > 0) SetTimer(s_shell_hwnd, 2, ms, 0);
 }
 
+static void shell_set_window_icon(const wchar_t* path) {
+    /* Title-bar and taskbar icon from a .ico FILE beside the exe -
+       the resource-free route (finalized Eiffel binaries carry no
+       custom resources). Multi-size .ico: Windows picks per use. */
+    HICON big, small;
+    if (!s_shell_hwnd || !path) return;
+    big = (HICON)LoadImageW(NULL, path, IMAGE_ICON, 0, 0,
+        LR_LOADFROMFILE | LR_DEFAULTSIZE);
+    small = (HICON)LoadImageW(NULL, path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
+    if (big)   SendMessageW(s_shell_hwnd, WM_SETICON, ICON_BIG,   (LPARAM)big);
+    if (small) SendMessageW(s_shell_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
+}
+
 static void shell_kill_fast_timer(void) {
     if (s_shell_hwnd) KillTimer(s_shell_hwnd, 2);
 }

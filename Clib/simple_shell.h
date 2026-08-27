@@ -189,9 +189,25 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_KEYDOWN:
             if (w == VK_LEFT || w == VK_RIGHT || w == VK_HOME || w == VK_END ||
                 w == VK_DELETE || w == VK_UP || w == VK_DOWN ||
-                w == VK_PRIOR || w == VK_NEXT)
+                w == VK_PRIOR || w == VK_NEXT ||
+                w == VK_OEM_PLUS || w == VK_OEM_MINUS ||
+                w == VK_ADD || w == VK_SUBTRACT)
                 shell_push(4, (int)w, 0, 0);
             return 0;
+        case WM_SYSKEYDOWN:
+            /* Alt-modified stepping keys (apps read Alt via shell_alt_down):
+               forward them and keep the menu loop out of it. Every other
+               syskey (Alt+F4, Alt+Space) keeps its system meaning. */
+            if (w == VK_OEM_PLUS || w == VK_OEM_MINUS ||
+                w == VK_ADD || w == VK_SUBTRACT) {
+                shell_push(4, (int)w, 0, 0);
+                return 0;
+            }
+            break;
+        case WM_SYSCHAR:
+            /* the beep for the swallowed Alt steps above */
+            if (w == '+' || w == '-' || w == '=') return 0;
+            break;
         case WM_TIMER:
             /* timer 1: the 250ms heartbeat; timer 2: the app-settable
                fast tick (event 25) - polling loops that outpace the

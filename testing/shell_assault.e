@@ -207,4 +207,66 @@ feature -- Shared state
 			assert ("the marker crossed translation units", w.drain_marker)
 		end
 
+feature -- Clipboard bitmap
+
+	test_clipboard_image_roundtrip
+			-- Put a synthetic 4x3 ARGB32 image on the clipboard and read
+			-- its size back through the DIB header. The pixels are given
+			-- with alpha 0 - the C side must force them opaque.
+		local
+			c: SHELL_CLIPBOARD
+			bits: MANAGED_POINTER
+			i: INTEGER
+		do
+			create c
+			create bits.make (4 * 4 * 3)
+			from i := 0 until i >= 12 loop
+				bits.put_natural_32 (0x00FF8000, i * 4)
+				i := i + 1
+			end
+			c.set_image (bits.item, 4, 3, 16)
+			assert ("a bitmap is on the clipboard", c.has_image)
+			assert_integers_equal ("width read back", 4, c.image_width)
+			assert_integers_equal ("height read back", 3, c.image_height)
+			assert ("and it is not text", not c.has_text)
+		end
+
+feature -- Input synthesis
+
+	test_input_knows_the_desktop
+			-- The bounds guard agrees with the desktop metrics at every
+			-- edge: both corners in, one pixel past either out.
+		local
+			i: SHELL_INPUT
+			d: SHELL_DESKTOP
+		do
+			create i
+			create d
+			assert ("origin is on it", i.is_on_desktop (d.virtual_x, d.virtual_y))
+			assert ("far corner is on it",
+				i.is_on_desktop (d.virtual_x + d.virtual_width - 1, d.virtual_y + d.virtual_height - 1))
+			assert ("one past the right edge is not", not i.is_on_desktop (d.virtual_x + d.virtual_width, d.virtual_y))
+			assert ("one before the left edge is not", not i.is_on_desktop (d.virtual_x - 1, d.virtual_y))
+		end
+
+	test_input_keys_are_accepted
+			-- A lone Shift press does nothing to anything, and proves
+			-- SendInput takes what it is handed: two events, down and up.
+			-- Needs the interactive desktop, exactly as `test_desktop_grab'
+			-- does: from a locked session Windows refuses the injection
+			-- with OS error 5, and this test fails saying so.
+		local
+			i: SHELL_INPUT
+		do
+			create i
+			i.press_key (i.Vk_shift)
+			assert_integers_equal ("two handed over", 2, i.last_expected)
+			if not i.was_accepted then
+				print ("    (desktop refused the injection: accepted "
+					+ i.last_accepted.out + " of 2, OS error " + i.last_os_error.out
+					+ " - locked session or UIPI boundary)%N")
+			end
+			assert ("and both accepted", i.was_accepted)
+		end
+
 end

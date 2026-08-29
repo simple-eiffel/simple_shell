@@ -3,7 +3,7 @@
 ![tests](https://img.shields.io/badge/tests-10%2F10-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
 
 **The Win32 platform shell for the Simple Eiffel ecosystem.** One header of
-battle-tested C, seven Eiffel classes, no rendering opinion. This is the
+battle-tested C, nine Eiffel classes, no rendering opinion. This is the
 library that owns the native window, the message pump, the clipboard, the
 keyboard, the spell checker, the desktop — so that nothing above it ever
 declares an external again.
@@ -57,7 +57,8 @@ end
 |---|---|
 | `SHELL_WINDOW` | *(deferred)* native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, **cursor shaping** (`set_cursor_kind`: arrow, I-beam, hand, resize, cross, wait) |
 | `SHELL_KEYS` | physical Shift / Ctrl / Alt state |
-| `SHELL_CLIPBOARD` | Unicode text get/set with history-manager retry; 1M-character headroom |
+| `SHELL_CLIPBOARD` | Unicode text get/set with history-manager retry; 1M-character headroom; **bitmap put** (`set_image`, CF_DIB from an ARGB32 buffer) with size read-back |
+| `SHELL_INPUT` | **synthesised input** via SendInput: `pointer_x` / `pointer_y` (calibration), `click_at` (focus lands and stays) / `click_at_quietly` (pointer and foreground restored), `press_chord`, `paste`, `press_enter`, Unicode `type_text`; virtual-desktop bounds guard on every click |
 | `SHELL_SPELLER` | Windows inbox `ISpellChecker` (COM): misspelling ranges + suggestions; degrades to no findings, never to failure |
 | `SHELL_DESKTOP` | virtual-screen metrics, **pure screen grab** into a caller ARGB32 buffer, `now_ms` (QPC), `minutes_of_day`, `open_externally` |
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |

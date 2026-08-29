@@ -2,6 +2,31 @@
 
 All notable changes to simple_shell.
 
+## 1.8.0 - 2026-08-28
+
+### Added
+- SHELL_INPUT: synthesised input via SendInput, returned home from
+  OCR_CLICKER in simple_ocr_capture. `click_at` leaves focus where the
+  click landed (the paste case); `click_at_quietly` restores pointer and
+  foreground (the page-turn case); `press_chord` / `paste` /
+  `press_enter`; Unicode `type_text` with no clipboard involved. Every
+  click is guarded by `is_on_desktop`; `pointer_x` / `pointer_y` read
+  the pointer for calibration; and `last_accepted` reports what
+  Windows actually took, so a UIPI-blocked injection is distinguishable
+  from an ignored one. Acceptance is a status (`was_accepted`,
+  `last_os_error`), not a postcondition: a locked screen must not
+  become an exception, the same stance as `grab_into`.
+- SHELL_CLIPBOARD.set_image: a bitmap (CF_DIB) from an ARGB32 top-down
+  buffer - the layout `grab_into` delivers and cairo surfaces expose -
+  with `has_image`, `image_width`, `image_height` read-back. Alpha forced
+  opaque, bottom-up on the wire as the clipboard convention expects.
+  Verified from an independent consumer: .NET's Clipboard.GetImage reads
+  the 4x3 test bitmap back as Format32bppRgb with alpha 255.
+  Assault 14/16 from a non-interactive session - `desktop_grab` and
+  `input_keys_are_accepted` both need the interactive desktop and were
+  refused (BitBlt false, SendInput OS error 5); run at the console to
+  confirm 16/16.
+
 ## 1.7.0 - 2026-08-26
 
 ### Added

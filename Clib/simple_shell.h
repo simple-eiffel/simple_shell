@@ -1,6 +1,7 @@
 /* simple_shell.h - the Win32 platform shell, one header.
    Window + message pump (queue-polled: NEVER $-callbacks, they SEGV
-   under EIF_THREADS), clipboard, keyboard state, drag-drop, fonts,
+   under EIF_THREADS), clipboard (text and bitmap), keyboard state, input synthesis,
+   drag-drop, fonts,
    spell checking (ISpellChecker COM), virtual-screen metrics, screen
    grab into a caller buffer, frozen-desktop overlay and status strip.
    Lineage: born as ocr_cairo_win.h in simple_ocr_capture, matured
@@ -829,4 +830,184 @@ static int shell_spell_suggest(const wchar_t *word, wchar_t *buf, int cap) {
     sugg->lpVtbl->Release(sugg);
     return n;
 }
+/* ---- clipboard bitmap (CF_DIB): caller-supplied ARGB32 top-down rows, the
+   layout shell_grab_screen delivers and cairo ARGB32 surfaces expose, written
+   out as the bottom-up 32bpp DIB the clipboard convention expects. Alpha is
+   forced opaque: bitmap consumers ignore the channel, and a premultiplied
+   transparent pixel would otherwise show as its colour over black. ---- */
+static int shell_clip_set_image (const void *bits, int w, int h, int stride) {
+    HGLOBAL hg; BITMAPINFOHEADER *hdr; unsigned char *dst; int row, col; size_t bytes;
+    if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
+    bytes = sizeof(BITMAPINFOHEADER) + (size_t)w * 4 * (size_t)h;
+    if (!OpenClipboard(s_shell_hwnd)) return 0;
+    EmptyClipboard();
+    hg = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (hg) {
+        hdr = (BITMAPINFOHEADER*)GlobalLock(hg);
+        if (hdr) {
+            ZeroMemory(hdr, sizeof(BITMAPINFOHEADER));
+            hdr->biSize = sizeof(BITMAPINFOHEADER);
+            hdr->biWidth = w;
+            hdr->biHeight = h;                       /* positive: bottom-up */
+            hdr->biPlanes = 1;
+            hdr->biBitCount = 32;
+            hdr->biCompression = BI_RGB;
+            hdr->biSizeImage = (DWORD)((size_t)w * 4 * (size_t)h);
+            dst = (unsigned char*)(hdr + 1);
+            for (row = 0; row < h; row++) {
+                const unsigned int *src = (const unsigned int*)((const char*)bits + (size_t)(h - 1 - row) * stride);
+                unsigned int *out = (unsigned int*)(dst + (size_t)row * w * 4);
+                for (col = 0; col < w; col++) out[col] = src[col] | 0xFF000000u;
+            }
+            GlobalUnlock(hg);
+            if (!SetClipboardData(CF_DIB, hg)) { GlobalFree(hg); hg = 0; }
+        } else { GlobalFree(hg); hg = 0; }
+    }
+    CloseClipboard();
+    return hg ? 1 : 0;
+}
+
+static int shell_clip_has_image (void) {
+    return IsClipboardFormatAvailable(CF_DIB) ? 1 : 0;
+}
+
+/* Width and height of the clipboard bitmap through its DIB header;
+   returns 0 (and zero sizes) when there is none. */
+static int shell_clip_image_size (int *w, int *h) {
+    HANDLE hg; BITMAPINFOHEADER *hdr; int ok = 0;
+    *w = 0; *h = 0;
+    if (!OpenClipboard(s_shell_hwnd)) return 0;
+    hg = GetClipboardData(CF_DIB);
+    if (hg) {
+        hdr = (BITMAPINFOHEADER*)GlobalLock(hg);
+        if (hdr) {
+            *w = (int)hdr->biWidth;
+            *h = hdr->biHeight < 0 ? (int)(-hdr->biHeight) : (int)hdr->biHeight;
+            GlobalUnlock(hg);
+            ok = 1;
+        }
+    }
+    CloseClipboard();
+    return ok;
+}
+
+/* ---- input synthesis (SendInput). Lineage: OCR_CLICKER in
+   simple_ocr_capture, returned home. Absolute mouse coordinates are
+   normalised to 0..65535 over the WHOLE virtual desktop, so a second
+   monitor is addressed correctly where SetCursorPos + mouse_event depends
+   on the primary screen's origin. Every routine returns the number of
+   events Windows accepted, so a blocked injection (UIPI, secure desktop)
+   is distinguishable from one that was merely ignored. ---- */
+/* Last OS error after SendInput - SHELL_SHARED per the shared-state law
+   above, one instance however many generated files include this header. */
+SHELL_SHARED DWORD s_shell_input_error = 0;
+
+static int shell_input_last_error (void) { return (int)s_shell_input_error; }
+
+/* Where the pointer is now - the calibration primitive. */
+static int shell_input_pointer (int *x, int *y) {
+    POINT p;
+    *x = 0; *y = 0;
+    if (!GetCursorPos(&p)) return 0;
+    *x = (int)p.x; *y = (int)p.y;
+    return 1;
+}
+
+static int shell_input_on_desktop (int x, int y) {
+    int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    return (x >= vx && y >= vy && x < vx + vw && y < vy + vh) ? 1 : 0;
+}
+
+/* Move the pointer to (x, y) and left-click. restore_cursor puts the
+   pointer back afterwards; restore_focus hands the foreground window back
+   (the unattended page-turn case). Both 0 is the paste case: the click IS
+   the focus change. */
+static int shell_input_click (int x, int y, int restore_cursor, int restore_focus) {
+    POINT before; HWND before_focus; INPUT in[3]; UINT sent;
+    int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    LONG nx, ny;
+    if (vw <= 1) vw = 2;
+    if (vh <= 1) vh = 2;
+    nx = (LONG)(((double)(x - vx) * 65535.0) / (double)(vw - 1));
+    ny = (LONG)(((double)(y - vy) * 65535.0) / (double)(vh - 1));
+    if (!GetCursorPos(&before)) { before.x = 0; before.y = 0; }
+    before_focus = GetForegroundWindow();
+    ZeroMemory(in, sizeof(in));
+    in[0].type = INPUT_MOUSE; in[0].mi.dx = nx; in[0].mi.dy = ny;
+    in[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    in[1].type = INPUT_MOUSE; in[1].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    in[2].type = INPUT_MOUSE; in[2].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    sent = SendInput(3, in, sizeof(INPUT));
+    s_shell_input_error = (sent == 3) ? 0 : GetLastError();
+    if (restore_cursor) SetCursorPos(before.x, before.y);
+    if (restore_focus) {
+        /* Let the target act on the click before taking the foreground
+           back; restoring at once can arrive mid-activation. */
+        Sleep(120);
+        if (before_focus && before_focus != GetForegroundWindow()) {
+            /* A process may only set the foreground window under conditions
+               Windows decides; attaching to the foreground thread's input
+               queue is what earns the right. Refused anyway, the click still
+               stands - only the restoration is lost. */
+            DWORD this_thread = GetCurrentThreadId();
+            DWORD fore_thread = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
+            if (fore_thread && fore_thread != this_thread) {
+                AttachThreadInput(this_thread, fore_thread, TRUE);
+                SetForegroundWindow(before_focus);
+                AttachThreadInput(this_thread, fore_thread, FALSE);
+            } else {
+                SetForegroundWindow(before_focus);
+            }
+        }
+    }
+    return (int)sent;
+}
+
+/* Press vk with modifiers held: modifiers down, key down, key up,
+   modifiers up in reverse. */
+static int shell_input_chord (int ctrl, int shift, int alt, int vk) {
+    INPUT in[8]; WORD modvk[3]; int n = 0, i, mods = 0; UINT sent;
+    if (ctrl)  modvk[mods++] = VK_CONTROL;
+    if (shift) modvk[mods++] = VK_SHIFT;
+    if (alt)   modvk[mods++] = VK_MENU;
+    ZeroMemory(in, sizeof(in));
+    for (i = 0; i < mods; i++) { in[n].type = INPUT_KEYBOARD; in[n].ki.wVk = modvk[i]; n++; }
+    in[n].type = INPUT_KEYBOARD; in[n].ki.wVk = (WORD)vk; n++;
+    in[n].type = INPUT_KEYBOARD; in[n].ki.wVk = (WORD)vk; in[n].ki.dwFlags = KEYEVENTF_KEYUP; n++;
+    for (i = mods - 1; i >= 0; i--) { in[n].type = INPUT_KEYBOARD; in[n].ki.wVk = modvk[i]; in[n].ki.dwFlags = KEYEVENTF_KEYUP; n++; }
+    sent = SendInput((UINT)n, in, sizeof(INPUT));
+    s_shell_input_error = (sent == (UINT)n) ? 0 : GetLastError();
+    return (int)sent;
+}
+
+/* Type text as Unicode key events, one down/up pair per UTF-16 unit
+   (a surrogate pair arrives as two units; Windows reassembles it).
+   Chunked, so a long paragraph needs no giant allocation. Returns the
+   events accepted in total, 0 as soon as a chunk is refused. */
+static int shell_input_type_units (const wchar_t *s) {
+    return s ? (int)wcslen(s) : 0;
+}
+
+static int shell_input_type (const wchar_t *s) {
+    INPUT in[256]; size_t len, pos = 0; int total = 0;
+    if (!s) return 0;
+    s_shell_input_error = 0;
+    len = wcslen(s);
+    while (pos < len) {
+        int n = 0; UINT sent;
+        ZeroMemory(in, sizeof(in));
+        while (pos < len && n + 2 <= 256) {
+            in[n].type = INPUT_KEYBOARD; in[n].ki.wScan = (WORD)s[pos]; in[n].ki.dwFlags = KEYEVENTF_UNICODE; n++;
+            in[n].type = INPUT_KEYBOARD; in[n].ki.wScan = (WORD)s[pos]; in[n].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP; n++;
+            pos++;
+        }
+        sent = SendInput((UINT)n, in, sizeof(INPUT));
+        if (sent != (UINT)n) { s_shell_input_error = GetLastError(); return total + (int)sent; }
+        total += (int)sent;
+    }
+    return total;
+}
+
 #endif

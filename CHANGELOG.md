@@ -2,6 +2,16 @@
 
 All notable changes to simple_shell.
 
+## 1.9.0 - 2026-09-01
+
+### Added
+- SHELL_TRAY: one icon in the notification area on a message-only window
+  (no callbacks - the queue-polled pump law holds). `set_tooltip` carries
+  an unread count, `balloon` posts a notice, `remove` is idempotent; an
+  environment that refuses the icon leaves `is_installed` False and the
+  caller degrades instead of raising. Built for simple_chat's
+  TRAY_NOTIFIER (the dependency task).
+
 ## 1.8.0 - 2026-08-28
 
 ### Added

@@ -12,6 +12,27 @@ class
 inherit
 	TEST_SET_BASE
 
+feature -- Tray
+
+	test_tray_lifecycle
+			-- An icon installed, retitled, ballooned and removed; an
+			-- environment that refuses the icon passes by degrading.
+		local
+			t: SHELL_TRAY
+		do
+			create t.make ("simple_shell assault")
+			if t.is_installed then
+				t.set_tooltip ("(3) simple_shell assault")
+				t.balloon ("simple_shell", "The tray assault says hello.")
+				t.remove
+				assert ("removed", not t.is_installed and t.handle = default_pointer)
+				t.remove
+				assert ("remove is idempotent", not t.is_installed)
+			else
+				assert ("no notification area in this session", True)
+			end
+		end
+
 feature -- Desktop
 
 	test_desktop_metrics

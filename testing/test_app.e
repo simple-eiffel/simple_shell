@@ -21,6 +21,7 @@ feature {NONE} -- Initialization
 			create t
 
 			print ("=== PLATFORM SHELL ===%N")
+			run_test (agent t.test_tray_lifecycle, "tray_lifecycle")
 			run_test (agent t.test_desktop_metrics, "desktop_metrics")
 			run_test (agent t.test_desktop_grab, "desktop_grab")
 			run_test (agent t.test_clock, "clock")

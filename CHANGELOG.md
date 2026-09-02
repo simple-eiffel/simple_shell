@@ -2,6 +2,69 @@
 
 All notable changes to simple_shell.
 
+## 1.9.1 - 2026-09-02
+
+### Fixed
+- **`shell_set_window_icon` declared a local named `small`, and `small` is a
+  Windows SDK macro.** `rpcndr.h` does `#define small char`, and every COM
+  header in the fleet reaches it - `unknwn.h`, `objbase.h`, `mmdeviceapi.h`
+  (simple_audio), `dwrite.h` (simple_shaping), `sapi.h` (simple_speech). A
+  finalized Eiffel build concatenates many classes into ONE translation unit,
+  so a sibling library's COM header is routinely preprocessed AHEAD of
+  `simple_shell.h`; `HICON big, small;` then compiled as `HICON big, char;`
+  and the C phase died:
+
+  ```
+  simple_shell.h(410): error C2059: syntax error: 'type'
+  simple_shell.h(414): error C2513: 'char': no variable declared before '='
+  simple_shell.h(416): error C2059: syntax error: 'type'
+  NMAKE : fatal error U1077: 'cl ... -c big_file_C1_c.c' : return code '0x2'
+  ```
+
+  Present since 1.7.0 (commit c1bd5b5, 2026-08-26), which added the icon
+  feature. It sat unfired for a week because whether it fires depends
+  entirely on which sibling library's header lands earlier in the same
+  generated unit. Found on 2026-09-02 by the simple_widgets adoption
+  work: `ec.sh release -target sw_demo` failed in the C phase on a clean
+  main, reproducibly and independently of any other change. It **blocked
+  release builds of every GUI app in the fleet** whose unit ordering put a
+  COM header first - simple_chat's client among them. Consumers built in a
+  luckier order (simple_ocr_capture, simple_chat's test targets, and
+  simple_shell's own suite) never saw it, which is why 1.9.0 shipped green.
+
+  Fix: the locals are `l_big` and `l_small`. No C ABI, no Eiffel external
+  signature and no behaviour changed. A full sweep of the header against the
+  Windows SDK's macro and typedef namespaces (250,501 `#define`s, 16,004
+  typedefs, 10.0.26100.0) found `small` to be the ONLY declared identifier
+  in collision - `hyper`, `byte`, `boolean`, `far`, `near`, `pascal`,
+  `interface`, `min`, `max`, `IN`, `OUT` and the rest are all clear.
+
+### Added
+- **SDK-macro tripwire** so this cannot recur silently. `SDK_MACRO_TRIPWIRE`
+  (testing/) has inline externals whose `use` list pulls `shell_sdk_poison.h`
+  - which arms `rpcndr.h`'s macros - BEFORE `simple_shell.h`, mirroring the
+  include order that broke sw_demo. On the pre-1.9.1 header the test target
+  does not compile at all; that is the test. Two run-time assertions guard
+  the guard: `sdk_macro_poison_is_armed` fails loudly if a future SDK stops
+  defining `small` (a silent tripwire is worse than none) and
+  `sdk_macro_tripwire` proves the poisoned unit really reached the header.
+  The class name is load-bearing: finalized C concatenates a partition's
+  files alphabetically, so `sd` must sort ahead of every `SHELL_*` class's
+  `sh` or the include guard makes the tripwire's own include a no-op - the
+  first cut of this test passed on a broken header for exactly that reason.
+  `shell_sdk_poison.h` now `#error`s the build if it is ever sorted out of
+  position. Test-only: `testing/Clib` is on the tests target's include path
+  and nobody else's.
+- A `SHELL_SDK_MACRO_TRIPWIRE` block at the head of `simple_shell.h` stating
+  the law - no identifier this header DECLARES may live in the SDK's macro
+  namespace; locals carry the `l_` prefix - and `#error`ing by name if the
+  SDK ever captures one we do use, instead of leaving a C2059 forty lines
+  below the real cause.
+
+  Assault 17/19 from a non-interactive session (`desktop_grab` and
+  `input_keys_are_accepted` need the interactive desktop and were refused,
+  the same two as 1.8.0); 15/17 on the same machine before this change.
+
 ## 1.9.0 - 2026-09-01
 
 ### Added

@@ -1,7 +1,7 @@
 note
 	description: "[
-		The system clipboard, as text. a service: clients
-		use it so they never declare the externals.
+		The system clipboard, as text and as a bitmap. A service:
+		clients use it so they never declare the externals.
 	]"
 
 class
@@ -57,6 +57,40 @@ feature -- Access
 			Result := c_clip_has_text = 1
 		end
 
+feature -- Access: bitmap
+
+	has_image: BOOLEAN
+			-- Is there a bitmap (CF_DIB) on the clipboard?
+		do
+			Result := c_clip_has_image = 1
+		end
+
+	image_width: INTEGER
+			-- Width of the clipboard bitmap; 0 when there is none.
+		local
+			wh: MANAGED_POINTER
+		do
+			create wh.make (8)
+			if c_clip_image_size (wh.item, wh.item.plus (4)) = 1 then
+				Result := wh.read_integer_32 (0)
+			end
+		ensure
+			none_means_zero: not has_image implies Result = 0
+		end
+
+	image_height: INTEGER
+			-- Height of the clipboard bitmap; 0 when there is none.
+		local
+			wh: MANAGED_POINTER
+		do
+			create wh.make (8)
+			if c_clip_image_size (wh.item, wh.item.plus (4)) = 1 then
+				Result := wh.read_integer_32 (4)
+			end
+		ensure
+			none_means_zero: not has_image implies Result = 0
+		end
+
 feature -- Element change
 
 	set_text (a_text: READABLE_STRING_GENERAL)
@@ -73,6 +107,34 @@ feature -- Element change
 				attempts := 0
 			until
 				attempts >= 5 or else c_clip_set (ns.item) = 1
+			loop
+				create env
+				env.sleep (10_000_000)
+				attempts := attempts + 1
+			end
+		end
+
+	set_image (a_bits: POINTER; a_w, a_h, a_stride: INTEGER)
+			-- Put an ARGB32 image on the clipboard as a bitmap (CF_DIB):
+			-- `a_bits' as `a_stride'-byte top-down rows - the layout
+			-- `SHELL_DESKTOP.grab_into' delivers and cairo ARGB32
+			-- surfaces expose, so a screen grab or a decoded PNG goes
+			-- straight through. Alpha is forced opaque: bitmap consumers
+			-- ignore the channel, and a premultiplied transparent pixel
+			-- would otherwise show as its colour over black. Retries
+			-- briefly against history managers, as `set_text' does.
+		require
+			positive: a_w > 0 and a_h > 0
+			buffer: a_bits /= default_pointer
+			rows_fit: a_stride >= a_w * 4
+		local
+			env: EXECUTION_ENVIRONMENT
+			attempts: INTEGER
+		do
+			from
+				attempts := 0
+			until
+				attempts >= 5 or else c_clip_set_image (a_bits, a_w, a_h, a_stride) = 1
 			loop
 				create env
 				env.sleep (10_000_000)
@@ -107,6 +169,27 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_clip_has_text();"
+		end
+
+	c_clip_set_image (a_bits: POINTER; a_w, a_h, a_stride: INTEGER): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_clip_set_image((const void*)$a_bits, (int)$a_w, (int)$a_h, (int)$a_stride);"
+		end
+
+	c_clip_has_image: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_clip_has_image();"
+		end
+
+	c_clip_image_size (a_w, a_h: POINTER): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_clip_image_size((int*)$a_w, (int*)$a_h);"
 		end
 
 end

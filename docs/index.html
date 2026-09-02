@@ -72,7 +72,8 @@ end</pre>
     <tr><th>Class</th><th>Service</th></tr>
     <tr><td><code>SHELL_WINDOW</code></td><td><em>(deferred)</em> native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, cursor shaping</td></tr>
     <tr><td><code>SHELL_KEYS</code></td><td>physical Shift / Ctrl / Alt state</td></tr>
-    <tr><td><code>SHELL_CLIPBOARD</code></td><td>Unicode text get/set, history-manager retry, 1M-character headroom</td></tr>
+    <tr><td><code>SHELL_INPUT</code></td><td>synthesised mouse and keyboard through SendInput (1.8.0): <code>click_at</code> leaves focus where it landed, <code>click_at_quietly</code> restores pointer and foreground, <code>press_chord</code> / <code>paste</code> / <code>press_enter</code>, Unicode <code>type_text</code> with no clipboard; acceptance is a status (<code>was_accepted</code>, <code>last_os_error</code>), never a promise - it needs the interactive desktop</td></tr>
+    <tr><td><code>SHELL_CLIPBOARD</code></td><td>Unicode text get/set, history-manager retry, 1M-character headroom; <code>set_image</code> puts an ARGB32 bitmap on the clipboard as CF_DIB (1.8.0), <code>has_image</code> / <code>image_width</code> / <code>image_height</code> read what is there</td></tr>
     <tr><td><code>SHELL_SPELLER</code></td><td>Windows inbox ISpellChecker: ranges + suggestions; degrades, never fails</td></tr>
     <tr><td><code>SHELL_DESKTOP</code></td><td>virtual-screen metrics, pure screen grab into ARGB32, QPC clock, minutes-of-day, open-externally</td></tr>
     <tr><td><code>SHELL_OVERLAY</code></td><td>frozen-desktop topmost overlay (region-picker pattern)</td></tr>

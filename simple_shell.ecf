@@ -24,8 +24,14 @@
 	<target name="simple_shell_tests" extends="simple_shell">
 		<root class="TEST_APP" feature="make"/>
 		<setting name="console_application" value="true"/>
+		<!-- test-only: the SDK-macro tripwire header, never on a consumer's path -->
+		<external_include location="$(SIMPLE_EIFFEL)/simple_shell/testing/Clib"/>
 		<library name="simple_testing" location="$SIMPLE_EIFFEL/simple_testing/simple_testing.ecf"/>
 		<library name="testing" location="$ISE_LIBRARY\library\testing\testing.ecf"/>
-		<cluster name="test" location=".\testing\" recursive="true"/>
+		<cluster name="test" location=".\testing\" recursive="true">
+			<file_rule>
+				<exclude>/Clib$</exclude>
+			</file_rule>
+		</cluster>
 	</target>
 </system>

@@ -1,6 +1,6 @@
 # simple_shell
 
-![tests](https://img.shields.io/badge/tests-10%2F10-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
+![tests](https://img.shields.io/badge/tests-19%2F19-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
 
 **The Win32 platform shell for the Simple Eiffel ecosystem.** One header of
 battle-tested C, nine Eiffel classes, no rendering opinion. This is the
@@ -75,7 +75,16 @@ end
 
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
-offscreen, the spell checker is consulted. 10/10 under full DBC.
+offscreen, the spell checker is consulted. 19/19 under full DBC **at an
+interactive console**. Run it from a locked or headless session and
+`desktop_grab` and `input_keys_are_accepted` fail by design - Windows
+refuses BitBlt and SendInput there (OS error 5), and that refusal is a
+status the tests report rather than swallow.
+
+Two of the nineteen are the **SDK-macro tripwire** (`SDK_MACRO_TRIPWIRE`),
+which is really a compile-time test: it includes a COM/RPC header ahead of
+`simple_shell.h` and so fails the C phase outright if the header ever again
+declares an identifier the Windows SDK has claimed as a macro. See 1.9.1.
 
 ## Design rules it obeys
 
@@ -85,6 +94,15 @@ offscreen, the spell checker is consulted. 10/10 under full DBC.
   no separate `.c` files, no import libraries beyond `shell32`.
 - **The queue law**: C pushes events, Eiffel polls. No `$`-agent callbacks
   cross the boundary, ever (they SEGV under threaded runtimes).
+- **The SDK macro-namespace law** (1.9.1): no identifier `simple_shell.h`
+  declares may collide with a Windows SDK macro - `small`, `hyper`, `byte`,
+  `boolean`, `far`, `near`, `pascal`, `interface`, `min`, `max` and friends.
+  Locals carry the `l_` prefix. This is not pedantry: a finalized build
+  concatenates many classes into one translation unit, so a sibling
+  library's COM header can be preprocessed ahead of this one, and a local
+  named `small` becomes `char`. It silently blocked release builds of GUI
+  apps depending on nothing but generated-file ordering. The tripwire test
+  now fails the build instead.
 
 ## Lineage
 

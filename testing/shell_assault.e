@@ -290,4 +290,33 @@ feature -- Input synthesis
 			assert ("and both accepted", i.was_accepted)
 		end
 
+feature -- SDK macro tripwire
+
+	test_sdk_macro_poison_is_armed
+			-- The tripwire is only a tripwire while a Windows SDK
+			-- header really does `#define small char'. If a future SDK
+			-- stops, this fails and tells us to re-point it - a silent
+			-- tripwire is worse than none.
+		local
+			t: SDK_MACRO_TRIPWIRE
+		do
+			create t
+			assert ("an SDK header still poisons `small' - if not, re-point the tripwire",
+				t.poison_is_in_force)
+		end
+
+	test_sdk_macro_tripwire
+			-- simple_shell.h compiles in a translation unit that pulled
+			-- a COM/RPC header FIRST - the order a finalized build hands
+			-- it when a sibling library's COM header lands earlier in the
+			-- same concatenated unit. On the pre-1.9.1 header (`HICON
+			-- big, small;') the C phase died with C2059 / C2513 and this
+			-- target never linked, so reaching this line is the proof.
+		local
+			t: SDK_MACRO_TRIPWIRE
+		do
+			create t
+			assert ("the header survived the SDK macros", t.header_survived_the_poison)
+		end
+
 end

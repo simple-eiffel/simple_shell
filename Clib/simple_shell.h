@@ -1010,4 +1010,64 @@ static int shell_input_type (const wchar_t *s) {
     return total;
 }
 
+/* ============ Notification area (SHELL_TRAY) ============
+   One icon per SHELL_TRAY instance, anchored on a message-only window
+   (DefWindowProc: no callbacks, honoring the queue-polled pump law).
+   Stateless helpers - the HWND is the identity and lives Eiffel-side.
+   RegisterClassW failing with "already exists" is expected after the
+   first instance and harmless. All functions: 1 on success, 0 on failure. */
+
+static HWND shell_tray_add(const wchar_t* tip) {
+    WNDCLASSW wc; HWND h; NOTIFYICONDATAW nid;
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = DefWindowProcW;
+    wc.hInstance = GetModuleHandleW(NULL);
+    wc.lpszClassName = L"SimpleShellTrayWnd";
+    RegisterClassW(&wc); /* ERROR_CLASS_ALREADY_EXISTS: fine */
+    h = CreateWindowExW(0, L"SimpleShellTrayWnd", L"", 0, 0, 0, 0, 0,
+                        HWND_MESSAGE, NULL, wc.hInstance, NULL);
+    if (!h) return NULL;
+    memset(&nid, 0, sizeof(nid));
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = h; nid.uID = 1;
+    nid.uFlags = NIF_ICON | NIF_TIP;
+    nid.hIcon = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
+    if (tip) { wcsncpy(nid.szTip, tip, 127); nid.szTip[127] = 0; }
+    if (!Shell_NotifyIconW(NIM_ADD, &nid)) { DestroyWindow(h); return NULL; }
+    return h;
+}
+
+static int shell_tray_set_tip(HWND h, const wchar_t* tip) {
+    NOTIFYICONDATAW nid;
+    if (!h) return 0;
+    memset(&nid, 0, sizeof(nid));
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = h; nid.uID = 1; nid.uFlags = NIF_TIP;
+    if (tip) { wcsncpy(nid.szTip, tip, 127); nid.szTip[127] = 0; }
+    return Shell_NotifyIconW(NIM_MODIFY, &nid) ? 1 : 0;
+}
+
+static int shell_tray_balloon(HWND h, const wchar_t* title, const wchar_t* body) {
+    NOTIFYICONDATAW nid;
+    if (!h) return 0;
+    memset(&nid, 0, sizeof(nid));
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = h; nid.uID = 1; nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_INFO;
+    if (title) { wcsncpy(nid.szInfoTitle, title, 63); nid.szInfoTitle[63] = 0; }
+    if (body)  { wcsncpy(nid.szInfo, body, 255); nid.szInfo[255] = 0; }
+    return Shell_NotifyIconW(NIM_MODIFY, &nid) ? 1 : 0;
+}
+
+static int shell_tray_remove(HWND h) {
+    NOTIFYICONDATAW nid; int ok;
+    if (!h) return 0;
+    memset(&nid, 0, sizeof(nid));
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = h; nid.uID = 1;
+    ok = Shell_NotifyIconW(NIM_DELETE, &nid) ? 1 : 0;
+    DestroyWindow(h);
+    return ok;
+}
+
 #endif

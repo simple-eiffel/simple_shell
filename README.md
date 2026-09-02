@@ -64,6 +64,7 @@ end
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |
 | `SHELL_STRIP` | small topmost tool-window strip (the dictation-bar pattern) |
 | `SHELL_OUTLINES` | click-through coloured frame regions on the desktop (the region-outline pattern) |
+| `SHELL_TRAY` | one notification-area icon on a message-only window (1.9.0): `set_tooltip` (unread counts), `balloon` notices, idempotent `remove`; a refusing environment leaves `is_installed` False and the caller degrades |
 
 ## Build and test
 

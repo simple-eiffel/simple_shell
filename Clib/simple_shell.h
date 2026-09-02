@@ -14,6 +14,24 @@
 #include <shellapi.h>
 #pragma comment(lib, "shell32.lib")
 
+/* SHELL_SDK_MACRO_TRIPWIRE - the 1.9.1 defect.
+   rpcndr.h - reached from ANY COM header (unknwn.h, objbase.h,
+   mmdeviceapi.h, dwrite.h, sapi.h ...) - does `#define small char'
+   and `#define hyper __int64'. A FINALIZED Eiffel build concatenates
+   many classes into one translation unit, so a sibling library's COM
+   header is routinely preprocessed AHEAD of this one; a local named
+   `small' then compiles as `char' and the C phase dies with C2059
+   forty lines below the real cause. Law: no identifier this header
+   DECLARES may live in the SDK's macro namespace - locals carry the
+   l_ prefix. The block below says so out loud if the SDK ever
+   captures a name we do use. The tripwire test that would have caught
+   the original is SDK_MACRO_TRIPWIRE in testing/: it includes a
+   COM/RPC header BEFORE this one, exactly as the failing app did. */
+#if defined(l_big) || defined(l_small) || defined(shell_push) || \
+    defined(shell_set_window_icon) || defined(shell_set_cursor_kind)
+#error "simple_shell.h: a Windows SDK macro has captured an identifier this header declares - rename it (see SHELL_SDK_MACRO_TRIPWIRE)."
+#endif
+
 /* Shared-state law (the 1.8.0 lockup): this header is included by the
    inline externals of SEVERAL classes, and finalized C compiles each
    class into its own translation unit - a file-scope `static' here is
@@ -407,13 +425,20 @@ static void shell_set_window_icon(const wchar_t* path) {
     /* Title-bar and taskbar icon from a .ico FILE beside the exe -
        the resource-free route (finalized Eiffel binaries carry no
        custom resources). Multi-size .ico: Windows picks per use. */
-    HICON big, small;
+    /* NEVER name a local `small' (or `hyper', `byte', `boolean'): rpcndr.h,
+       reached through unknwn.h from any COM header (mmdeviceapi.h, dwrite.h,
+       objbase.h ...), does `#define small char'. A finalized build bundles
+       many classes into ONE translation unit, so a sibling library's COM
+       header can be preprocessed ahead of this one and the declaration below
+       becomes `HICON big, char;'. See SHELL_SDK_MACRO_TRIPWIRE at the head of
+       this header and SDK_MACRO_TRIPWIRE in testing/. */
+    HICON l_big, l_small;
     if (!s_shell_hwnd || !path) return;
-    big = (HICON)LoadImageW(NULL, path, IMAGE_ICON, 0, 0,
+    l_big = (HICON)LoadImageW(NULL, path, IMAGE_ICON, 0, 0,
         LR_LOADFROMFILE | LR_DEFAULTSIZE);
-    small = (HICON)LoadImageW(NULL, path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
-    if (big)   SendMessageW(s_shell_hwnd, WM_SETICON, ICON_BIG,   (LPARAM)big);
-    if (small) SendMessageW(s_shell_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
+    l_small = (HICON)LoadImageW(NULL, path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
+    if (l_big)   SendMessageW(s_shell_hwnd, WM_SETICON, ICON_BIG,   (LPARAM)l_big);
+    if (l_small) SendMessageW(s_shell_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)l_small);
 }
 
 static void shell_kill_fast_timer(void) {

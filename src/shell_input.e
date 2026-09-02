@@ -227,8 +227,13 @@ feature {NONE} -- Externals
 		end
 
 	c_input_click (a_x, a_y, a_restore_cursor, a_restore_focus: INTEGER): INTEGER
+			-- SendInput, then - when the focus is to be restored - a
+			-- deliberate `Sleep(120)' so the target can act on the click
+			-- before the foreground is taken back.
+			--
+			-- SAFE: four integers in, one out; the INPUT array is a C local.
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_input_click((int)$a_x, (int)$a_y, (int)$a_restore_cursor, (int)$a_restore_focus);"
 		end

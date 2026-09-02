@@ -1,6 +1,6 @@
 # simple_shell
 
-![tests](https://img.shields.io/badge/tests-19%2F19-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
+![tests](https://img.shields.io/badge/tests-19%2F19-brightgreen) ![freeze assault](https://img.shields.io/badge/freeze%20assault-4%2F4-brightgreen) ![platform](https://img.shields.io/badge/platform-Win32-blue) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
 
 **The Win32 platform shell for the Simple Eiffel ecosystem.** One header of
 battle-tested C, nine Eiffel classes, no rendering opinion. This is the
@@ -86,6 +86,14 @@ which is really a compile-time test: it includes a COM/RPC header ahead of
 `simple_shell.h` and so fails the C phase outright if the header ever again
 declares an identifier the Windows SDK has claimed as a macro. See 1.9.1.
 
+A second, SCOOP target carries the **freeze assault** - the vector test for
+the blocking-marker law below. It needs no window and no user:
+
+```
+/d/prod/ec.sh test -config simple_shell.ecf -target simple_shell_scoop_tests
+./EIFGENs/simple_shell_scoop_tests/F_code/simple_shell.exe
+```
+
 ## Design rules it obeys
 
 - **Design by Contract** throughout; the finalized test binary keeps assertions.
@@ -94,6 +102,18 @@ declares an identifier the Windows SDK has claimed as a macro. See 1.9.1.
   no separate `.c` files, no import libraries beyond `shell32`.
 - **The queue law**: C pushes events, Eiffel polls. No `$`-agent callbacks
   cross the boundary, ever (they SEGV under threaded runtimes).
+- **The blocking law** (1.9.2): every external that WAITS is marked
+  `external "C blocking inline"`. ISE's collector stops every thread of the
+  system before it collects and cannot stop a thread inside an unmarked
+  external, so an unmarked wait freezes **every other processor** at its next
+  allocation for the length of the wait. `GetMessageW`, `TrackPopupMenu`, the
+  windowless pump, the click's settle sleep and the four spell-checker COM
+  calls are all marked. The guarantee to consumers: **a pump in flight never
+  stops another processor's allocator.** A marker is only ever added when the
+  C code touches no Eiffel-collected memory while it waits - which the queue
+  law above already guarantees for the pump. `c_grab` is deliberately left
+  unmarked: its buffer belongs to the caller, and that provenance cannot be
+  proved from here. See 1.9.2.
 - **The SDK macro-namespace law** (1.9.1): no identifier `simple_shell.h`
   declares may collide with a Windows SDK macro - `small`, `hyper`, `byte`,
   `boolean`, `far`, `near`, `pascal`, `interface`, `min`, `max` and friends.

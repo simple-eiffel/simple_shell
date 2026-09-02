@@ -125,29 +125,46 @@ feature {NONE} -- Implementation
 feature {NONE} -- Externals
 
 	c_spell_check (a_text, a_out: POINTER; a_cap: INTEGER): INTEGER
+			-- The FIRST call runs `shell_spell_init': CoInitializeEx plus a
+			-- CoCreateInstance that loads the Windows spell-checking service
+			-- and its language dictionary - hundreds of milliseconds, cold.
+			-- Every call after it is a COM round trip. Long CPU and a wait
+			-- on another component, so the collector must not be held.
+			--
+			-- SAFE, and CHECKED: `misspellings' is the only caller and both
+			-- buffers are the C heap - `NATIVE_STRING.item' in, a
+			-- MANAGED_POINTER out. No `$' of an Eiffel area crosses.
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_spell_check((const wchar_t*)$a_text, (int*)$a_out, (int)$a_cap);"
 		end
 
 	c_spell_ignore (a_word: POINTER): INTEGER
+			-- Same COM object, same first-call initialisation, same proof:
+			-- `ignore' passes `NATIVE_STRING.item', which is C heap.
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_spell_ignore((const wchar_t*)$a_word);"
 		end
 
 	c_spell_add (a_word: POINTER): INTEGER
+			-- Writes the user's Windows dictionary through the same COM
+			-- object - a disk write behind a COM call. `add_to_dictionary'
+			-- passes `NATIVE_STRING.item', which is C heap.
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_spell_add((const wchar_t*)$a_word);"
 		end
 
 	c_spell_suggest (a_word, a_buf: POINTER; a_cap: INTEGER): INTEGER
+			-- Same COM object again. CHECKED: `suggestions' passes
+			-- `NATIVE_STRING.item' in and a MANAGED_POINTER out - both the
+			-- C heap.
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_spell_suggest((const wchar_t*)$a_word, (wchar_t*)$a_buf, (int)$a_cap);"
 		end

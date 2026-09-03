@@ -31,7 +31,29 @@
 		<cluster name="test" location=".\testing\" recursive="true">
 			<file_rule>
 				<exclude>/Clib$</exclude>
+				<exclude>/scoop$</exclude>
 			</file_rule>
 		</cluster>
+	</target>
+
+	<!-- THE FREEZE ASSAULT (1.9.2). Every external in this library that WAITS -
+	     GetMessageW, the windowless pump, TrackPopupMenu, the click's settle sleep -
+	     was declared plain `external "C inline"'. ISE's collector stops every thread
+	     before it collects and cannot stop a thread inside an unmarked external, so
+	     the collection waited for the pump and every OTHER processor waited with it
+	     at its next allocation. Proving that needs a second processor allocating
+	     while the first is inside the pump, so this target is SCOOP where the others
+	     are threads. It needs no window and no user: `SHELL_DESKTOP.pump_for' is the
+	     vector, so the assault runs headless. -->
+	<target name="simple_shell_scoop_tests" extends="simple_shell">
+		<root class="SCOOP_TEST_APP" feature="make"/>
+		<option warning="warning">
+			<assertions precondition="true" postcondition="true" check="true" invariant="true" loop="true" supplier_precondition="true"/>
+		</option>
+		<setting name="console_application" value="true"/>
+		<capability>
+			<concurrency use="scoop"/>
+		</capability>
+		<cluster name="scoop_tests" location=".\testing\scoop\" recursive="true"/>
 	</target>
 </system>

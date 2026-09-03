@@ -2,6 +2,134 @@
 
 All notable changes to simple_shell.
 
+## 1.9.2 - 2026-09-02
+
+### Fixed
+- **Every external in this library that WAITS is now marked `blocking`.**
+  A platform shell is, almost by definition, a stack of waits: `GetMessageW`
+  until the desktop has a message, `TrackPopupMenu` until the user picks,
+  `Sleep(5)` around a windowless pump for the caller's whole span. All of
+  them were declared plain `external "C inline use "simple_shell.h""`.
+
+  ISE's garbage collector stops every thread of the system before it
+  collects, and a thread inside an unmarked external is one the runtime can
+  neither see nor stop: the collection WAITS for that call to return, and
+  every other processor waits with it, at its very next allocation. The
+  library that owns the message pump was therefore the library best placed
+  to stop the whole program.
+
+  The class was proved in simple_winhttp on 2026-09-02 (0.1.1) - Larry's
+  simple_chat window froze 13 times for 211 seconds in one 20-minute
+  session, and the stall was in the ROOT PROCESSOR'S ALLOCATOR, not in any
+  wiring. simple_shell was audited for the same shape immediately after and
+  had nine instances of it.
+
+  MARKED, with the safety check that permits each:
+
+  | external | the wait | why marking is safe |
+  |---|---|---|
+  | `SHELL_WINDOW.shell_pump` | `GetMessageW` - until Windows has a message | the `MSG` is a C local; the window proc writes only C memory |
+  | `SHELL_WINDOW.shell_text_menu_ext` | `TrackPopupMenu` - until the user picks | four integers in, one out; every menu string is a C literal |
+  | `SHELL_DESKTOP.pump_for` | a `Sleep(5)` loop for the caller's whole span | one integer in, nothing out; `MSG` is a C local |
+  | `SHELL_DESKTOP.c_shell_open` | `ShellExecuteW` - a cold association wakes a COM server | CHECKED: the sole caller passes `NATIVE_STRING.item`, a `MANAGED_POINTER` on the C heap |
+  | `SHELL_INPUT.c_input_click` | a deliberate `Sleep(120)` before restoring focus | four integers in, one out; the `INPUT` array is a C local |
+  | `SHELL_SPELLER.c_spell_check` | `CoCreateInstance` + dictionary load on first call, a COM round trip after | CHECKED: `NATIVE_STRING.item` in, `MANAGED_POINTER` out - both C heap |
+  | `SHELL_SPELLER.c_spell_suggest` | same COM object | CHECKED: same two buffer kinds |
+  | `SHELL_SPELLER.c_spell_ignore` | same COM object | CHECKED: `NATIVE_STRING.item` |
+  | `SHELL_SPELLER.c_spell_add` | same COM object, and a dictionary file write | CHECKED: `NATIVE_STRING.item` |
+
+  The rule the checks apply: mark only when the C code touches no
+  Eiffel-collected memory while it waits. C locals, the C heap,
+  `MANAGED_POINTER` and `C_STRING` are fine; the address of an Eiffel
+  attribute or `SPECIAL` area is not, because the collection the marker
+  permits may MOVE it. This library passes the rule everywhere by
+  construction: the queue law - **C pushes events into a static C array,
+  Eiffel polls; no `$`-callback ever crosses** - is what makes it SEGV-proof
+  under `EIF_THREADS`, and it is the same property that makes the marker
+  safe.
+
+  LEFT UNMARKED, deliberately:
+  - `SHELL_DESKTOP.c_grab` (full-screen `BitBlt`). Long CPU, not a wait, so
+    there is no idle span to hand back - and the buffer is the CALLER'S. The
+    only in-fleet caller (`SW_SCREEN`, through `CAIRO_SURFACE.data`) supplies
+    cairo's own C heap, but the signature admits any `POINTER` and this
+    library cannot prove a consumer did not hand it `$` of an Eiffel area.
+    An unverifiable safety obligation is not one to export to consumers.
+  - The `Sleep(100)` in `shell_watchdog_main`. That loop runs on a raw OS
+    thread created with `CreateThread`, which never enters the Eiffel runtime
+    at all; there is no external to mark and no collector to hold.
+  - Everything else. `shell_next_event`, the clipboard calls, the metrics,
+    the window services: microseconds, and `OpenClipboard` fails rather than
+    waits when another process holds the clipboard.
+
+  WHAT THE UNMARKED `GetMessageW` ACTUALLY COST THE CHAT CLIENT. `GetMessageW`
+  blocks until ANY message arrives, which on a genuinely idle desktop is
+  unbounded - so the audit's first question was whether anything guarantees
+  one. It does: `shell_create_window` installs `SetTimer(h, 1, 250, 0)`
+  unconditionally on every window it makes, and its `WM_TIMER` handler pushes
+  the heartbeat event. That timer is killed only at `WM_DESTROY`, which
+  immediately posts `WM_QUIT` and ends the pump anyway. simple_chat's client
+  is an `SW_WINDOW` and does not arm the optional fast timer, so it lives on
+  the 250 ms heartbeat.
+
+  So the chat client was in the BOUNDED case, and this defect is NOT what
+  froze its window for 8 to 25 seconds - `SIMPLE_WINHTTP.c_send` was. What
+  the unmarked pump cost was a stall of up to 250 ms on **every other
+  processor, at its next allocation, for every collection** - the event
+  poller and the inbox among them. That is under the ~5 s at which Windows
+  ghosts a window, and over fifteen frames. A consumer that closes its window
+  and keeps pumping, or one on a desktop where the heartbeat is throttled,
+  would have had no bound at all. The marker removes the whole question.
+
+### Added
+- `simple_shell_scoop_tests` - a SCOOP target carrying the vector test that
+  would have caught this. `BLOCKING_PROBE` holds the law itself (the same
+  3 s wait taken three ways: an Eiffel sleep, an unmarked C call, the same
+  call marked `blocking`); `SHELL_PUMPER` drives the REAL
+  `SHELL_DESKTOP.pump_for` from its own processor while the root does nothing
+  but allocate. `pump_for` is the vector because it needs no window and no
+  user, so the assault runs headless and unattended.
+
+  RED (`pump_for` unmarked), two runs: worst allocation on the root
+  **3,009 ms** and **3,004 ms**, for pumps of 3,008 ms and 3,002 ms. The root
+  waited out the entire pump. 3 passed, 1 failed.
+  GREEN (marked), four runs: **3, 3, 3 and 4 ms**, for pumps of 3,000 / 3,003
+  / 2,990 / 3,003 ms. 4 passed, 0 failed. The bound is 500 ms - three orders
+  of magnitude off the measured green, so nothing here is tuned to just
+  barely pass. The controls, unchanged by the fix and reading the same in
+  both columns: an Eiffel sleep costs the root 3-5 ms, an unmarked C sleep
+  3,006-3,136 ms, the same C sleep marked `blocking` 3-6 ms.
+
+  THE PROBE MUST RETAIN A LIVE SET, AND MUST ASK. Every allocation burst
+  keeps 200 KiB of what it allocates, so the heap grows and the collector has
+  real work when it runs. That alone left the instrument FLAKY: measured on
+  2026-09-02, roughly one run in four the runtime answered a whole six-second
+  burst train out of a free list an earlier test had left it, never
+  collected, and the UNMARKED wait scored 3 ms - the freeze reported as
+  absent when it was merely unexercised, on the very test whose job is to
+  prove the freeze exists. Each burst therefore also ASKS, with
+  `MEMORY.full_collect`, inside the timed span. That is the honest probe for
+  this defect: what the marker changes is not whether a collection is wanted
+  but whether a requested one can proceed while another processor is inside
+  C. With the ask in place the law tests read identically across every run.
+
+### Verified at the consumers
+Nothing downstream was edited; all three were clean-built against this branch.
+
+| consumer | before (main) | after (1.9.2) |
+|---|---|---|
+| `simple_shell_tests` | 17 passed, 2 failed | 17 passed, 2 failed |
+| `simple_widgets_tests` | 203 passed, 1 failed | 203 passed, 1 failed |
+| `simple_ocr_capture_tests` | - | 75 passed, 0 failed |
+| `simple_chat` `simple_chat_client` | - | finalizes (lean + DBC) |
+
+The failures on both sides of the change are the documented headless ones -
+`desktop_grab` / `input_keys_are_accepted` here and `screen_grab_marries_cairo`
+in simple_widgets - where Windows refuses `BitBlt` and `SendInput` from a
+session without an interactive desktop (OS error 5). They were measured on
+main and on the branch and are identical. Zero new compiler warnings; the
+final proof builds were clean compiles.
+
 ## 1.9.1 - 2026-09-02
 
 ### Fixed

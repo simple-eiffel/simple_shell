@@ -96,10 +96,18 @@ feature -- Pumping
 			-- WITHOUT a main window: lets facility windows
 			-- (outlines, the strip) paint during short windowless
 			-- diagnostics. Returns at the deadline regardless.
+			--
+			-- `blocking': this is a `Sleep(5)' loop for the WHOLE span the
+			-- caller asked for. Unmarked, ISE's collector could not begin
+			-- while it ran, so every other processor stopped at its next
+			-- allocation for that entire span.
+			--
+			-- SAFE: one integer in, nothing out; the `MSG' is a C local and
+			-- the dispatched window procs write only static C memory.
 		require
 			positive: a_ms > 0
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"shell_pump_for($a_ms);"
 		end
@@ -119,6 +127,14 @@ feature -- Shell
 feature {NONE} -- Externals
 
 	c_grab (a_x, a_y, a_w, a_h: INTEGER; a_bits: POINTER; a_stride: INTEGER): INTEGER
+			-- DELIBERATELY NOT `blocking'. A full-screen BitBlt is long CPU,
+			-- not a wait, so there is no idle span to hand back; and the
+			-- buffer is the CALLER'S. The only in-fleet caller (SW_SCREEN,
+			-- through `CAIRO_SURFACE.data') supplies cairo's own C heap, but
+			-- the signature admits any POINTER, and this library cannot
+			-- prove a consumer did not hand it `$' of an Eiffel area. The
+			-- marker would let a collection MOVE that area mid-BitBlt.
+			-- An unverifiable safety obligation is not one to export.
 		external
 			"C inline use %"simple_shell.h%""
 		alias
@@ -126,8 +142,16 @@ feature {NONE} -- Externals
 		end
 
 	c_shell_open (a_path: POINTER): INTEGER
+			-- `ShellExecuteW', which hands the path to the shell and can
+			-- sit there while a COM server, a browser or a mapped drive
+			-- wakes up - seconds, on a cold association.
+			--
+			-- SAFE, and CHECKED: `open_externally' is the only caller and it
+			-- passes `NATIVE_STRING.item', whose bytes are a MANAGED_POINTER
+			-- allocated by `memory_alloc' - the C heap, not Eiffel-collected
+			-- memory. No copy was needed; only the marker.
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_shell_open((const wchar_t*)$a_path);"
 		end

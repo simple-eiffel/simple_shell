@@ -274,8 +274,23 @@ feature {NONE} -- Externals
 		end
 
 	shell_pump: INTEGER
+			-- One `GetMessageW': it BLOCKS until Windows has a message
+			-- for this thread, and on an idle desktop that is unbounded
+			-- but for the 250 ms heartbeat `shell_create_window' installs.
+			--
+			-- `blocking' because ISE's collector stops every thread of the
+			-- system before it collects and cannot stop a thread inside an
+			-- unmarked external: the collection waits for the pump, and
+			-- every OTHER processor waits with it at its next allocation.
+			--
+			-- SAFE: the `MSG' is a C local, and the window proc this
+			-- dispatches into writes only C memory - the event queue is a
+			-- static C int array and the drop buffer a static wchar array.
+			-- The no-callbacks-into-Eiffel rule that makes this library
+			-- SEGV-proof under EIF_THREADS is exactly what makes the
+			-- marker safe here.
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_pump();"
 		end
@@ -316,8 +331,13 @@ feature {NONE} -- Externals
 		end
 
 	shell_text_menu_ext (a_cut, a_copy, a_paste, a_sel: INTEGER): INTEGER
+			-- `TrackPopupMenu', which does not return until the user picks
+			-- an item or dismisses the menu - an unbounded human wait.
+			--
+			-- SAFE: four integers in, one integer out; every string the
+			-- menu shows is a C literal in the header.
 		external
-			"C inline use %"simple_shell.h%""
+			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_text_menu($a_cut, $a_copy, $a_paste, $a_sel);"
 		end

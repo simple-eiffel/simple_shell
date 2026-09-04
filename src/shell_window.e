@@ -60,6 +60,16 @@ feature -- Operation
 			-- 21..23 status strip; 31..37 overlay (renumbered
 			-- 2026-08-23 out of the main window's namespace;
 			-- 36 accept and 37 arrow arrived with adjust mode).
+			--
+			-- THE ALT DOOR (1.9.3). Type 4 carries the stepping keys
+			-- from WM_KEYDOWN, and since 1.9.3 also Alt+letter,
+			-- Alt+digit and F10 from WM_SYSKEYDOWN - the message
+			-- Windows uses for a key pressed while Alt is held. Ask
+			-- `SHELL_KEYS.alt_down' for the modifier; the event type
+			-- and this signature did not change, and Alt+F4,
+			-- Alt+Space, Alt+Enter, Alt+Tab and Alt alone still go
+			-- to the system. Before 1.9.3 Alt+F opened the system
+			-- menu and no menu mnemonic could be built on this shell.
 		deferred
 		end
 

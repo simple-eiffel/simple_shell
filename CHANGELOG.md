@@ -2,6 +2,101 @@
 
 All notable changes to simple_shell.
 
+## 1.9.3 - 2026-09-03
+
+### Fixed
+- **THE ALT DOOR: Alt+letter now reaches the window.**
+  Windows routes a key pressed while Alt is held to `WM_SYSKEYDOWN`, not
+  `WM_KEYDOWN`, and hands the letter behind it to `WM_SYSCHAR`. This header
+  answered `WM_SYSKEYDOWN` for the OEM/numpad plus-minus pair alone and let
+  every other syskey fall through to `DefWindowProc`; it swallowed
+  `WM_SYSCHAR` for those same four keys alone.
+
+  The consequence was narrow and total. `SHELL_KEYS.alt_down` reported the
+  Alt modifier perfectly - it reads `GetKeyState(VK_MENU)` the way
+  `shift_down` reads `VK_SHIFT` - so an application could register an Alt
+  accelerator and the modifier would match. But **Alt+F never arrived. It
+  opened the system menu.** A menu mnemonic - Alt+F for `&File`, the oldest
+  gesture on the platform - could not be built on this shell at any layer
+  above it.
+
+  `simple_widgets` found the hole on 2026-09-02 and named it *the Alt gap*
+  in `SW_WINDOW`'s class note and its README rather than hiding it:
+  `activate_mnemonic` was implemented, contracted and tested, and nothing
+  could call it. The missing half was here, in eleven lines of C.
+
+  **NOW CLAIMED by the window**, pushed as the ordinary key-down event
+  (type 4, virtual key in field a) that the arrows have always used:
+
+  | claimed | why |
+  |---|---|
+  | Alt + `A`..`Z` | menu mnemonics - the gesture that was impossible |
+  | Alt + `0`..`9` | numbered picks |
+  | Alt + OEM/numpad plus and minus | as since 1.8 - unchanged |
+  | `F10` | Windows sends it as `WM_SYSKEYDOWN` with no Alt at all, being the documented menu key |
+
+  The `WM_SYSCHAR` behind each is swallowed - letters in both cases, since
+  Alt+Shift+F arrives as `F` - or `DefWindowProc` would open the system menu
+  on the matching mnemonic behind the application's back or, finding none,
+  beep on every keystroke.
+
+  **LEFT TO `DefWindowProc`, deliberately.** This half is the one a careless
+  widening would break, and it is asserted on by its own test:
+
+  | left alone | why |
+  |---|---|
+  | Alt+F4 (`VK_F4`) | closes the window. It must keep closing it. |
+  | Alt+Space (`VK_SPACE`) | the system menu - and its `WM_SYSCHAR` is a space, which the swallow list does not claim, so the menu still opens |
+  | Alt+Enter (`VK_RETURN`) | the properties / fullscreen convention |
+  | Alt+Tab, Alt+Shift+Tab, Alt+Esc | the shell eats these; they never reach any window procedure |
+  | Alt alone (`VK_MENU`) and its key-up | the menu-key contract. Nothing needs the keystroke: `alt_down` already answers the state, and a window with no menu bar has no underlines to reveal - Larry asked for "Alt / Alt+F, no mnemonic underlines" |
+  | Alt+F1..F9, F11, F12 | unclaimed; F10 is the one menu key |
+  | Alt+arrow / Home / End / Page / Delete | unclaimed; the unmodified forms arrive on the `WM_KEYDOWN` door as they always have |
+
+  **Nothing was renumbered and no signature moved.** Event 4 is the same
+  event 4, with the same three-integer `dispatch`; a consumer reads the key
+  through the door it already reads arrows through and asks `alt_down` for
+  the modifier. That is why `simple_widgets` needed no change to receive
+  this: its `dispatch_plain` already tries the accelerator table on event 4
+  by virtual key, and `SW_TEXT_BOX.handle_key` already ends its `inspect`
+  with an empty `else`, so an unclaimed Alt+letter reaching a focused text
+  box does nothing.
+
+### Added
+- **The policy is two pure predicates**, `shell_syskey_is_ours` and
+  `shell_syschar_is_ours`, and the window procedure does nothing but consult
+  them. That is not decoration: a real Alt+F needs a visible window holding
+  the focus and a synthesised keystroke on the tester's own desktop, and this
+  library will not take a machine away from the person sitting at it. Naming
+  the policy makes it assertable with no window, no desktop and no keystroke.
+- `SHELL_SYSKEY_PROBE` (testing/): both predicates, plus `deliver_syskeydown`,
+  which hands `WM_SYSKEYDOWN(a_vk)` to the window procedure itself from its
+  own translation unit with a null `HWND` - safe because the claimed branch
+  never touches the handle, and restricted to claimed keys BY CONTRACT
+  (`require claimed`), because an unclaimed one would fall through to
+  `DefWindowProcW` and DefWindowProc without a window is not something this
+  library will ask for.
+- `SHELL_TEST_WINDOW.drain_key`, the general form of `drain_marker`: drains
+  the shared queue through `SHELL_WINDOW`'s own external and answers whether
+  a key-down carrying a given virtual key came out.
+- Three tests (17 -> 20 passing, the same 2 documented headless refusals):
+  `alt_keys_are_claimed`, `system_alt_keys_are_left_alone`,
+  `alt_letter_reaches_the_queue`.
+
+### Tested by inspection only, said plainly
+- **That Windows delivers Alt+F to the window procedure as `WM_SYSKEYDOWN`
+  at all.** That is the operating system's documented contract, not this
+  library's behaviour, and reaching it needs a visible window with the focus
+  and a synthetic keystroke on a live desktop. Everything on this side of
+  that line - which keys the procedure claims, which it refuses, which
+  `WM_SYSCHAR` it eats, and that a claimed key comes back out of the pump's
+  own drain as event 4 across translation units - is asserted.
+
+### Changed
+- The SDK macro-namespace tripwire (1.9.1) grew to cover the identifiers
+  this version declares: `shell_syskey_is_ours`, `shell_syschar_is_ours`,
+  `l_vk`, `l_ch`.
+
 ## 1.9.2 - 2026-09-02
 
 ### Fixed

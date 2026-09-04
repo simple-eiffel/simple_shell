@@ -27,7 +27,9 @@
    captures a name we do use. The tripwire test that would have caught
    the original is SDK_MACRO_TRIPWIRE in testing/: it includes a
    COM/RPC header BEFORE this one, exactly as the failing app did. */
-#if defined(l_big) || defined(l_small) || defined(shell_push) || \
+#if defined(l_big) || defined(l_small) || defined(l_vk) || defined(l_ch) || \
+    defined(shell_push) || defined(shell_syskey_is_ours) || \
+    defined(shell_syschar_is_ours) || \
     defined(shell_set_window_icon) || defined(shell_set_cursor_kind)
 #error "simple_shell.h: a Windows SDK macro has captured an identifier this header declares - rename it (see SHELL_SDK_MACRO_TRIPWIRE)."
 #endif
@@ -51,6 +53,8 @@
 
 /* Event queue: [type, a, b, c] per slot.
    main window:  2 lbutton(x,y) | 3 char(code) | 4 keydown(vk) | 6 expose | 7 tick
+   (4 also carries the Alt door of 1.9.3: Alt+letter, Alt+digit and
+    F10 arrive as key-downs, the modifier read via shell_alt_down)
    overlay:     31 move(x,y)   | 32 down(x,y) | 33 up(x,y)    | 34 cancel | 35 expose
                 36 accept (Enter) | 37 arrow(vk) - the adjust-mode keys
    (overlay renumbered 2026-08-23: 12..16 collided with the main window's
@@ -83,6 +87,60 @@ static void shell_push(int t, int a, int b, int c) {
     s_shell_q[s_shell_qtail][2] = b;
     s_shell_q[s_shell_qtail][3] = c;
     s_shell_qtail = next;
+}
+
+/* ---- THE ALT DOOR (1.9.3). Windows routes a key pressed while Alt is
+   held to WM_SYSKEYDOWN, not WM_KEYDOWN, and hands the letter that
+   follows to WM_SYSCHAR. Before 1.9.3 this header answered WM_SYSKEYDOWN
+   for the OEM plus/minus pair alone and let every other syskey fall
+   through to DefWindowProc: `shell_alt_down' said Alt was down, but
+   Alt+F never reached the window - it opened the SYSTEM MENU - so a menu
+   mnemonic (Alt+F for "&File") could not be built on this shell at all.
+
+   The two predicates below ARE the policy, named and separately callable
+   so a headless test can assert on them without a window, a desktop or a
+   keystroke (SHELL_SYSKEY_PROBE in testing/).
+
+   CLAIMED: Alt+letter and Alt+digit (mnemonics and numbered picks), the
+   OEM/numpad plus-minus pair that 1.8 already forwarded, and F10 - which
+   Windows delivers as WM_SYSKEYDOWN with NO Alt at all, being the
+   documented menu key. Each is pushed as the ordinary key-down event
+   (type 4, the virtual key in field a), so a consumer reads it through
+   the door it already reads arrows through and asks `SHELL_KEYS.alt_down'
+   for the modifier - no event type and no signature changed.
+
+   LEFT TO DefWindowProc, deliberately - these are the system's keys and
+   an application that stole them would be the badly behaved one:
+     Alt+F4     VK_F4     - close. The window MUST still close.
+     Alt+Space  VK_SPACE  - the system menu, and its WM_SYSCHAR is ' ',
+                            which `shell_syschar_is_ours' does not claim.
+     Alt+Enter  VK_RETURN - the properties / fullscreen convention.
+     Alt+Tab, Alt+Shift+Tab, Alt+Esc - the shell eats these; they never
+                            reach any window procedure.
+     Alt alone  VK_MENU   - and its WM_SYSKEYUP: the menu-key contract.
+                            Nothing here needs the keystroke; `alt_down'
+                            already answers the STATE, and a window with
+                            no menu bar has no underlines to reveal.
+     Alt+F1..F9, F11, F12, and Alt+arrow/Home/End/Page/Delete - unclaimed.
+   ---- */
+static int shell_syskey_is_ours(int l_vk) {
+    return (l_vk >= 'A' && l_vk <= 'Z')
+        || (l_vk >= '0' && l_vk <= '9')
+        || l_vk == VK_OEM_PLUS || l_vk == VK_OEM_MINUS
+        || l_vk == VK_ADD || l_vk == VK_SUBTRACT
+        || l_vk == VK_F10;
+}
+
+/* The WM_SYSCHAR half. A syskey we swallowed still trails a WM_SYSCHAR,
+   and DefWindowProc's answer to one is to open the system menu on the
+   matching mnemonic or, finding none, to BEEP. Swallow exactly the
+   characters the claimed keys can produce - both cases, because Alt+Shift+F
+   arrives as 'F' - and let every other one keep its system meaning. */
+static int shell_syschar_is_ours(int l_ch) {
+    return (l_ch >= 'A' && l_ch <= 'Z')
+        || (l_ch >= 'a' && l_ch <= 'z')
+        || (l_ch >= '0' && l_ch <= '9')
+        || l_ch == '+' || l_ch == '-' || l_ch == '=';
 }
 
 static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -214,18 +272,19 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 shell_push(4, (int)w, 0, 0);
             return 0;
         case WM_SYSKEYDOWN:
-            /* Alt-modified stepping keys (apps read Alt via shell_alt_down):
-               forward them and keep the menu loop out of it. Every other
-               syskey (Alt+F4, Alt+Space) keeps its system meaning. */
-            if (w == VK_OEM_PLUS || w == VK_OEM_MINUS ||
-                w == VK_ADD || w == VK_SUBTRACT) {
+            /* THE ALT DOOR (1.9.3): Alt+letter, Alt+digit, the Alt step
+               keys and F10 belong to the window - push each as the
+               ordinary key-down event and keep the menu loop out of it.
+               Every unclaimed syskey (Alt+F4, Alt+Space, Alt+Enter, Alt
+               alone) keeps its system meaning. See shell_syskey_is_ours. */
+            if (shell_syskey_is_ours((int)w)) {
                 shell_push(4, (int)w, 0, 0);
                 return 0;
             }
             break;
         case WM_SYSCHAR:
-            /* the beep for the swallowed Alt steps above */
-            if (w == '+' || w == '-' || w == '=') return 0;
+            /* the beep - and the system menu - for the keys swallowed above */
+            if (shell_syschar_is_ours((int)w)) return 0;
             break;
         case WM_TIMER:
             /* timer 1: the 250ms heartbeat; timer 2: the app-settable

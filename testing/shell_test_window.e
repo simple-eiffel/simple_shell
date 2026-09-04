@@ -48,4 +48,25 @@ feature -- Probes
 			end
 		end
 
+	drain_key (a_vk: INTEGER): BOOLEAN
+			-- Drain the shared queue through SHELL_WINDOW's own
+			-- external: True when an ordinary key-down (event 4)
+			-- carrying virtual key `a_vk' comes out. Leftover
+			-- events from earlier assaults are skipped, not
+			-- failed on - exactly as `drain_marker' skips them.
+		local
+			ev: INTEGER
+		do
+			from
+				ev := shell_next_event (ev_buf.item)
+			until
+				ev = 0 or Result
+			loop
+				Result := ev = 4 and then ev_buf.read_integer_32 (4) = a_vk
+				if not Result then
+					ev := shell_next_event (ev_buf.item)
+				end
+			end
+		end
+
 end

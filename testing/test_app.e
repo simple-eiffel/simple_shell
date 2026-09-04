@@ -38,6 +38,9 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_clipboard_image_roundtrip, "clipboard_image_roundtrip")
 			run_test (agent t.test_input_knows_the_desktop, "input_knows_the_desktop")
 			run_test (agent t.test_input_keys_are_accepted, "input_keys_are_accepted")
+			run_test (agent t.test_alt_keys_are_claimed, "alt_keys_are_claimed")
+			run_test (agent t.test_system_alt_keys_are_left_alone, "system_alt_keys_are_left_alone")
+			run_test (agent t.test_alt_letter_reaches_the_queue, "alt_letter_reaches_the_queue")
 			run_test (agent t.test_sdk_macro_poison_is_armed, "sdk_macro_poison_is_armed")
 			run_test (agent t.test_sdk_macro_tripwire, "sdk_macro_tripwire")
 

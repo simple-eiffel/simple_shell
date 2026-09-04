@@ -290,6 +290,76 @@ feature -- Input synthesis
 			assert ("and both accepted", i.was_accepted)
 		end
 
+feature -- The Alt door
+
+	test_alt_keys_are_claimed
+			-- THE ALT GAP (1.9.3). Before this version the window
+			-- procedure answered WM_SYSKEYDOWN for the OEM plus/minus
+			-- pair alone: `shell_alt_down' said Alt was down, but
+			-- Alt+F opened the SYSTEM MENU instead of reaching the
+			-- window, so a menu mnemonic could not be built on this
+			-- shell. The claim is now the header's own predicate.
+		local
+			p: SHELL_SYSKEY_PROBE
+		do
+			create p
+			assert ("Alt+F is the window's", p.syskey_is_claimed (70))
+			assert ("Alt+A is the window's", p.syskey_is_claimed (65))
+			assert ("Alt+Z is the window's", p.syskey_is_claimed (90))
+			assert ("Alt+1 is the window's", p.syskey_is_claimed (49))
+			assert ("Alt+0 is the window's", p.syskey_is_claimed (48))
+			assert ("F10 is the window's", p.syskey_is_claimed (121))
+			assert ("the 1.8 Alt step keys are still the window's",
+				p.syskey_is_claimed (187) and p.syskey_is_claimed (189)
+				and p.syskey_is_claimed (107) and p.syskey_is_claimed (109))
+		end
+
+	test_system_alt_keys_are_left_alone
+			-- The other half of the same policy, and the half a
+			-- careless widening would break: an application that ate
+			-- Alt+F4 would be the badly behaved one. These stay with
+			-- DefWindowProc.
+		local
+			p: SHELL_SYSKEY_PROBE
+		do
+			create p
+			assert ("Alt+F4 still closes the window", not p.syskey_is_claimed (115))
+			assert ("Alt+Space still opens the system menu", not p.syskey_is_claimed (32))
+			assert ("Alt+Enter is still the system's", not p.syskey_is_claimed (13))
+			assert ("Alt alone is still the menu key", not p.syskey_is_claimed (18))
+			assert ("Alt+F1 is unclaimed", not p.syskey_is_claimed (112))
+			assert ("Alt+Left is unclaimed", not p.syskey_is_claimed (37))
+			assert ("Alt+Space's WM_SYSCHAR is NOT swallowed - the menu needs it",
+				not p.syschar_is_swallowed (32))
+			assert ("but the beep behind a claimed letter is",
+				p.syschar_is_swallowed (102) and p.syschar_is_swallowed (70))
+			assert ("and behind a claimed digit", p.syschar_is_swallowed (49))
+			assert ("and behind the 1.8 step keys",
+				p.syschar_is_swallowed (43) and p.syschar_is_swallowed (45)
+				and p.syschar_is_swallowed (61))
+		end
+
+	test_alt_letter_reaches_the_queue
+			-- End of the reachable path: WM_SYSKEYDOWN(VK_F) handed to
+			-- the window procedure comes out of SHELL_WINDOW's own
+			-- drain as the ordinary key-down event 4 carrying 70 -
+			-- across translation units, as `drain_marker' proves the
+			-- queue must. What is NOT tested here is Windows itself
+			-- delivering the message: that needs a visible window with
+			-- the focus and a synthesised keystroke on the tester's
+			-- desktop, and was checked by inspection only.
+		local
+			p: SHELL_SYSKEY_PROBE
+			w: SHELL_TEST_WINDOW
+		do
+			create p
+			create w
+			p.deliver_syskeydown (70)
+			assert ("Alt+F arrived as key-down 70", w.drain_key (70))
+			p.deliver_syskeydown (121)
+			assert ("F10 arrived as key-down 121", w.drain_key (121))
+		end
+
 feature -- SDK macro tripwire
 
 	test_sdk_macro_poison_is_armed

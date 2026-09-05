@@ -91,6 +91,40 @@ feature -- Access: bitmap
 			none_means_zero: not has_image implies Result = 0
 		end
 
+	image_into (a_bits: POINTER; a_width, a_height, a_stride: INTEGER): BOOLEAN
+			-- Copy the clipboard bitmap (CF_DIB) into `a_bits' as ARGB32
+			-- top-down rows of `a_stride' bytes - the mirror of `set_image',
+			-- and the layout a cairo ARGB32 surface exposes through `data'.
+			-- `a_width' and `a_height' are what `image_width' / `image_height'
+			-- answered: the caller sizes the buffer on the clipboard's word and
+			-- this copy refuses (False) rather than write past it if the bitmap
+			-- changed underneath. Alpha is forced opaque - a screenshot's DIB
+			-- carries 0 - so the honest reading is always "a picture". 24- and
+			-- 32-bit DIBs are read; anything else answers False. Retries briefly
+			-- against history managers, as every other clipboard call here does.
+		require
+			has_image: has_image
+			positive: a_width > 0 and a_height > 0
+			buffer: a_bits /= default_pointer
+			rows_fit: a_stride >= a_width * 4
+		local
+			env: EXECUTION_ENVIRONMENT
+			attempts: INTEGER
+		do
+			from
+				attempts := 0
+			until
+				Result or attempts >= 5
+			loop
+				Result := c_clip_get_image (a_bits, a_width, a_height, a_stride) = 1
+				if not Result then
+					create env
+					env.sleep (10_000_000)
+					attempts := attempts + 1
+				end
+			end
+		end
+
 feature -- Element change
 
 	set_text (a_text: READABLE_STRING_GENERAL)
@@ -190,6 +224,13 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_clip_image_size((int*)$a_w, (int*)$a_h);"
+		end
+
+	c_clip_get_image (a_bits: POINTER; a_w, a_h, a_stride: INTEGER): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_clip_get_image((void*)$a_bits, (int)$a_w, (int)$a_h, (int)$a_stride);"
 		end
 
 end

@@ -2,6 +2,30 @@
 
 All notable changes to simple_shell.
 
+## 1.10.0 - 2026-09-05
+
+### Added
+- **`SHELL_CLIPBOARD.image_into (a_bits, a_width, a_height, a_stride)`: the
+  clipboard bitmap can be READ, not only put.** `set_image` has written a
+  CF_DIB from an ARGB32 buffer since 1.8; `image_width` / `image_height`
+  read the header back; but no caller could get at the pixels, so a picture
+  on the clipboard was a thing this library could describe and not deliver.
+  `image_into` copies the DIB into the caller's ARGB32 top-down buffer -
+  the mirror of `set_image`, and the layout a cairo ARGB32 surface exposes
+  through `data` - so a pasted screenshot goes straight into a surface and
+  out as a PNG. 24- and 32-bit DIBs (BI_RGB, or BI_BITFIELDS in Windows'
+  own BGRA order) are read; anything else answers False, as does a bitmap
+  whose size is not what the caller sized its buffer on - a refusal, never
+  an overrun, checked against `GlobalSize` too. Alpha is forced opaque on
+  the way out, as `set_image` forces it on the way in: a screenshot's DIB
+  carries 0 in that channel, and the honest reading is always "a picture".
+  Found from simple_chat: pasting an image into the composer had nothing to
+  read the clipboard with.
+- `shell_clip_get_image` in `simple_shell.h`, beside `shell_clip_set_image`.
+- `test_clipboard_image_roundtrip` now reads the pixels back: coded by
+  position, so a row in the wrong order is caught; alpha proved forced; a
+  wrong-size claim proved refused.
+
 ## 1.9.3 - 2026-09-03
 
 ### Fixed

@@ -57,7 +57,7 @@ end
 |---|---|
 | `SHELL_WINDOW` | *(deferred)* native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, **cursor shaping** (`set_cursor_kind`: arrow, I-beam, hand, resize, cross, wait) |
 | `SHELL_KEYS` | physical Shift / Ctrl / Alt state |
-| `SHELL_CLIPBOARD` | Unicode text get/set with history-manager retry; 1M-character headroom; **bitmap put** (`set_image`, CF_DIB from an ARGB32 buffer) with size read-back |
+| `SHELL_CLIPBOARD` | Unicode text get/set with history-manager retry; 1M-character headroom; **bitmap put and get** (`set_image`, CF_DIB from an ARGB32 buffer; `image_into`, the DIB back into an ARGB32 buffer, 24/32-bit, alpha forced opaque, refused rather than overrun on a size mismatch) with size read-back |
 | `SHELL_INPUT` | **synthesised input** via SendInput: `pointer_x` / `pointer_y` (calibration), `click_at` (focus lands and stays) / `click_at_quietly` (pointer and foreground restored), `press_chord`, `paste`, `press_enter`, Unicode `type_text`; virtual-desktop bounds guard on every click |
 | `SHELL_SPELLER` | Windows inbox `ISpellChecker` (COM): misspelling ranges + suggestions; degrades to no findings, never to failure |
 | `SHELL_DESKTOP` | virtual-screen metrics, **pure screen grab** into a caller ARGB32 buffer, `now_ms` (QPC), `minutes_of_day`, `open_externally` |

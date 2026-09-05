@@ -231,25 +231,49 @@ feature -- Shared state
 feature -- Clipboard bitmap
 
 	test_clipboard_image_roundtrip
-			-- Put a synthetic 4x3 ARGB32 image on the clipboard and read
-			-- its size back through the DIB header. The pixels are given
-			-- with alpha 0 - the C side must force them opaque.
+			-- Put a synthetic 4x3 ARGB32 image on the clipboard, read its
+			-- size back through the DIB header, then read the PIXELS back
+			-- through `image_into': every one where it was put - the DIB is
+			-- bottom-up on the clipboard and top-down on both sides of it -
+			-- with alpha forced opaque on the way out. The pixels are given
+			-- with alpha 0 (the C side must force them opaque) and coded by
+			-- position, so a row put back in the wrong order is caught. A
+			-- buffer sized for another bitmap is refused, never overrun.
 		local
 			c: SHELL_CLIPBOARD
-			bits: MANAGED_POINTER
-			i: INTEGER
+			bits, back: MANAGED_POINTER
+			row, col: INTEGER
+			l_expected, l_got: NATURAL_32
+			l_all: BOOLEAN
 		do
 			create c
 			create bits.make (4 * 4 * 3)
-			from i := 0 until i >= 12 loop
-				bits.put_natural_32 (0x00FF8000, i * 4)
-				i := i + 1
+			from row := 0 until row >= 3 loop
+				from col := 0 until col >= 4 loop
+					bits.put_natural_32 ({NATURAL_32} 0x00FF0000 + row.to_natural_32 * {NATURAL_32} 0x100 + col.to_natural_32, (row * 4 + col) * 4)
+					col := col + 1
+				end
+				row := row + 1
 			end
 			c.set_image (bits.item, 4, 3, 16)
 			assert ("a bitmap is on the clipboard", c.has_image)
 			assert_integers_equal ("width read back", 4, c.image_width)
 			assert_integers_equal ("height read back", 3, c.image_height)
 			assert ("and it is not text", not c.has_text)
+			create back.make (4 * 4 * 3)
+			assert ("the pixels come back", c.image_into (back.item, 4, 3, 16))
+			l_all := True
+			from row := 0 until row >= 3 loop
+				from col := 0 until col >= 4 loop
+					l_expected := {NATURAL_32} 0xFFFF0000 + row.to_natural_32 * {NATURAL_32} 0x100 + col.to_natural_32
+					l_got := back.read_natural_32 ((row * 4 + col) * 4)
+					l_all := l_all and l_got = l_expected
+					col := col + 1
+				end
+				row := row + 1
+			end
+			assert ("every pixel where it was put, rows in order, alpha forced opaque", l_all)
+			assert ("a buffer sized for another bitmap is refused, never overrun", not c.image_into (back.item, 5, 3, 20))
 		end
 
 feature -- Input synthesis

@@ -974,6 +974,51 @@ static int shell_clip_image_size (int *w, int *h) {
     CloseClipboard();
     return ok;
 }
+/* Copy the CF_DIB bitmap into `bits' as ARGB32 top-down rows of `stride'
+   bytes - the mirror of shell_clip_set_image. 32-bpp (BI_RGB, or
+   BI_BITFIELDS in the BGRA order every Windows producer writes) and 24-bpp
+   BI_RGB DIBs are read; anything else answers 0, as does a bitmap whose
+   size is not the (w, h) the caller sized its buffer on. Alpha is forced
+   opaque: CF_DIB alpha is garbage more often than not (a screenshot's is
+   0), and the honest reading is always "a picture". */
+static int shell_clip_get_image (void *bits, int w, int h, int stride) {
+    HANDLE hg; BITMAPINFOHEADER *hdr; const unsigned char *px; int row, col, ok = 0;
+    int src_w, src_h, bottom_up, bpp; size_t src_stride, offset;
+    if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
+    if (!OpenClipboard(s_shell_hwnd)) return 0;
+    hg = GetClipboardData(CF_DIB);
+    if (hg) {
+        hdr = (BITMAPINFOHEADER*)GlobalLock(hg);
+        if (hdr) {
+            src_w = (int)hdr->biWidth;
+            bottom_up = hdr->biHeight > 0;
+            src_h = bottom_up ? (int)hdr->biHeight : (int)(-hdr->biHeight);
+            bpp = (int)hdr->biBitCount;
+            offset = (size_t)hdr->biSize + (hdr->biCompression == BI_BITFIELDS ? 12 : 0) + (size_t)hdr->biClrUsed * 4;
+            src_stride = (((size_t)src_w * (size_t)bpp + 31) / 32) * 4;
+            if (src_w == w && src_h == h && (bpp == 32 || bpp == 24)
+                && (hdr->biCompression == BI_RGB || (bpp == 32 && hdr->biCompression == BI_BITFIELDS))
+                && GlobalSize(hg) >= offset + src_stride * (size_t)h) {
+                px = (const unsigned char*)hdr + offset;
+                for (row = 0; row < h; row++) {
+                    const unsigned char *src = px + (size_t)(bottom_up ? (h - 1 - row) : row) * src_stride;
+                    unsigned int *out = (unsigned int*)((char*)bits + (size_t)row * (size_t)stride);
+                    if (bpp == 32) {
+                        for (col = 0; col < w; col++) out[col] = ((const unsigned int*)src)[col] | 0xFF000000u;
+                    } else {
+                        for (col = 0; col < w; col++)
+                            out[col] = 0xFF000000u | ((unsigned int)src[col * 3 + 2] << 16)
+                                     | ((unsigned int)src[col * 3 + 1] << 8) | (unsigned int)src[col * 3];
+                    }
+                }
+                ok = 1;
+            }
+            GlobalUnlock(hg);
+        }
+    }
+    CloseClipboard();
+    return ok;
+}
 
 /* ---- input synthesis (SendInput). Lineage: OCR_CLICKER in
    simple_ocr_capture, returned home. Absolute mouse coordinates are

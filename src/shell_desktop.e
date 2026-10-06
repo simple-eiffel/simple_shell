@@ -41,6 +41,40 @@ feature -- Virtual screen
 			"return shell_screen_h();"
 		end
 
+feature -- Display scale (1.11.0)
+
+	become_dpi_aware
+			-- Draw in physical pixels (system DPI aware), as `shell_create_window'
+			-- makes the process anyway. Call before measuring anything that must
+			-- match what will be drawn, so `system_dpi' tells the truth.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"SetProcessDPIAware();"
+		end
+
+	system_dpi: INTEGER
+			-- Dots per inch of the primary display as this process sees it: 96 at
+			-- 100%, 144 at 150%. A process that is not DPI aware always sees 96.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"[
+				HDC l_screen = GetDC(0);
+				int l_dpi = l_screen ? GetDeviceCaps(l_screen, LOGPIXELSX) : 96;
+				if (l_screen) ReleaseDC(0, l_screen);
+				return (EIF_INTEGER)(l_dpi > 0 ? l_dpi : 96);
+			]"
+		end
+
+	dpi_scale: REAL_64
+			-- `system_dpi' / 96: how many physical pixels one design pixel takes.
+		do
+			Result := system_dpi / 96
+		ensure
+			positive: Result > 0
+		end
+
 feature -- Drives
 
 	logical_drives_mask: INTEGER

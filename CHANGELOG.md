@@ -2,6 +2,52 @@
 
 All notable changes to simple_shell.
 
+## 1.11.0 - 2026-10-06
+
+### Added
+- **`SHELL_PANEL`: an on-screen instrument that stays out of the way.** A
+  borderless topmost panel (up to 8 per process) that never takes focus when
+  clicked and has no taskbar button - the shape of a teleprompter pill under a
+  webcam. `request_capture_exclusion` leaves it out of screen captures
+  (`SetWindowDisplayAffinity` with `WDA_EXCLUDEFROMCAPTURE`; Windows before 10
+  2004 can only black it out, and `capture_affinity` says which was granted).
+  The function is looked up at run time: ISE's generated C targets Windows
+  2000, where it is not declared. Panels are layered from birth, so
+  `set_opacity` is one call and `set_click_through` works at any time;
+  `set_draggable` allows Shift+drag moves. Events 41-47 carry the slot in the
+  fourth field. Found from simple_prompter, whose pill must not appear in the
+  recording or the meeting it is helping with.
+- **`SHELL_HOTKEYS`: global hotkeys.** `RegisterHotKey` bound to the pumping
+  thread (no window needed, so they work while every window is hidden); both
+  pumps turn the thread's `WM_HOTKEY` into event 51 [id, vk, modifiers]. A held
+  chord fires once (`MOD_NOREPEAT`). `register` requires a modifier: a bare key
+  is taken from every application on the desktop, so that has its own name,
+  `register_bare`, for the deliberate case (a presentation clicker while
+  recording). A chord another application holds is refused and reported
+  (`last_succeeded`), never silently lost.
+- **`SHELL_DESKTOP.become_dpi_aware`, `system_dpi`, `dpi_scale`: the display
+  scale.** An app that builds fonts and layouts before its window exists (so
+  before `shell_create_window` makes the process DPI aware) can become aware
+  first and read the real DPI - 144 on a 150% display, where an unaware process
+  sees 96 and draws everything a third too small on a 4K screen.
+- **`SHELL_FILE_DIALOG`: the Windows Open dialog.** `choose_file (title,
+  filter, initial_dir)` (filter pairs separated by '|') and `chosen_path`,
+  empty when cancelled. Modal, owned by the main window, and marked blocking so
+  SCOOP processors keep running while it waits for the user.
+- **`SHELL_MONITORS`: the displays.** Bounds, work area, primary flag and device
+  name per monitor (`EnumDisplayMonitors`), plus `index_at` and `primary_index`.
+### Fixed
+- `SHELL_DESKTOP.pump_for` measured its deadline with GetTickCount, which moves
+  in ~16 ms steps, so a 60 ms pump could return after ~45 ms (seen once as a
+  failure of `windowless_pump_returns_on_deadline`). The deadline now uses the
+  performance counter.
+
+### Tests
+- Panel lifecycle; capture exclusion proved through a real screen grab
+  (the BitBlt + CAPTUREBLT path recorders and meeting apps use: 256 red pixels
+  before, 0 after, affinity 0x11); hotkey registration and delivery as event 51;
+  hotkey conflict reported; monitor enumeration; display scale; file dialog. 29/29, SCOOP target 4/4.
+
 ## 1.10.0 - 2026-09-05
 
 ### Added

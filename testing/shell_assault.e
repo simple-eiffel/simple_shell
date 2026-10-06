@@ -44,6 +44,18 @@ feature -- Desktop
 			assert ("with height", d.virtual_height > 0)
 		end
 
+	test_display_scale
+			-- Once DPI aware, the system DPI is a real value (96 at 100%, 144 at
+			-- 150%) and the scale is that over 96.
+		local
+			d: SHELL_DESKTOP
+		do
+			create d
+			d.become_dpi_aware
+			assert ("a plausible DPI: " + d.system_dpi.out, d.system_dpi >= 96 and d.system_dpi <= 480)
+			assert ("scale is dpi / 96", (d.dpi_scale - d.system_dpi / 96).abs < 1.0e-9)
+		end
+
 	test_desktop_grab
 			-- Grab 4x4 real desktop pixels; the C side forces alpha
 			-- opaque, so byte 3 of the first BGRA pixel must be 255.
@@ -207,6 +219,174 @@ feature -- Window services
 			assert ("and yields a device context", d /= default_pointer)
 			s.release_dc (d)
 			s.hide
+		end
+
+feature -- Panels (1.11.0)
+
+	test_panel_lifecycle
+			-- A REAL panel, parked far offscreen: opened hidden, shown, made
+			-- translucent and click-through and draggable, moved, hidden,
+			-- closed, and its slot reused.
+		local
+			p: SHELL_PANEL
+		do
+			create p.make
+			p.open (-3000, -3000, 40, 20)
+			assert ("opened", p.is_open and p.handle /= default_pointer)
+			assert ("hidden until shown", not p.is_visible)
+			assert ("opaque from birth", p.opacity = 255)
+			p.show (-3000, -3000, 40, 20)
+			assert ("shown", p.is_visible)
+			p.set_opacity (180)
+			assert ("translucent", p.opacity = 180)
+			p.set_click_through (True)
+			assert ("click-through", p.is_click_through)
+			p.set_click_through (False)
+			assert ("clickable again", not p.is_click_through)
+			p.set_draggable (True)
+			assert ("draggable", p.is_draggable)
+			p.place (-2900, -3000, 60, 24)
+			assert ("moved, still visible", p.x = -2900 and p.width = 60 and p.is_visible)
+			p.hide
+			assert ("hidden", not p.is_visible)
+			p.close
+			assert ("closed", not p.is_open and not p.is_draggable)
+			p.open (-3000, -3000, 10, 10)
+			assert ("slot reused", p.is_open)
+			p.close
+		end
+
+	test_panel_capture_exclusion_really_hides
+			-- A red panel on screen appears in a screen grab; once excluded from
+			-- capture it does not (Windows 10 2004+). The grab is BitBlt with
+			-- CAPTUREBLT, the same path screen recorders and meeting apps use.
+		local
+			p: SHELL_PANEL
+			d: SHELL_DESKTOP
+			l_before, l_after: INTEGER
+		do
+			create p.make
+			create d
+			p.open (40, 40, 48, 48)
+			p.show (40, 40, 48, 48)
+			p.fill (0xFF0000)
+			d.pump_for (150)
+			p.fill (0xFF0000)
+			l_before := red_pixels (d, 52, 52, 24, 24)
+			p.request_capture_exclusion
+			d.pump_for (150)
+			l_after := red_pixels (d, 52, 52, 24, 24)
+			if p.capture_affinity = p.Affinity_excluded_from_captures then
+					-- Thresholds are DPI-agnostic: this test process is not DPI aware, so
+					-- on a scaled display the panel covers only part of the sampled square
+					-- (measured 256 of 576 pixels at the first run).
+				assert ("visible to captures before: " + l_before.out, l_before > 100)
+				assert ("absent from captures after: " + l_after.out, l_after < 50)
+			else
+				assert ("older Windows: at least blacked out", p.capture_affinity = p.Affinity_black_in_captures)
+			end
+			p.allow_capture
+			assert ("capture allowed again", p.capture_affinity = p.Affinity_none)
+			p.close
+		end
+
+feature -- Hotkeys (1.11.0)
+
+	test_hotkey_registers_and_delivers
+			-- An unlikely chord (Ctrl+Alt+Shift+F24) is registered; the message
+			-- Windows sends for it becomes event 51 with id, key and modifiers.
+		local
+			k: SHELL_HOTKEYS
+			d: SHELL_DESKTOP
+			w: SHELL_TEST_WINDOW
+			l_mods: INTEGER
+		do
+			create k.make
+			create d
+			create w
+			l_mods := k.Mod_control | k.Mod_alt | k.Mod_shift
+			k.register (9001, l_mods, 0x87)
+			assert ("registered", k.last_succeeded and k.is_registered (9001) and k.count = 1)
+			k.simulate (9001, l_mods, 0x87)
+			d.pump_for (30)
+			assert ("delivered as event 51", w.drain_event (k.Event_hotkey, 9001))
+			assert ("key and modifiers carried", w.last_second = 0x87 and w.last_extra = l_mods)
+			k.unregister (9001)
+			assert ("released", not k.is_registered (9001) and k.count = 0)
+		end
+
+	test_hotkey_conflict_is_reported
+			-- A chord already held (here by this process under another id) is
+			-- refused and reported, never silently lost.
+		local
+			k: SHELL_HOTKEYS
+			l_mods: INTEGER
+		do
+			create k.make
+			l_mods := k.Mod_control | k.Mod_alt | k.Mod_shift
+			k.register (9002, l_mods, 0x86)
+			assert ("first holder", k.last_succeeded)
+			k.register (9003, l_mods, 0x86)
+			assert ("second refused", not k.last_succeeded and not k.is_registered (9003))
+			k.unregister_all
+			assert ("all released", k.count = 0)
+		end
+
+feature -- File dialog (1.11.0)
+
+	test_file_dialog_starts_empty
+			-- The dialog itself is modal and needs a person; what can be proved
+			-- headless is that nothing is chosen before it is shown.
+		local
+			f: SHELL_FILE_DIALOG
+		do
+			create f.make
+			assert ("nothing chosen", not f.has_choice and f.chosen_path.is_empty)
+		end
+
+feature -- Monitors (1.11.0)
+
+	test_monitors_enumerate
+			-- At least one display; exactly one primary, whose top-left is the
+			-- virtual-screen origin; a device name; the work area inside the bounds.
+		local
+			m: SHELL_MONITORS
+			i, l_primaries: INTEGER
+		do
+			create m.make
+			assert ("a display", m.count >= 1)
+			from i := 1 until i > m.count loop
+				if m.is_primary (i) then
+					l_primaries := l_primaries + 1
+				end
+				assert ("work area inside bounds", m.work_left (i) >= m.left (i) and m.work_right (i) <= m.right (i)
+					and m.work_top (i) >= m.top (i) and m.work_bottom (i) <= m.bottom (i))
+				assert ("named", m.device_name (i).count > 0)
+				i := i + 1
+			end
+			assert ("one primary", l_primaries = 1)
+			assert ("primary holds the origin", m.index_at (0, 0) = m.primary_index)
+		end
+
+feature {NONE} -- Panel probes
+
+	red_pixels (a_desktop: SHELL_DESKTOP; a_x, a_y, a_w, a_h: INTEGER): INTEGER
+			-- Pure-red pixels in a screen grab of the given region.
+		local
+			l_bits: MANAGED_POINTER
+			l_px: NATURAL_32
+			i: INTEGER
+		do
+			create l_bits.make (a_w * a_h * 4)
+			if a_desktop.grab_into (a_x, a_y, a_w, a_h, l_bits.item, a_w * 4) then
+				from i := 0 until i >= a_w * a_h loop
+					l_px := l_bits.read_natural_32 (i * 4)
+					if (l_px & 0x00FFFFFF) = 0x00FF0000 then
+						Result := Result + 1
+					end
+					i := i + 1
+				end
+			end
 		end
 
 feature -- Shared state

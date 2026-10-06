@@ -69,4 +69,29 @@ feature -- Probes
 			end
 		end
 
+	drain_event (a_type, a_first: INTEGER): BOOLEAN
+			-- Drain the shared queue: True when an event of `a_type' whose first
+			-- field is `a_first' comes out (leftovers skipped, as above).
+			-- `last_second' and `last_extra' then hold its other fields.
+		local
+			ev: INTEGER
+		do
+			from
+				ev := shell_next_event (ev_buf.item)
+			until
+				ev = 0 or Result
+			loop
+				Result := ev = a_type and then ev_buf.read_integer_32 (4) = a_first
+				if Result then
+					last_second := ev_buf.read_integer_32 (8)
+					last_extra := ev_buf.read_integer_32 (12)
+				else
+					ev := shell_next_event (ev_buf.item)
+				end
+			end
+		end
+
+	last_second, last_extra: INTEGER
+			-- Second and fourth fields of the event `drain_event' found.
+
 end

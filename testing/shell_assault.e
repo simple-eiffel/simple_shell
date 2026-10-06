@@ -332,6 +332,18 @@ feature -- Hotkeys (1.11.0)
 			assert ("all released", k.count = 0)
 		end
 
+feature -- File dialog (1.11.0)
+
+	test_file_dialog_starts_empty
+			-- The dialog itself is modal and needs a person; what can be proved
+			-- headless is that nothing is chosen before it is shown.
+		local
+			f: SHELL_FILE_DIALOG
+		do
+			create f.make
+			assert ("nothing chosen", not f.has_choice and f.chosen_path.is_empty)
+		end
+
 feature -- Monitors (1.11.0)
 
 	test_monitors_enumerate

@@ -550,15 +550,24 @@ static void shell_thread_message(MSG* l_msg) {
    diagnostics. PeekMessage so an empty queue cannot block past the
    deadline. */
 static void shell_pump_for(int ms) {
-    DWORD deadline = GetTickCount() + (DWORD)ms;
+    /* The deadline is measured with the performance counter: GetTickCount
+       moves in ~16 ms steps, so a 60 ms pump could end after ~45 ms (the
+       flaky windowless_pump_returns_on_deadline, 1.11.0). */
+    LARGE_INTEGER l_freq, l_start, l_now;
+    double l_left;
     MSG m;
-    while (GetTickCount() < deadline) {
+    QueryPerformanceFrequency(&l_freq);
+    QueryPerformanceCounter(&l_start);
+    for (;;) {
         while (PeekMessageW(&m, 0, 0, 0, PM_REMOVE)) {
             shell_thread_message(&m);
             TranslateMessage(&m);
             DispatchMessageW(&m);
         }
-        Sleep(5);
+        QueryPerformanceCounter(&l_now);
+        l_left = ms - (double)(l_now.QuadPart - l_start.QuadPart) * 1000.0 / (double)l_freq.QuadPart;
+        if (l_left <= 0) break;
+        Sleep(l_left < 5 ? (DWORD)l_left + 1 : 5);
     }
 }
 
@@ -1075,6 +1084,39 @@ static int shell_control_down(void) {
 
 static int shell_alt_down(void) {
     return (GetKeyState(VK_MENU) & 0x8000) ? 1 : 0;
+}
+
+/* ---- file dialog (1.11.0): the classic Open dialog (GetOpenFileNameW),
+   modal on the calling thread, owned by the main window when there is one.
+   The filter is pairs separated by '|' - "Scripts|*.md;*.txt|All files|*.*" -
+   turned here into the double-NUL list the API wants. Answers 1 and the full
+   path in l_out when a file was chosen, 0 when cancelled. ---- */
+#include <commdlg.h>
+#pragma comment(lib, "comdlg32.lib")
+
+static int shell_open_file_dialog(const wchar_t* l_title, const wchar_t* l_filter,
+        const wchar_t* l_initial_dir, wchar_t* l_out, int l_cap) {
+    OPENFILENAMEW l_ofn;
+    wchar_t l_pairs[1024];
+    int l_i = 0;
+    if (!l_out || l_cap <= 1) return 0;
+    while (l_filter && l_filter[l_i] && l_i < 1021) {
+        l_pairs[l_i] = (l_filter[l_i] == L'|') ? 0 : l_filter[l_i];
+        l_i++;
+    }
+    l_pairs[l_i] = 0;
+    l_pairs[l_i + 1] = 0;
+    l_out[0] = 0;
+    ZeroMemory(&l_ofn, sizeof(l_ofn));
+    l_ofn.lStructSize = sizeof(l_ofn);
+    l_ofn.hwndOwner = s_shell_hwnd;
+    l_ofn.lpstrFilter = l_pairs;
+    l_ofn.lpstrFile = l_out;
+    l_ofn.nMaxFile = (DWORD)l_cap;
+    l_ofn.lpstrTitle = l_title;
+    l_ofn.lpstrInitialDir = (l_initial_dir && l_initial_dir[0]) ? l_initial_dir : 0;
+    l_ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    return GetOpenFileNameW(&l_ofn) ? 1 : 0;
 }
 
 /* ---- clipboard (CF_UNICODETEXT) ---- */

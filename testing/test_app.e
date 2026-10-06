@@ -45,6 +45,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_hotkey_registers_and_delivers, "hotkey_registers_and_delivers")
 			run_test (agent t.test_hotkey_conflict_is_reported, "hotkey_conflict_is_reported")
 			run_test (agent t.test_monitors_enumerate, "monitors_enumerate")
+			run_test (agent t.test_file_dialog_starts_empty, "file_dialog_starts_empty")
 			run_test (agent t.test_system_alt_keys_are_left_alone, "system_alt_keys_are_left_alone")
 			run_test (agent t.test_alt_letter_reaches_the_queue, "alt_letter_reaches_the_queue")
 			run_test (agent t.test_sdk_macro_poison_is_armed, "sdk_macro_poison_is_armed")

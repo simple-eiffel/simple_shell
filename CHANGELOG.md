@@ -30,12 +30,23 @@ All notable changes to simple_shell.
   before `shell_create_window` makes the process DPI aware) can become aware
   first and read the real DPI - 144 on a 150% display, where an unaware process
   sees 96 and draws everything a third too small on a 4K screen.
+- **`SHELL_FILE_DIALOG`: the Windows Open dialog.** `choose_file (title,
+  filter, initial_dir)` (filter pairs separated by '|') and `chosen_path`,
+  empty when cancelled. Modal, owned by the main window, and marked blocking so
+  SCOOP processors keep running while it waits for the user.
 - **`SHELL_MONITORS`: the displays.** Bounds, work area, primary flag and device
   name per monitor (`EnumDisplayMonitors`), plus `index_at` and `primary_index`.
-- Tests: panel lifecycle; capture exclusion proved through a real screen grab
+### Fixed
+- `SHELL_DESKTOP.pump_for` measured its deadline with GetTickCount, which moves
+  in ~16 ms steps, so a 60 ms pump could return after ~45 ms (seen once as a
+  failure of `windowless_pump_returns_on_deadline`). The deadline now uses the
+  performance counter.
+
+### Tests
+- Panel lifecycle; capture exclusion proved through a real screen grab
   (the BitBlt + CAPTUREBLT path recorders and meeting apps use: 256 red pixels
   before, 0 after, affinity 0x11); hotkey registration and delivery as event 51;
-  hotkey conflict reported; monitor enumeration; display scale. 28/28, SCOOP target 4/4.
+  hotkey conflict reported; monitor enumeration; display scale; file dialog. 29/29, SCOOP target 4/4.
 
 ## 1.10.0 - 2026-09-05
 

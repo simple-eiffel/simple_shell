@@ -5,12 +5,15 @@ note
 		no taskbar button, any number per process up to `Max_panels'. It can be
 		left out of screen captures (meetings, recorders, screenshots), made
 		click-through so the desktop under it stays usable, given a whole-window
-		opacity, and moved by Shift+drag when `is_draggable'.
+		opacity, moved by Shift+drag when `is_draggable', and resized by Shift+drag
+		on an edge or corner when also `is_resizable'.
 
 		Events arrive on the shared queue with the slot in the fourth field
 		(`SHELL_WINDOW.event_extra'): 41 press, 42 release, 43 move (coalesced),
 		44 expose, 45 wheel (delta in the first field), 46 right press,
-		47 moved (new left, top after a drag). Paint through `dc' / `release_dc'.
+		47 moved (new left, top after a drag), 48 resized (width, height when a drag
+		ends; call `sync_geometry' to update `x', `y', `width', `height').
+		Paint through `dc' / `release_dc'.
 	]"
 
 class
@@ -47,6 +50,19 @@ feature -- Constants
 	Event_wheel: INTEGER = 45
 	Event_right_press: INTEGER = 46
 	Event_moved: INTEGER = 47
+	Event_resized: INTEGER = 48
+
+	Grip_move: INTEGER = 2
+			-- `grip_at' answers for a press that moves the panel (HTCAPTION)...
+	Grip_left: INTEGER = 10
+	Grip_right: INTEGER = 11
+	Grip_top: INTEGER = 12
+	Grip_top_left: INTEGER = 13
+	Grip_top_right: INTEGER = 14
+	Grip_bottom: INTEGER = 15
+	Grip_bottom_left: INTEGER = 16
+	Grip_bottom_right: INTEGER = 17
+			-- ...and for one that resizes from that edge or corner (the Windows hit codes).
 
 feature -- Access
 
@@ -103,6 +119,26 @@ feature -- Status
 			open: is_open
 		do
 			Result := c_is_click_through (slot) = 1
+		end
+
+	is_resizable: BOOLEAN
+			-- Does a Shift+drag on an edge or corner resize the panel?
+
+	grip_at (a_x, a_y: INTEGER): INTEGER
+			-- What a Shift+press at client point (`a_x', `a_y') does: `Grip_move' or a resize grip.
+		require
+			open: is_open
+		do
+			Result := c_grip_at (slot, a_x, a_y)
+		ensure
+			known: Result = Grip_move or (Result >= Grip_left and Result <= Grip_bottom_right)
+			moves_unless_resizable: not is_resizable implies Result = Grip_move
+		end
+
+	is_shift_held: BOOLEAN
+			-- Is a Shift key down now (whichever window has the keyboard focus)?
+		do
+			Result := c_shift_held /= 0
 		end
 
 	is_draggable: BOOLEAN
@@ -180,6 +216,7 @@ feature -- Lifecycle
 			c_close (slot)
 			slot := -1
 			is_draggable := False
+			is_resizable := False
 		ensure
 			closed: not is_open
 		end
@@ -208,14 +245,60 @@ feature -- Appearance
 		end
 
 	set_draggable (a_on: BOOLEAN)
-			-- Allow or forbid Shift+drag moves.
+			-- Allow or forbid Shift+drag moves (forbidding them forbids resizing too).
 		require
 			open: is_open
 		do
 			c_set_draggable (slot, a_on.to_integer)
 			is_draggable := a_on
+			if not a_on and is_resizable then
+				c_set_resizable (slot, 0, 0, 0)
+				is_resizable := False
+			end
 		ensure
 			set: is_draggable = a_on
+			no_resize_without_drag: not a_on implies not is_resizable
+		end
+
+	set_resizable (a_grip, a_min_width, a_min_height: INTEGER)
+			-- Let a Shift+drag within `a_grip' pixels of an edge or corner resize the panel,
+			-- never below `a_min_width' x `a_min_height'.
+		require
+			open: is_open
+			draggable: is_draggable
+			grip_sane: a_grip >= 1 and a_grip <= 64
+			minimum_sane: a_min_width >= 1 and a_min_height >= 1
+		do
+			c_set_resizable (slot, a_grip, a_min_width, a_min_height)
+			is_resizable := True
+		ensure
+			resizable: is_resizable
+		end
+
+	set_fixed_size
+			-- Shift+drag moves only.
+		require
+			open: is_open
+		do
+			c_set_resizable (slot, 0, 0, 0)
+			is_resizable := False
+		ensure
+			fixed: not is_resizable
+		end
+
+	sync_geometry
+			-- Read `x', `y', `width', `height' back from the window (after a native move or resize).
+		require
+			open: is_open
+		local
+			l_x, l_y, l_w, l_h: INTEGER
+		do
+			l_x := x
+			l_y := y
+			l_w := width
+			l_h := height
+			c_rect (slot, $l_x, $l_y, $l_w, $l_h)
+			set_geometry (l_x, l_y, l_w, l_h)
 		end
 
 	request_capture_exclusion
@@ -360,6 +443,26 @@ feature {NONE} -- Externals
 		alias "shell_panel_set_draggable($a_slot, $a_on);"
 		end
 
+	c_set_resizable (a_slot, a_grip, a_min_w, a_min_h: INTEGER)
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_set_resizable($a_slot, $a_grip, $a_min_w, $a_min_h);"
+		end
+
+	c_grip_at (a_slot, a_x, a_y: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_grip_code($a_slot, $a_x, $a_y);"
+		end
+
+	c_rect (a_slot: INTEGER; a_x, a_y, a_w, a_h: TYPED_POINTER [INTEGER])
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_rect($a_slot, (int*)$a_x, (int*)$a_y, (int*)$a_w, (int*)$a_h);"
+		end
+
+	c_shift_held: INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_shift_held();"
+		end
+
 	c_capture_affinity (a_slot: INTEGER): INTEGER
 		external "C inline use %"simple_shell.h%""
 		alias "return shell_panel_capture_affinity($a_slot);"
@@ -378,5 +481,6 @@ feature {NONE} -- Externals
 invariant
 	slot_range: slot >= -1 and slot < Max_panels
 	drag_only_when_open: is_draggable implies is_open
+	resize_only_with_drag: is_resizable implies is_draggable
 
 end

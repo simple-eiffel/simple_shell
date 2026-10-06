@@ -790,7 +790,14 @@ static void  shell_strip_release(void* dc) { if (s_shell_strip && dc) ReleaseDC(
    events (the slot always in the fourth field, `event_extra'):
      41 press(x,y)   42 release(x,y)   43 move(x,y) - coalesced
      44 expose       45 wheel(delta)   46 right press(x,y)
-     47 moved(left,top) - after a Shift+drag, when the panel is draggable */
+     47 moved(left,top) - after a Shift+drag, when the panel is draggable
+     48 resized(width,height) - after a Shift+drag (move or resize) ends
+   A resizable panel turns a Shift+press within its grip of an edge or corner
+   into a native resize (the same WM_NCLBUTTONDOWN route a move takes, with
+   the edge's hit code), and shows the sizing cursor there while Shift is
+   held. Shift is read from the mouse message (MK_SHIFT) and, for the cursor,
+   from the physical key state: a panel never has the keyboard focus, so this
+   thread's GetKeyState can be stale. */
 #define SHELL_PANELS 8
 #define SHELL_WDA_NONE 0x0
 #define SHELL_WDA_MONITOR 0x1
@@ -798,12 +805,39 @@ static void  shell_strip_release(void* dc) { if (s_shell_strip && dc) ReleaseDC(
 SHELL_SHARED HWND s_shell_panel[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_drag[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_alpha[SHELL_PANELS] = {255, 255, 255, 255, 255, 255, 255, 255};
+SHELL_SHARED int  s_shell_panel_grip[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_minw[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_minh[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 typedef BOOL (WINAPI *shell_set_affinity_fn)(HWND, DWORD);
 typedef BOOL (WINAPI *shell_get_affinity_fn)(HWND, DWORD*);
 
 static HWND shell_panel_hwnd(int l_slot) {
     return (l_slot >= 0 && l_slot < SHELL_PANELS) ? s_shell_panel[l_slot] : 0;
+}
+
+/* What a Shift+press at client (x, y) does: HTCAPTION moves; an edge or
+   corner hit code (HTLEFT .. HTBOTTOMRIGHT) resizes when the panel has a grip. */
+static int shell_panel_grip_code(int l_slot, int l_x, int l_y) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    RECT l_r;
+    int l_g, l_at_left, l_at_right, l_at_top, l_at_bottom;
+    if (!l_hwnd || s_shell_panel_grip[l_slot] <= 0) return HTCAPTION;
+    l_g = s_shell_panel_grip[l_slot];
+    GetClientRect(l_hwnd, &l_r);
+    l_at_left = l_x < l_g;
+    l_at_right = l_x >= l_r.right - l_g;
+    l_at_top = l_y < l_g;
+    l_at_bottom = l_y >= l_r.bottom - l_g;
+    if (l_at_top && l_at_left) return HTTOPLEFT;
+    if (l_at_top && l_at_right) return HTTOPRIGHT;
+    if (l_at_bottom && l_at_left) return HTBOTTOMLEFT;
+    if (l_at_bottom && l_at_right) return HTBOTTOMRIGHT;
+    if (l_at_left) return HTLEFT;
+    if (l_at_right) return HTRIGHT;
+    if (l_at_top) return HTTOP;
+    if (l_at_bottom) return HTBOTTOM;
+    return HTCAPTION;
 }
 
 static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -814,9 +848,13 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return MA_NOACTIVATE;
         case WM_LBUTTONDOWN:
             if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel_drag[l_slot]
-                && (GetKeyState(VK_SHIFT) & 0x8000)) {
+                && ((w & MK_SHIFT) || (GetKeyState(VK_SHIFT) & 0x8000))) {
+                POINT l_pt;
+                l_pt.x = l_x;
+                l_pt.y = l_y;
+                ClientToScreen(h, &l_pt);
                 ReleaseCapture();
-                SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                SendMessageW(h, WM_NCLBUTTONDOWN, (WPARAM)shell_panel_grip_code(l_slot, l_x, l_y), MAKELPARAM(l_pt.x, l_pt.y));
                 return 0;
             }
             SetCapture(h);
@@ -845,8 +883,35 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             RECT l_r;
             GetWindowRect(h, &l_r);
             shell_push(47, l_r.left, l_r.top, l_slot);
+            shell_push(48, l_r.right - l_r.left, l_r.bottom - l_r.top, l_slot);
             return 0;
         }
+        case WM_SETCURSOR:
+            if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel[l_slot] == h && s_shell_panel_drag[l_slot]
+                && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
+                POINT l_pt;
+                LPCWSTR l_cursor;
+                GetCursorPos(&l_pt);
+                ScreenToClient(h, &l_pt);
+                switch (shell_panel_grip_code(l_slot, l_pt.x, l_pt.y)) {
+                    case HTLEFT: case HTRIGHT: l_cursor = (LPCWSTR)IDC_SIZEWE; break;
+                    case HTTOP: case HTBOTTOM: l_cursor = (LPCWSTR)IDC_SIZENS; break;
+                    case HTTOPLEFT: case HTBOTTOMRIGHT: l_cursor = (LPCWSTR)IDC_SIZENWSE; break;
+                    case HTTOPRIGHT: case HTBOTTOMLEFT: l_cursor = (LPCWSTR)IDC_SIZENESW; break;
+                    default: l_cursor = (LPCWSTR)IDC_SIZEALL;
+                }
+                SetCursor(LoadCursorW(0, l_cursor));
+                return TRUE;
+            }
+            break;
+        case WM_GETMINMAXINFO:
+            if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel[l_slot] == h && s_shell_panel_minw[l_slot] > 0) {
+                MINMAXINFO* l_mm = (MINMAXINFO*)l;
+                l_mm->ptMinTrackSize.x = s_shell_panel_minw[l_slot];
+                l_mm->ptMinTrackSize.y = s_shell_panel_minh[l_slot];
+                return 0;
+            }
+            break;
         case WM_PAINT: {
             PAINTSTRUCT l_ps;
             BeginPaint(h, &l_ps);
@@ -907,6 +972,9 @@ static void shell_panel_close(int l_slot) {
         DestroyWindow(l_hwnd);
         s_shell_panel[l_slot] = 0;
         s_shell_panel_drag[l_slot] = 0;
+        s_shell_panel_grip[l_slot] = 0;
+        s_shell_panel_minw[l_slot] = 0;
+        s_shell_panel_minh[l_slot] = 0;
     }
 }
 
@@ -958,6 +1026,30 @@ static int shell_panel_is_click_through(int l_slot) {
 
 static void shell_panel_set_draggable(int l_slot, int l_on) {
     if (shell_panel_hwnd(l_slot)) s_shell_panel_drag[l_slot] = l_on ? 1 : 0;
+}
+
+/* Grip width in pixels (0: Shift+drag only moves) and the smallest size a
+   resize may reach. */
+static void shell_panel_set_resizable(int l_slot, int l_grip, int l_min_w, int l_min_h) {
+    if (shell_panel_hwnd(l_slot)) {
+        s_shell_panel_grip[l_slot] = l_grip > 0 ? l_grip : 0;
+        s_shell_panel_minw[l_slot] = l_min_w > 0 ? l_min_w : 0;
+        s_shell_panel_minh[l_slot] = l_min_h > 0 ? l_min_h : 0;
+    }
+}
+
+/* The panel's window rectangle now (it changes under a native move or resize). */
+static void shell_panel_rect(int l_slot, int* l_x, int* l_y, int* l_w, int* l_h) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    RECT l_r;
+    if (l_hwnd && GetWindowRect(l_hwnd, &l_r)) {
+        *l_x = l_r.left; *l_y = l_r.top; *l_w = l_r.right - l_r.left; *l_h = l_r.bottom - l_r.top;
+    }
+}
+
+/* Is a Shift key physically down (whatever window has the focus)? */
+static int shell_shift_held(void) {
+    return (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 1 : 0;
 }
 
 /* The display affinity now in force: 0x11 left out of captures

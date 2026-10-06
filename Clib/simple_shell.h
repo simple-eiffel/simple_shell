@@ -57,6 +57,9 @@
     F10 arrive as key-downs, the modifier read via shell_alt_down)
    overlay:     31 move(x,y)   | 32 down(x,y) | 33 up(x,y)    | 34 cancel | 35 expose
                 36 accept (Enter) | 37 arrow(vk) - the adjust-mode keys
+   panels:      41 press | 42 release | 43 move | 44 expose | 45 wheel |
+                46 right press | 47 moved - slot in the fourth field (1.11.0)
+   hotkeys:     51 hotkey(id, vk, modifiers) - a thread message (1.11.0)
    (overlay renumbered 2026-08-23: 12..16 collided with the main window's
    triple/move/leave/wheel/resize types once one pump served both) */
 #define SHELL_QCAP 1024
@@ -508,6 +511,40 @@ static void shell_close_window(void) {
     if (s_shell_hwnd) DestroyWindow(s_shell_hwnd);
 }
 
+/* ---- global hotkeys (1.11.0) ----
+   RegisterHotKey with a NULL window binds the hotkey to the CALLING
+   THREAD: Windows posts WM_HOTKEY to the thread queue with hwnd = 0,
+   which DispatchMessage cannot route to any window procedure. Both pumps
+   below therefore look at thread messages first and turn WM_HOTKEY into
+   event 51 [id, vk, modifiers]. No window is needed, so hotkeys keep
+   working while every window of the app is hidden.
+   MOD_NOREPEAT (Windows 7+) is always added: a held chord fires once.
+   A hotkey with NO modifier steals that key from every application on
+   the desktop until it is unregistered - the Eiffel side makes the caller
+   say so explicitly (SHELL_HOTKEYS.register_bare). */
+#ifndef MOD_NOREPEAT
+#define MOD_NOREPEAT 0x4000
+#endif
+
+static int shell_hotkey_register(int l_id, int l_mods, int l_vk) {
+    return RegisterHotKey(0, l_id, (UINT)l_mods | MOD_NOREPEAT, (UINT)l_vk) ? 1 : 0;
+}
+
+static void shell_hotkey_unregister(int l_id) {
+    UnregisterHotKey(0, l_id);
+}
+
+/* Post a WM_HOTKEY to this thread exactly as Windows would (tests). */
+static void shell_hotkey_simulate(int l_id, int l_mods, int l_vk) {
+    PostThreadMessageW(GetCurrentThreadId(), WM_HOTKEY, (WPARAM)l_id,
+        MAKELPARAM((WORD)l_mods, (WORD)l_vk));
+}
+
+static void shell_thread_message(MSG* l_msg) {
+    if (l_msg->hwnd == 0 && l_msg->message == WM_HOTKEY)
+        shell_push(51, (int)l_msg->wParam, (int)HIWORD(l_msg->lParam), (int)LOWORD(l_msg->lParam));
+}
+
 /* Pump this thread's queue for ms milliseconds WITHOUT a main window:
    paints windowless-facility windows (outlines, strip) in short CLI
    diagnostics. PeekMessage so an empty queue cannot block past the
@@ -517,6 +554,7 @@ static void shell_pump_for(int ms) {
     MSG m;
     while (GetTickCount() < deadline) {
         while (PeekMessageW(&m, 0, 0, 0, PM_REMOVE)) {
+            shell_thread_message(&m);
             TranslateMessage(&m);
             DispatchMessageW(&m);
         }
@@ -528,6 +566,7 @@ static int shell_pump(void) {
     MSG m;
     BOOL r = GetMessageW(&m, 0, 0, 0);
     if (r <= 0) return 0;
+    shell_thread_message(&m);
     TranslateMessage(&m);
     DispatchMessageW(&m);
     return 1;
@@ -727,6 +766,286 @@ static void shell_hide_strip(void) {
 
 static void* shell_strip_dc(void)          { return s_shell_strip ? (void*)GetDC(s_shell_strip) : 0; }
 static void  shell_strip_release(void* dc) { if (s_shell_strip && dc) ReleaseDC(s_shell_strip, (HDC)dc); }
+
+/* ---- panels (1.11.0): borderless topmost tool windows for an on-screen
+   instrument - a teleprompter pill under the webcam, a heads-up strip.
+   Up to SHELL_PANELS per process; none takes focus when clicked
+   (WS_EX_NOACTIVATE + MA_NOACTIVATE), none has a taskbar button. Each is
+   layered from birth, so whole-window opacity is one call, and the
+   click-through switch (WS_EX_TRANSPARENT, honoured only on layered
+   windows) works at any time. Capture exclusion uses
+   SetWindowDisplayAffinity, looked up at run time: ISE's generated C
+   targets Windows 2000 (_WIN32_WINNT 0x0500), where the function is not
+   declared, and an older Windows without it then degrades to "not
+   protected" instead of failing to load.
+   events (the slot always in the fourth field, `event_extra'):
+     41 press(x,y)   42 release(x,y)   43 move(x,y) - coalesced
+     44 expose       45 wheel(delta)   46 right press(x,y)
+     47 moved(left,top) - after a Shift+drag, when the panel is draggable */
+#define SHELL_PANELS 8
+#define SHELL_WDA_NONE 0x0
+#define SHELL_WDA_MONITOR 0x1
+#define SHELL_WDA_EXCLUDEFROMCAPTURE 0x11
+SHELL_SHARED HWND s_shell_panel[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_drag[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_alpha[SHELL_PANELS] = {255, 255, 255, 255, 255, 255, 255, 255};
+
+typedef BOOL (WINAPI *shell_set_affinity_fn)(HWND, DWORD);
+typedef BOOL (WINAPI *shell_get_affinity_fn)(HWND, DWORD*);
+
+static HWND shell_panel_hwnd(int l_slot) {
+    return (l_slot >= 0 && l_slot < SHELL_PANELS) ? s_shell_panel[l_slot] : 0;
+}
+
+static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    int l_slot = (int)GetWindowLongPtrW(h, GWLP_USERDATA);
+    int l_x = (int)(short)LOWORD(l), l_y = (int)(short)HIWORD(l);
+    switch (m) {
+        case WM_MOUSEACTIVATE:
+            return MA_NOACTIVATE;
+        case WM_LBUTTONDOWN:
+            if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel_drag[l_slot]
+                && (GetKeyState(VK_SHIFT) & 0x8000)) {
+                ReleaseCapture();
+                SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                return 0;
+            }
+            SetCapture(h);
+            shell_push(41, l_x, l_y, l_slot);
+            return 0;
+        case WM_LBUTTONUP:
+            if (GetCapture() == h) ReleaseCapture();
+            shell_push(42, l_x, l_y, l_slot);
+            return 0;
+        case WM_RBUTTONDOWN:
+            shell_push(46, l_x, l_y, l_slot);
+            return 0;
+        case WM_MOUSEMOVE: {
+            int l_last = (s_shell_qtail + SHELL_QCAP - 1) % SHELL_QCAP;
+            if (s_shell_qtail != s_shell_qhead && s_shell_q[l_last][0] == 43 && s_shell_q[l_last][3] == l_slot) {
+                s_shell_q[l_last][1] = l_x;
+                s_shell_q[l_last][2] = l_y;
+            } else
+                shell_push(43, l_x, l_y, l_slot);
+            return 0;
+        }
+        case WM_MOUSEWHEEL:
+            shell_push(45, (int)(short)HIWORD(w), 0, l_slot);
+            return 0;
+        case WM_EXITSIZEMOVE: {
+            RECT l_r;
+            GetWindowRect(h, &l_r);
+            shell_push(47, l_r.left, l_r.top, l_slot);
+            return 0;
+        }
+        case WM_PAINT: {
+            PAINTSTRUCT l_ps;
+            BeginPaint(h, &l_ps);
+            EndPaint(h, &l_ps);
+            shell_push(44, 0, 0, l_slot);
+            return 0;
+        }
+        case WM_ERASEBKGND:
+            return 1;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+/* Create a hidden panel; answers its slot, or -1 when all are in use. */
+static int shell_panel_open(int l_x, int l_y, int l_w, int l_h) {
+    WNDCLASSW l_wc;
+    HWND l_hwnd;
+    int l_slot = -1, l_i;
+    for (l_i = 0; l_i < SHELL_PANELS && l_slot < 0; l_i++)
+        if (!s_shell_panel[l_i]) l_slot = l_i;
+    if (l_slot < 0 || l_w <= 0 || l_h <= 0) return -1;
+    ZeroMemory(&l_wc, sizeof(l_wc));
+    l_wc.lpfnWndProc = shell_panel_proc;
+    l_wc.hInstance = GetModuleHandleW(0);
+    l_wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
+    l_wc.lpszClassName = L"SimpleShellPanel";
+    RegisterClassW(&l_wc);          /* a second registration fails harmlessly */
+    l_hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+        L"SimpleShellPanel", L"", WS_POPUP, l_x, l_y, l_w, l_h, 0, 0, GetModuleHandleW(0), 0);
+    if (!l_hwnd) return -1;
+    SetWindowLongPtrW(l_hwnd, GWLP_USERDATA, (LONG_PTR)l_slot);
+    /* a layered window shows nothing until its attributes are set */
+    SetLayeredWindowAttributes(l_hwnd, 0, 255, LWA_ALPHA);
+    s_shell_panel[l_slot] = l_hwnd;
+    s_shell_panel_drag[l_slot] = 0;
+    s_shell_panel_alpha[l_slot] = 255;
+    return l_slot;
+}
+
+static void shell_panel_show(int l_slot, int l_x, int l_y, int l_w, int l_h) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd) SetWindowPos(l_hwnd, HWND_TOPMOST, l_x, l_y, l_w, l_h, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+}
+
+static void shell_panel_place(int l_slot, int l_x, int l_y, int l_w, int l_h) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd) SetWindowPos(l_hwnd, HWND_TOPMOST, l_x, l_y, l_w, l_h, SWP_NOACTIVATE);
+}
+
+static void shell_panel_hide(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd) ShowWindow(l_hwnd, SW_HIDE);
+}
+
+static void shell_panel_close(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd) {
+        DestroyWindow(l_hwnd);
+        s_shell_panel[l_slot] = 0;
+        s_shell_panel_drag[l_slot] = 0;
+    }
+}
+
+static int shell_panel_is_visible(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return (l_hwnd && IsWindowVisible(l_hwnd)) ? 1 : 0;
+}
+
+static void shell_panel_invalidate(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd) InvalidateRect(l_hwnd, 0, FALSE);
+}
+
+static void* shell_panel_dc(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return l_hwnd ? (void*)GetDC(l_hwnd) : 0;
+}
+
+static void shell_panel_release_dc(int l_slot, void* l_dc) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd && l_dc) ReleaseDC(l_hwnd, (HDC)l_dc);
+}
+
+static void shell_panel_set_opacity(int l_slot, int l_alpha) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd && l_alpha >= 0 && l_alpha <= 255) {
+        SetLayeredWindowAttributes(l_hwnd, 0, (BYTE)l_alpha, LWA_ALPHA);
+        s_shell_panel_alpha[l_slot] = l_alpha;
+    }
+}
+
+static int shell_panel_opacity(int l_slot) {
+    return shell_panel_hwnd(l_slot) ? s_shell_panel_alpha[l_slot] : 0;
+}
+
+static void shell_panel_set_click_through(int l_slot, int l_on) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    LONG_PTR l_ex;
+    if (!l_hwnd) return;
+    l_ex = GetWindowLongPtrW(l_hwnd, GWL_EXSTYLE);
+    l_ex = l_on ? (l_ex | WS_EX_TRANSPARENT) : (l_ex & ~(LONG_PTR)WS_EX_TRANSPARENT);
+    SetWindowLongPtrW(l_hwnd, GWL_EXSTYLE, l_ex);
+}
+
+static int shell_panel_is_click_through(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return (l_hwnd && (GetWindowLongPtrW(l_hwnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT)) ? 1 : 0;
+}
+
+static void shell_panel_set_draggable(int l_slot, int l_on) {
+    if (shell_panel_hwnd(l_slot)) s_shell_panel_drag[l_slot] = l_on ? 1 : 0;
+}
+
+/* The display affinity now in force: 0x11 left out of captures
+   (Windows 10 2004+), 0x1 shown black in captures (older), 0 none. */
+static int shell_panel_capture_affinity(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    HMODULE l_user = GetModuleHandleW(L"user32.dll");
+    shell_get_affinity_fn l_get = l_user ? (shell_get_affinity_fn)GetProcAddress(l_user, "GetWindowDisplayAffinity") : 0;
+    DWORD l_a = 0;
+    if (!l_hwnd || !l_get || !l_get(l_hwnd, &l_a)) return 0;
+    return (int)l_a;
+}
+
+/* Ask for capture exclusion (falling back to the black box on older
+   Windows), or turn protection off. */
+static void shell_panel_set_capture_excluded(int l_slot, int l_on) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    HMODULE l_user = GetModuleHandleW(L"user32.dll");
+    shell_set_affinity_fn l_set = l_user ? (shell_set_affinity_fn)GetProcAddress(l_user, "SetWindowDisplayAffinity") : 0;
+    if (!l_hwnd || !l_set) return;
+    if (!l_on)
+        l_set(l_hwnd, SHELL_WDA_NONE);
+    else if (!l_set(l_hwnd, SHELL_WDA_EXCLUDEFROMCAPTURE))
+        l_set(l_hwnd, SHELL_WDA_MONITOR);
+}
+
+/* Fill a panel with one colour through GDI (tests and placeholders). */
+static void shell_panel_fill(int l_slot, int l_rgb) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    HDC l_dc;
+    HBRUSH l_brush;
+    RECT l_r;
+    if (!l_hwnd) return;
+    l_dc = GetDC(l_hwnd);
+    if (!l_dc) return;
+    GetClientRect(l_hwnd, &l_r);
+    l_brush = CreateSolidBrush(RGB((l_rgb >> 16) & 0xFF, (l_rgb >> 8) & 0xFF, l_rgb & 0xFF));
+    FillRect(l_dc, &l_r, l_brush);
+    DeleteObject(l_brush);
+    ReleaseDC(l_hwnd, l_dc);
+}
+
+/* ---- monitors (1.11.0): the displays, for placing an instrument on the
+   right one (a webcam sits on ONE monitor). Snapshot taken by
+   shell_monitors_refresh; fields 0..3 bounds (left, top, right, bottom),
+   4..7 work area, 8 primary flag. Virtual-screen coordinates, in the
+   process's DPI awareness (system-aware since shell_create_window). ---- */
+#define SHELL_MONITOR_CAP 16
+SHELL_SHARED int     s_shell_mon_count = 0;
+SHELL_SHARED int     s_shell_mon[SHELL_MONITOR_CAP][9] = {{0}};
+SHELL_SHARED wchar_t s_shell_mon_name[SHELL_MONITOR_CAP][32] = {{0}};
+
+static BOOL CALLBACK shell_monitor_enum(HMONITOR l_mon, HDC l_hdc, LPRECT l_rect, LPARAM l_data) {
+    MONITORINFOEXW l_mi;
+    int l_i = s_shell_mon_count;
+    (void)l_hdc; (void)l_rect; (void)l_data;
+    if (l_i >= SHELL_MONITOR_CAP) return FALSE;
+    ZeroMemory(&l_mi, sizeof(l_mi));
+    l_mi.cbSize = sizeof(l_mi);
+    if (GetMonitorInfoW(l_mon, (LPMONITORINFO)&l_mi)) {
+        s_shell_mon[l_i][0] = l_mi.rcMonitor.left;
+        s_shell_mon[l_i][1] = l_mi.rcMonitor.top;
+        s_shell_mon[l_i][2] = l_mi.rcMonitor.right;
+        s_shell_mon[l_i][3] = l_mi.rcMonitor.bottom;
+        s_shell_mon[l_i][4] = l_mi.rcWork.left;
+        s_shell_mon[l_i][5] = l_mi.rcWork.top;
+        s_shell_mon[l_i][6] = l_mi.rcWork.right;
+        s_shell_mon[l_i][7] = l_mi.rcWork.bottom;
+        s_shell_mon[l_i][8] = (l_mi.dwFlags & MONITORINFOF_PRIMARY) ? 1 : 0;
+        lstrcpynW(s_shell_mon_name[l_i], l_mi.szDevice, 32);
+        s_shell_mon_count = l_i + 1;
+    }
+    return TRUE;
+}
+
+static int shell_monitors_refresh(void) {
+    s_shell_mon_count = 0;
+    EnumDisplayMonitors(0, 0, shell_monitor_enum, 0);
+    return s_shell_mon_count;
+}
+
+static int shell_monitor_count(void) { return s_shell_mon_count; }
+
+static int shell_monitor_field(int l_i, int l_f) {
+    return (l_i >= 0 && l_i < s_shell_mon_count && l_f >= 0 && l_f <= 8) ? s_shell_mon[l_i][l_f] : 0;
+}
+
+static int shell_monitor_name(int l_i, wchar_t* l_buf, int l_cap) {
+    int l_n = 0;
+    if (l_i < 0 || l_i >= s_shell_mon_count || l_cap <= 0) return 0;
+    while (l_n < l_cap - 1 && l_n < 31 && s_shell_mon_name[l_i][l_n]) {
+        l_buf[l_n] = s_shell_mon_name[l_i][l_n];
+        l_n++;
+    }
+    l_buf[l_n] = 0;
+    return l_n;
+}
 
 /* ---- helpers for the run engine ---- */
 static int shell_buffers_equal(const void* a, const void* b, int len) {

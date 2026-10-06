@@ -25,12 +25,17 @@ All notable changes to simple_shell.
   `register_bare`, for the deliberate case (a presentation clicker while
   recording). A chord another application holds is refused and reported
   (`last_succeeded`), never silently lost.
+- **`SHELL_DESKTOP.become_dpi_aware`, `system_dpi`, `dpi_scale`: the display
+  scale.** An app that builds fonts and layouts before its window exists (so
+  before `shell_create_window` makes the process DPI aware) can become aware
+  first and read the real DPI - 144 on a 150% display, where an unaware process
+  sees 96 and draws everything a third too small on a 4K screen.
 - **`SHELL_MONITORS`: the displays.** Bounds, work area, primary flag and device
   name per monitor (`EnumDisplayMonitors`), plus `index_at` and `primary_index`.
 - Tests: panel lifecycle; capture exclusion proved through a real screen grab
   (the BitBlt + CAPTUREBLT path recorders and meeting apps use: 256 red pixels
   before, 0 after, affinity 0x11); hotkey registration and delivery as event 51;
-  hotkey conflict reported; monitor enumeration. 27/27, SCOOP target 4/4.
+  hotkey conflict reported; monitor enumeration; display scale. 28/28, SCOOP target 4/4.
 
 ## 1.10.0 - 2026-09-05
 

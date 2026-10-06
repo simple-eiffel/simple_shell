@@ -44,6 +44,18 @@ feature -- Desktop
 			assert ("with height", d.virtual_height > 0)
 		end
 
+	test_display_scale
+			-- Once DPI aware, the system DPI is a real value (96 at 100%, 144 at
+			-- 150%) and the scale is that over 96.
+		local
+			d: SHELL_DESKTOP
+		do
+			create d
+			d.become_dpi_aware
+			assert ("a plausible DPI: " + d.system_dpi.out, d.system_dpi >= 96 and d.system_dpi <= 480)
+			assert ("scale is dpi / 96", (d.dpi_scale - d.system_dpi / 96).abs < 1.0e-9)
+		end
+
 	test_desktop_grab
 			-- Grab 4x4 real desktop pixels; the C side forces alpha
 			-- opaque, so byte 3 of the first BGRA pixel must be 255.

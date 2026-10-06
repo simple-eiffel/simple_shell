@@ -64,7 +64,7 @@ end
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |
 | `SHELL_STRIP` | small topmost tool-window strip (the dictation-bar pattern) |
 | `SHELL_OUTLINES` | click-through coloured frame regions on the desktop (the region-outline pattern) |
-| `SHELL_PANEL` | borderless topmost instrument panels (up to 8): never take focus, can be left out of screen captures, click-through on demand, whole-window opacity, Shift+drag (1.11.0) |
+| `SHELL_PANEL` | borderless topmost instrument panels (up to 8): never take focus, can be left out of screen captures, click-through on demand, whole-window opacity, Shift+drag to move (1.11.0) and to size from an edge or corner (1.12.0) |
 | `SHELL_HOTKEYS` | global hotkeys as queue event 51; a modifier is required unless a chord is registered bare on purpose (1.11.0) |
 | `SHELL_MONITORS` | snapshot of the displays: bounds, work area, primary, device name (1.11.0) |
 | `SHELL_TRAY` | one notification-area icon on a message-only window (1.9.0): `set_tooltip` (unread counts), `balloon` notices, idempotent `remove`; a refusing environment leaves `is_installed` False and the caller degrades |

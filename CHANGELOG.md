@@ -2,6 +2,23 @@
 
 All notable changes to simple_shell.
 
+## 1.12.0 - 2026-10-06
+
+### Added
+- **`SHELL_PANEL` resizing by Shift+drag on an edge or corner.** `set_resizable
+  (grip, min_width, min_height)` (requires `is_draggable`) turns a Shift+press
+  within `grip` pixels of an edge or corner into a native resize: the same
+  `WM_NCLBUTTONDOWN` route a move takes, with that edge's hit code. Elsewhere
+  Shift+drag still moves. While Shift is held the sizing cursor shows over the
+  grips; `WM_GETMINMAXINFO` holds the minimum. `grip_at` answers what a press
+  at a point would do (`Grip_move`, `Grip_left` .. `Grip_bottom_right`), so
+  the geometry is testable without a mouse. Event 48 (resized: width, height)
+  follows event 47 when a drag ends; `sync_geometry` reads the window's real
+  rectangle back into `x`, `y`, `width`, `height`. `is_shift_held` reads the
+  physical key, as does the press itself (`MK_SHIFT`): a panel never has the
+  keyboard focus, so the thread's own key state can be stale. Found from
+  simple_prompter, whose reader wants to size the pill where it sits.
+
 ## 1.11.0 - 2026-10-06
 
 ### Added

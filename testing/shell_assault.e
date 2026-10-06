@@ -256,6 +256,40 @@ feature -- Panels (1.11.0)
 			p.close
 		end
 
+	test_panel_resize_grips
+			-- A REAL panel, offscreen: Shift+press regions (grips at edges and corners,
+			-- the middle moves), the grip switched off, geometry read back after
+			-- the window changed, and resizing tied to dragging.
+		local
+			p: SHELL_PANEL
+		do
+			create p.make
+			p.open (-3000, -3000, 200, 100)
+			assert ("moves by default", p.grip_at (100, 50) = p.Grip_move and p.grip_at (1, 1) = p.Grip_move)
+			p.set_draggable (True)
+			p.set_resizable (10, 80, 40)
+			assert ("resizable", p.is_resizable)
+			assert ("middle moves", p.grip_at (100, 50) = p.Grip_move)
+			assert ("left edge", p.grip_at (3, 50) = p.Grip_left)
+			assert ("right edge", p.grip_at (195, 50) = p.Grip_right)
+			assert ("top edge", p.grip_at (100, 2) = p.Grip_top)
+			assert ("bottom edge", p.grip_at (100, 95) = p.Grip_bottom)
+			assert ("corners", p.grip_at (2, 2) = p.Grip_top_left and p.grip_at (198, 2) = p.Grip_top_right
+				and p.grip_at (2, 98) = p.Grip_bottom_left and p.grip_at (198, 98) = p.Grip_bottom_right)
+			assert ("just inside the grip", p.grip_at (10, 50) = p.Grip_move)
+			p.set_fixed_size
+			assert ("grips off", not p.is_resizable and p.grip_at (3, 50) = p.Grip_move)
+			p.set_resizable (10, 80, 40)
+			p.set_draggable (False)
+			assert ("no resize without drag", not p.is_resizable)
+			p.show (-3000, -3000, 200, 100)
+			p.place (-2950, -2990, 240, 120)
+			p.sync_geometry
+			assert ("geometry read back", p.x = -2950 and p.y = -2990 and p.width = 240 and p.height = 120)
+			p.close
+			assert ("closed", not p.is_open and not p.is_resizable)
+		end
+
 	test_panel_capture_exclusion_really_hides
 			-- A red panel on screen appears in a screen grab; once excluded from
 			-- capture it does not (Windows 10 2004+). The grab is BitBlt with

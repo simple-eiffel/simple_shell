@@ -37,6 +37,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_strip_window_really_creates, "strip_window_really_creates")
 			run_test (agent t.test_queue_is_one_instance_across_units, "queue_is_one_instance_across_units")
 			run_test (agent t.test_clipboard_image_roundtrip, "clipboard_image_roundtrip")
+			run_test (agent t.test_clipboard_image_survives_repeated_round_trips, "clipboard_image_survives_repeated_round_trips")
 			run_test (agent t.test_input_knows_the_desktop, "input_knows_the_desktop")
 			run_test (agent t.test_input_keys_are_accepted, "input_keys_are_accepted")
 			run_test (agent t.test_alt_keys_are_claimed, "alt_keys_are_claimed")

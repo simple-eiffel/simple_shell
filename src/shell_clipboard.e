@@ -67,11 +67,13 @@ feature -- Access: bitmap
 
 	image_width: INTEGER
 			-- Width of the clipboard bitmap; 0 when there is none.
+			-- Retries briefly against history managers, as every other
+			-- clipboard read here does (see `image_size_read').
 		local
 			wh: MANAGED_POINTER
 		do
 			create wh.make (8)
-			if c_clip_image_size (wh.item, wh.item.plus (4)) = 1 then
+			if image_size_read (wh) then
 				Result := wh.read_integer_32 (0)
 			end
 		ensure
@@ -80,11 +82,12 @@ feature -- Access: bitmap
 
 	image_height: INTEGER
 			-- Height of the clipboard bitmap; 0 when there is none.
+			-- Retries briefly against history managers, as `image_width'.
 		local
 			wh: MANAGED_POINTER
 		do
 			create wh.make (8)
-			if c_clip_image_size (wh.item, wh.item.plus (4)) = 1 then
+			if image_size_read (wh) then
 				Result := wh.read_integer_32 (4)
 			end
 		ensure
@@ -177,6 +180,34 @@ feature -- Element change
 		end
 
 feature {NONE} -- Implementation
+
+	image_size_read (a_wh: MANAGED_POINTER): BOOLEAN
+			-- Read the clipboard bitmap's width and height into `a_wh' (two
+			-- INTEGER_32s, width first). The header read needs OpenClipboard,
+			-- and a history manager opens the clipboard to copy every new
+			-- bitmap the moment it arrives - right when a caller who just
+			-- put one, or is pasting one, reads its size. A single attempt
+			-- answered 0 x 0 for a bitmap `has_image' was advertising (seen
+			-- on 4 of 8 probe runs, 2026-10-08), so this retries up to five
+			-- times, 10 ms apart, while a bitmap is still advertised: the
+			-- same discipline as `image_into', `text' and the setters.
+		require
+			room_for_two: a_wh.count >= 8
+		local
+			env: EXECUTION_ENVIRONMENT
+			attempts: INTEGER
+		do
+			from
+				Result := c_clip_image_size (a_wh.item, a_wh.item.plus (4)) = 1
+			until
+				Result or attempts >= 5 or not has_image
+			loop
+				create env
+				env.sleep (10_000_000)
+				Result := c_clip_image_size (a_wh.item, a_wh.item.plus (4)) = 1
+				attempts := attempts + 1
+			end
+		end
 
 	Buffer_bytes: INTEGER = 2097152
 			-- One million characters of paste headroom (the old 128k

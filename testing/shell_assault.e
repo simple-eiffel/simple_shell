@@ -490,6 +490,51 @@ feature -- Clipboard bitmap
 			assert ("a buffer sized for another bitmap is refused, never overrun", not c.image_into (back.item, 5, 3, 20))
 		end
 
+	test_clipboard_image_survives_repeated_round_trips
+			-- 200 set-then-read cycles, each read made the instant after the
+			-- write: the moment a clipboard history manager is most likely to
+			-- hold the clipboard open to copy what just arrived. Before
+			-- 1.12.1 `image_width' and `image_height' made ONE OpenClipboard
+			-- attempt and answered 0 when it lost that race. Every size and
+			-- every pixel must now come back as it was put; the sizes change
+			-- from cycle to cycle so a stale bitmap cannot pass for a fresh one.
+		local
+			c: SHELL_CLIPBOARD
+			bits, back: MANAGED_POINTER
+			i, w, h, k, l_bad: INTEGER
+			l_before: STRING_32
+			l_intact: BOOLEAN
+		do
+			create c
+			l_before := c.text
+			create bits.make (8 * 4 * 4)
+			create back.make (8 * 4 * 4)
+			from i := 1 until i > 200 loop
+				w := 2 + i \\ 7
+				h := 1 + i \\ 4
+				from k := 0 until k >= w * h loop
+					bits.put_natural_32 ({NATURAL_32} 0xFF000000 + (i * 1000 + k).to_natural_32, k * 4)
+					k := k + 1
+				end
+				c.set_image (bits.item, w, h, w * 4)
+				l_intact := c.image_width = w and then c.image_height = h
+					and then c.image_into (back.item, w, h, w * 4)
+				from k := 0 until not l_intact or k >= w * h loop
+					l_intact := back.read_natural_32 (k * 4) = bits.read_natural_32 (k * 4)
+					k := k + 1
+				end
+				if not l_intact then
+					l_bad := l_bad + 1
+				end
+				i := i + 1
+			end
+			if not l_before.is_empty then
+				c.set_text (l_before)
+			end
+			print ("    " + l_bad.out + " of 200 image round trips came back damaged%N")
+			assert_integers_equal ("every image round trip intact", 0, l_bad)
+		end
+
 feature -- Input synthesis
 
 	test_input_knows_the_desktop

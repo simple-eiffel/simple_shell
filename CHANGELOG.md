@@ -2,6 +2,27 @@
 
 All notable changes to simple_shell.
 
+## 1.12.1 - 2026-10-08
+
+### Fixed
+- **`SHELL_CLIPBOARD.image_width` and `image_height` retry like every other
+  clipboard read.** Both read the bitmap header through `OpenClipboard` once,
+  and a clipboard history manager opens the clipboard to copy each new bitmap
+  the moment it arrives. That is exactly when a caller who has just put one, or
+  is pasting one, asks its size. Probed right after `set_image`, `image_width`
+  answered 0 while `has_image` was True on 4 of 8 runs. simple_chat's
+  paste-a-picture test failed 7 of 15 isolated runs, because its PNG path sizes
+  its buffer from these two. Both now go through one `image_size_read`: up to
+  five retries, 10 ms apart, while a bitmap is still advertised, the same
+  discipline as `image_into`, `text` and the setters. The other clipboard calls
+  were checked: `text`, `image_into`, `set_text` and `set_image` already
+  retried, and `has_text` / `has_image` use `IsClipboardFormatAvailable`, which
+  never opens the clipboard.
+- New test `clipboard_image_survives_repeated_round_trips`: 200 set-then-read
+  cycles, with the size changing every cycle so a stale bitmap cannot pass.
+  Without the fix it reported 2 of 200 damaged and failed. With it, 0 of 200 on
+  each of 5 runs (suite 30 to 31, all passing).
+
 ## 1.12.0 - 2026-10-06
 
 ### Added

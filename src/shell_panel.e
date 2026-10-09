@@ -141,6 +141,15 @@ feature -- Status
 			Result := c_shift_held /= 0
 		end
 
+	is_cursor_over: BOOLEAN
+			-- Is the mouse pointer over the panel now? False while closed or hidden.
+			-- Click-through does not change the answer: the pointer is over it all the same.
+		do
+			Result := is_open and then c_cursor_over (handle) /= 0
+		ensure
+			closed_never: not is_open implies not Result
+		end
+
 	is_draggable: BOOLEAN
 			-- May Shift+drag move the panel (event 47 reports where it landed)?
 
@@ -461,6 +470,18 @@ feature {NONE} -- Externals
 	c_shift_held: INTEGER
 		external "C inline use %"simple_shell.h%""
 		alias "return shell_shift_held();"
+		end
+
+	c_cursor_over (a_hwnd: POINTER): INTEGER
+			-- 1 when the pointer is inside visible window `a_hwnd'.
+		external "C inline use %"simple_shell.h%""
+		alias "[
+			POINT l_p;
+			RECT l_r;
+			HWND l_hwnd = (HWND)$a_hwnd;
+			if (!l_hwnd || !IsWindowVisible(l_hwnd) || !GetCursorPos(&l_p) || !GetWindowRect(l_hwnd, &l_r)) return 0;
+			return PtInRect(&l_r, l_p) ? 1 : 0;
+		]"
 		end
 
 	c_capture_affinity (a_slot: INTEGER): INTEGER

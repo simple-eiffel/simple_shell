@@ -2,6 +2,16 @@
 
 All notable changes to simple_shell.
 
+## 1.13.1 - 2026-10-10
+
+### Fixed
+- **A `SHELL_WINDOW` shows its program's icon** in the title bar, the taskbar
+  and Alt+Tab. The window class registered no icon, so Windows drew its
+  generic one even when the exe carried an icon. It now loads resource 1 of
+  the exe, the way WEL's `class_icon` does: put `1 ICON "app.ico"` in the
+  system's .rc (`<system>.rc` beside the ECF, compiled into the exe by the
+  build). A program without one looks as before.
+
 ## 1.13.0 - 2026-10-09
 
 ### Added

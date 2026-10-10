@@ -450,11 +450,12 @@ static void shell_set_backdrop(void* hwnd, int rgb) {
 }
 
 static void* shell_create_window(const wchar_t* title, int px, int py, int cw, int ch) {
-    WNDCLASSW wc;
+    WNDCLASSEXW wc;
     RECT r;
     HWND h;
     SetProcessDPIAware();
     ZeroMemory(&wc, sizeof(wc));
+    wc.cbSize = sizeof(wc);
     wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = shell_wndproc;
     wc.hInstance = GetModuleHandleW(0);
@@ -462,7 +463,13 @@ static void* shell_create_window(const wchar_t* title, int px, int py, int cw, i
     if (!s_shell_backdrop) s_shell_backdrop = CreateSolidBrush(RGB(18, 20, 27));
     wc.hbrBackground = s_shell_backdrop;
     wc.lpszClassName = L"SimpleShellWindow";
-    RegisterClassW(&wc);
+    /* The program's own icon: resource 1 of its .rc (1 ICON "app.ico").
+       Without one LoadImageW answers 0 and Windows draws its generic icon. */
+    wc.hIcon = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+    wc.hIconSm = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+    RegisterClassExW(&wc);
     r.left = 0; r.top = 0; r.right = cw; r.bottom = ch;
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     h = CreateWindowExW(0, L"SimpleShellWindow", title,

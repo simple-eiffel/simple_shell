@@ -2,6 +2,15 @@
 
 All notable changes to simple_shell.
 
+## 1.13.0 - 2026-10-09
+
+### Added
+- **`SHELL_PANEL.is_cursor_over`**: is the mouse pointer over the panel now?
+  False while closed or hidden; click-through does not change the answer. A
+  panel gets no "mouse left" event, so an app that shows controls on hover
+  polls this from its timer (simple_prompter's transport bar). The C reads the
+  window from `handle`, not from the header's panel table.
+
 ## 1.12.1 - 2026-10-08
 
 ### Fixed

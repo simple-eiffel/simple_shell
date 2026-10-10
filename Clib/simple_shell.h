@@ -799,6 +799,11 @@ static void  shell_strip_release(void* dc) { if (s_shell_strip && dc) ReleaseDC(
      44 expose       45 wheel(delta)   46 right press(x,y)
      47 moved(left,top) - after a Shift+drag, when the panel is draggable
      48 resized(width,height) - after a Shift+drag (move or resize) ends
+     49 moving(left,top) - during any move, coalesced (1.14.0)
+   1.14.0: a panel may also drag on a plain press (a handle), keep its moves
+   to one axis, and size from its left or right edge on a plain press; the
+   press order is: Shift on a draggable panel (move, or resize at a grip),
+   then a plain-press drag, then a plain-press side grip, else a click.
    A resizable panel turns a Shift+press within its grip of an edge or corner
    into a native resize (the same WM_NCLBUTTONDOWN route a move takes, with
    the edge's hit code), and shows the sizing cursor there while Shift is
@@ -815,6 +820,11 @@ SHELL_SHARED int  s_shell_panel_alpha[SHELL_PANELS] = {255, 255, 255, 255, 255, 
 SHELL_SHARED int  s_shell_panel_grip[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_minw[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_minh[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_press_drag[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_axis[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_side_grip[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_start_x[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_start_y[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 typedef BOOL (WINAPI *shell_set_affinity_fn)(HWND, DWORD);
 typedef BOOL (WINAPI *shell_get_affinity_fn)(HWND, DWORD*);
@@ -847,6 +857,24 @@ static int shell_panel_grip_code(int l_slot, int l_x, int l_y) {
     return HTCAPTION;
 }
 
+/* What a press at client (x, y) does (1.14.0), `l_shift' telling whether Shift is down:
+   a hit code that starts a native move or resize, or 0 (HTNOWHERE) for a plain click. */
+static int shell_panel_press_code(int l_slot, int l_x, int l_y, int l_shift) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    RECT l_r;
+    int l_g;
+    if (!l_hwnd) return 0;
+    if (s_shell_panel_drag[l_slot] && l_shift) return shell_panel_grip_code(l_slot, l_x, l_y);
+    if (s_shell_panel_press_drag[l_slot]) return HTCAPTION;
+    if (s_shell_panel_side_grip[l_slot] && s_shell_panel_grip[l_slot] > 0) {
+        l_g = s_shell_panel_grip[l_slot];
+        GetClientRect(l_hwnd, &l_r);
+        if (l_x < l_g) return HTLEFT;
+        if (l_x >= l_r.right - l_g) return HTRIGHT;
+    }
+    return 0;
+}
+
 static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     int l_slot = (int)GetWindowLongPtrW(h, GWLP_USERDATA);
     int l_x = (int)(short)LOWORD(l), l_y = (int)(short)HIWORD(l);
@@ -854,15 +882,18 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE;
         case WM_LBUTTONDOWN:
-            if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel_drag[l_slot]
-                && ((w & MK_SHIFT) || (GetKeyState(VK_SHIFT) & 0x8000))) {
-                POINT l_pt;
-                l_pt.x = l_x;
-                l_pt.y = l_y;
-                ClientToScreen(h, &l_pt);
-                ReleaseCapture();
-                SendMessageW(h, WM_NCLBUTTONDOWN, (WPARAM)shell_panel_grip_code(l_slot, l_x, l_y), MAKELPARAM(l_pt.x, l_pt.y));
-                return 0;
+            if (l_slot >= 0 && l_slot < SHELL_PANELS) {
+                int l_code = shell_panel_press_code(l_slot, l_x, l_y,
+                    ((w & MK_SHIFT) || (GetKeyState(VK_SHIFT) & 0x8000)) ? 1 : 0);
+                if (l_code != 0) {
+                    POINT l_pt;
+                    l_pt.x = l_x;
+                    l_pt.y = l_y;
+                    ClientToScreen(h, &l_pt);
+                    ReleaseCapture();
+                    SendMessageW(h, WM_NCLBUTTONDOWN, (WPARAM)l_code, MAKELPARAM(l_pt.x, l_pt.y));
+                    return 0;
+                }
             }
             SetCapture(h);
             shell_push(41, l_x, l_y, l_slot);
@@ -893,7 +924,55 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             shell_push(48, l_r.right - l_r.left, l_r.bottom - l_r.top, l_slot);
             return 0;
         }
+        case WM_ENTERSIZEMOVE: {
+            RECT l_r;
+            if (l_slot >= 0 && l_slot < SHELL_PANELS && GetWindowRect(h, &l_r)) {
+                s_shell_panel_start_x[l_slot] = l_r.left;
+                s_shell_panel_start_y[l_slot] = l_r.top;
+            }
+            return 0;
+        }
+        case WM_MOVING: {
+            /* Keep a move to the panel's axis, and tell the app where it is now (coalesced). */
+            RECT* l_r = (RECT*)l;
+            if (l_slot >= 0 && l_slot < SHELL_PANELS && l_r) {
+                int l_d, l_last;
+                if (s_shell_panel_axis[l_slot] == 1) {
+                    l_d = s_shell_panel_start_y[l_slot] - l_r->top;
+                    l_r->top += l_d;
+                    l_r->bottom += l_d;
+                } else if (s_shell_panel_axis[l_slot] == 2) {
+                    l_d = s_shell_panel_start_x[l_slot] - l_r->left;
+                    l_r->left += l_d;
+                    l_r->right += l_d;
+                }
+                l_last = (s_shell_qtail + SHELL_QCAP - 1) % SHELL_QCAP;
+                if (s_shell_qtail != s_shell_qhead && s_shell_q[l_last][0] == 49 && s_shell_q[l_last][3] == l_slot) {
+                    s_shell_q[l_last][1] = l_r->left;
+                    s_shell_q[l_last][2] = l_r->top;
+                } else
+                    shell_push(49, l_r->left, l_r->top, l_slot);
+            }
+            return TRUE;
+        }
         case WM_SETCURSOR:
+            if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel[l_slot] == h && !(GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
+                /* Without Shift: a handle shows how it drags, a side grip shows the sizing arrows. */
+                POINT l_pt;
+                GetCursorPos(&l_pt);
+                ScreenToClient(h, &l_pt);
+                switch (shell_panel_press_code(l_slot, l_pt.x, l_pt.y, 0)) {
+                    case HTCAPTION:
+                        SetCursor(LoadCursorW(0, (LPCWSTR)(s_shell_panel_axis[l_slot] == 1 ? IDC_SIZEWE
+                            : s_shell_panel_axis[l_slot] == 2 ? IDC_SIZENS : IDC_SIZEALL)));
+                        return TRUE;
+                    case HTLEFT: case HTRIGHT:
+                        SetCursor(LoadCursorW(0, (LPCWSTR)IDC_SIZEWE));
+                        return TRUE;
+                    default:
+                        break;
+                }
+            }
             if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel[l_slot] == h && s_shell_panel_drag[l_slot]
                 && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
                 POINT l_pt;
@@ -954,6 +1033,9 @@ static int shell_panel_open(int l_x, int l_y, int l_w, int l_h) {
     SetLayeredWindowAttributes(l_hwnd, 0, 255, LWA_ALPHA);
     s_shell_panel[l_slot] = l_hwnd;
     s_shell_panel_drag[l_slot] = 0;
+    s_shell_panel_press_drag[l_slot] = 0;
+    s_shell_panel_axis[l_slot] = 0;
+    s_shell_panel_side_grip[l_slot] = 0;
     s_shell_panel_alpha[l_slot] = 255;
     return l_slot;
 }
@@ -982,6 +1064,9 @@ static void shell_panel_close(int l_slot) {
         s_shell_panel_grip[l_slot] = 0;
         s_shell_panel_minw[l_slot] = 0;
         s_shell_panel_minh[l_slot] = 0;
+        s_shell_panel_press_drag[l_slot] = 0;
+        s_shell_panel_axis[l_slot] = 0;
+        s_shell_panel_side_grip[l_slot] = 0;
     }
 }
 
@@ -1033,6 +1118,34 @@ static int shell_panel_is_click_through(int l_slot) {
 
 static void shell_panel_set_draggable(int l_slot, int l_on) {
     if (shell_panel_hwnd(l_slot)) s_shell_panel_drag[l_slot] = l_on ? 1 : 0;
+}
+
+/* 1.14.0: a plain press drags (a handle); moves keep to an axis (0 free, 1 horizontal,
+   2 vertical); a plain press within the grip of the left or right edge sizes. */
+static void shell_panel_set_press_drag(int l_slot, int l_on) {
+    if (shell_panel_hwnd(l_slot)) s_shell_panel_press_drag[l_slot] = l_on ? 1 : 0;
+}
+
+static void shell_panel_set_axis(int l_slot, int l_axis) {
+    if (shell_panel_hwnd(l_slot)) s_shell_panel_axis[l_slot] = (l_axis >= 0 && l_axis <= 2) ? l_axis : 0;
+}
+
+static void shell_panel_set_side_grip(int l_slot, int l_on) {
+    if (shell_panel_hwnd(l_slot)) s_shell_panel_side_grip[l_slot] = l_on ? 1 : 0;
+}
+
+/* Test hook: start a move, propose one moved by (dx, dy), and answer where the top-left
+   ended up after the panel's axis (written to *l_x, *l_y). Ends the move again. */
+static void shell_panel_try_move(int l_slot, int l_dx, int l_dy, int* l_x, int* l_y) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    RECT l_r;
+    if (l_hwnd && GetWindowRect(l_hwnd, &l_r)) {
+        SendMessageW(l_hwnd, WM_ENTERSIZEMOVE, 0, 0);
+        l_r.left += l_dx; l_r.right += l_dx; l_r.top += l_dy; l_r.bottom += l_dy;
+        SendMessageW(l_hwnd, WM_MOVING, 0, (LPARAM)&l_r);
+        *l_x = l_r.left;
+        *l_y = l_r.top;
+    }
 }
 
 /* Grip width in pixels (0: Shift+drag only moves) and the smallest size a

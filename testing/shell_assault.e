@@ -292,6 +292,44 @@ feature -- Panels (1.11.0)
 			assert ("closed", not p.is_open and not p.is_resizable)
 		end
 
+	test_panel_handle_and_side_grips
+			-- 1.14.0, a REAL panel offscreen: a handle drags on a plain press and keeps its moves
+			-- to one axis; side grips size on a plain press; Shift keeps its old meaning.
+		local
+			p: SHELL_PANEL
+			l_to: TUPLE [x, y: INTEGER]
+		do
+			create p.make
+			p.open (-3000, -3000, 200, 100)
+			p.show (-3000, -3000, 200, 100)
+			assert ("a plain press clicks", p.press_grip_at (100, 50, False) = p.Grip_none)
+			p.set_drags_on_press (True)
+			assert ("a handle moves on a plain press", p.press_grip_at (100, 50, False) = p.Grip_move
+				and p.press_grip_at (2, 50, False) = p.Grip_move)
+			l_to := p.axis_result (40, 25)
+			assert ("free by default", l_to.x = -2960 and l_to.y = -2975)
+			p.set_drag_axis (p.Axis_horizontal)
+			l_to := p.axis_result (40, 25)
+			assert ("slides only left and right", l_to.x = -2960 and l_to.y = -3000)
+			p.set_drag_axis (p.Axis_vertical)
+			l_to := p.axis_result (40, 25)
+			assert ("up and down only", l_to.x = -3000 and l_to.y = -2975)
+			p.set_drags_on_press (False)
+			p.set_drag_axis (p.Axis_free)
+			p.set_draggable (True)
+			p.set_resizable (10, 80, 40)
+			assert ("no side grips yet: a click", p.press_grip_at (3, 50, False) = p.Grip_none)
+			p.set_sides_size_on_press (True)
+			assert ("left side sizes", p.press_grip_at (3, 50, False) = p.Grip_left)
+			assert ("right side sizes", p.press_grip_at (195, 50, False) = p.Grip_right)
+			assert ("top is still a click", p.press_grip_at (100, 2, False) = p.Grip_none)
+			assert ("middle is still a click", p.press_grip_at (100, 50, False) = p.Grip_none)
+			assert ("Shift still moves", p.press_grip_at (100, 50, True) = p.Grip_move)
+			assert ("Shift still sizes the top", p.press_grip_at (100, 2, True) = p.Grip_top)
+			p.close
+			assert ("closed: plain again", not p.drags_on_press and not p.sides_size_on_press and p.drag_axis = p.Axis_free)
+		end
+
 	test_panel_capture_exclusion_really_hides
 			-- A red panel on screen appears in a screen grab; once excluded from
 			-- capture it does not (Windows 10 2004+). The grab is BitBlt with

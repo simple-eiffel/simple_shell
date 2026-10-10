@@ -44,6 +44,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_panel_lifecycle, "panel_lifecycle")
 			run_test (agent t.test_panel_capture_exclusion_really_hides, "panel_capture_exclusion_really_hides")
 			run_test (agent t.test_panel_resize_grips, "panel_resize_grips")
+			run_test (agent t.test_panel_handle_and_side_grips, "panel_handle_and_side_grips")
 			run_test (agent t.test_hotkey_registers_and_delivers, "hotkey_registers_and_delivers")
 			run_test (agent t.test_hotkey_conflict_is_reported, "hotkey_conflict_is_reported")
 			run_test (agent t.test_monitors_enumerate, "monitors_enumerate")

@@ -2,6 +2,23 @@
 
 All notable changes to simple_shell.
 
+## 1.14.0 - 2026-10-10
+
+### Added
+- **A panel can be a handle**: `SHELL_PANEL.set_drags_on_press` lets a plain press
+  drag it (no Shift), and `set_drag_axis` keeps any move to one axis
+  (`Axis_horizontal`: it slides left and right only; enforced in WM_MOVING).
+  simple_prompter's slide handle under the pill.
+- **`Event_moving` (49)**: a panel reports its left and top while it moves
+  (coalesced), so what is attached to it can follow live; 47 and 48 still come
+  when the move ends.
+- **`set_sides_size_on_press`**: a plain press within the grip of the left or
+  right edge sizes a resizable panel, with the sizing cursor shown there.
+  Shift keeps its meaning (move, or size from any edge or corner).
+- **`press_grip_at (x, y, shift)`**: what a press would do (`Grip_none` for a
+  click), and **`axis_result (dx, dy)`**: where a move would land after the
+  axis - both for tests without a mouse. 32 tests.
+
 ## 1.13.1 - 2026-10-10
 
 ### Fixed

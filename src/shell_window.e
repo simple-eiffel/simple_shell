@@ -120,6 +120,59 @@ feature -- Measurement
 			"shell_set_window_icon((const wchar_t*)$a_path);"
 		end
 
+feature -- Visibility (1.14.0)
+
+	set_starts_hidden (a_on: BOOLEAN)
+			-- Before `shell_run': create the window hidden. It still pumps - timers,
+			-- panels, hotkeys, the tray - for an application whose face is a panel.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_set_start_hidden($a_on);"
+		end
+
+	is_window_shown: BOOLEAN
+			-- Is the window on screen?
+		do
+			Result := shell_main_is_shown = 1
+		end
+
+	show_window
+			-- Put the window on screen and in front.
+		require
+			up: hwnd /= default_pointer
+		do
+			shell_show_main (1)
+		ensure
+			shown: is_window_shown
+		end
+
+	hide_window
+			-- Take the window off screen; it keeps pumping.
+		require
+			up: hwnd /= default_pointer
+		do
+			shell_show_main (0)
+		ensure
+			hidden: not is_window_shown
+		end
+
+	shell_main_is_shown: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_main_is_shown();"
+		end
+
+	shell_show_main (a_on: INTEGER)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_show_main($a_on);"
+		end
+
+feature -- Timers
+
 	set_fast_timer (a_ms: INTEGER)
 			-- Arm the app-settable fast tick: event 25 every `a_ms'
 			-- milliseconds, beside (not instead of) the 250ms

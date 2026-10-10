@@ -59,7 +59,9 @@
                 36 accept (Enter) | 37 arrow(vk) - the adjust-mode keys
    panels:      41 press | 42 release | 43 move | 44 expose | 45 wheel |
                 46 right press | 47 moved - slot in the fourth field (1.11.0)
+                48 resized | 49 moving (1.14.0) | 50 drop(x,y) (1.14.0)
    hotkeys:     51 hotkey(id, vk, modifiers) - a thread message (1.11.0)
+   tray:        52 click(button, 0, tray id) - 1 left, 2 right, 3 double (1.14.0)
    (overlay renumbered 2026-08-23: 12..16 collided with the main window's
    triple/move/leave/wheel/resize types once one pump served both) */
 #define SHELL_QCAP 1024
@@ -75,6 +77,7 @@ SHELL_SHARED int  s_shell_drops_len = 0;
 SHELL_SHARED int  s_shell_qhead = 0;
 SHELL_SHARED int  s_shell_qtail = 0;
 SHELL_SHARED int  s_shell_cursor = 0;
+SHELL_SHARED int  s_shell_start_hidden = 0;
 
 /* 0 arrow, 1 ibeam, 2 hand, 3 size-we, 4 size-ns, 5 cross, 6 wait */
 static void shell_set_cursor_kind(int k) {
@@ -146,6 +149,29 @@ static int shell_syschar_is_ours(int l_ch) {
         || l_ch == '+' || l_ch == '-' || l_ch == '=';
 }
 
+/* Gather a drop's paths, newline-joined, into the shared drop buffer, which
+   Eiffel pulls with `take_dropped_paths' (the clipboard pull pattern - the
+   queue carries only ints). Shared by the main window (event 18) and panels
+   (event 50, 1.14.0). Answers how many files were dropped; `l_at' gets the
+   drop point in the window's client coordinates. */
+static int shell_collect_drop(HDROP l_hd, POINT* l_at) {
+    UINT l_n, l_i, l_len;
+    s_shell_drops_len = 0;
+    DragQueryPoint(l_hd, l_at);
+    l_n = DragQueryFileW(l_hd, 0xFFFFFFFF, NULL, 0);
+    for (l_i = 0; l_i < l_n; l_i++) {
+        l_len = DragQueryFileW(l_hd, l_i, NULL, 0);
+        if (s_shell_drops_len + (int)l_len + 2 >= 16384) break;
+        if (s_shell_drops_len > 0)
+            s_shell_drops[s_shell_drops_len++] = L'\n';
+        DragQueryFileW(l_hd, l_i, s_shell_drops + s_shell_drops_len, 16384 - s_shell_drops_len);
+        s_shell_drops_len += (int)l_len;
+    }
+    s_shell_drops[s_shell_drops_len] = 0;
+    DragFinish(l_hd);
+    return (int)l_n;
+}
+
 static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
         case WM_LBUTTONDOWN: {
@@ -215,26 +241,9 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             }
             return 0;
         case WM_DROPFILES: {
-            /* join every dropped path with newline into the static
-               buffer; Eiffel pulls it on event 18 (the clipboard
-               pull pattern - the queue carries only ints) */
-            HDROP hd = (HDROP)w;
-            POINT dp;
-            UINT n, i, len;
-            s_shell_drops_len = 0;
-            DragQueryPoint(hd, &dp);
-            n = DragQueryFileW(hd, 0xFFFFFFFF, NULL, 0);
-            for (i = 0; i < n; i++) {
-                len = DragQueryFileW(hd, i, NULL, 0);
-                if (s_shell_drops_len + (int)len + 2 >= 16384) break;
-                if (s_shell_drops_len > 0)
-                    s_shell_drops[s_shell_drops_len++] = L'\n';
-                DragQueryFileW(hd, i, s_shell_drops + s_shell_drops_len, 16384 - s_shell_drops_len);
-                s_shell_drops_len += (int)len;
-            }
-            s_shell_drops[s_shell_drops_len] = 0;
-            DragFinish(hd);
-            shell_push(18, (int)dp.x, (int)dp.y, (int)n);
+            POINT l_dp;
+            int l_count = shell_collect_drop((HDROP)w, &l_dp);
+            shell_push(18, (int)l_dp.x, (int)l_dp.y, l_count);
             return 0;
         }
         case WM_MOUSEWHEEL: {
@@ -478,12 +487,33 @@ static void* shell_create_window(const wchar_t* title, int px, int py, int cw, i
         r.right - r.left, r.bottom - r.top, 0, 0, GetModuleHandleW(0), 0);
     s_shell_hwnd = h;
     if (h) {
-        ShowWindow(h, SW_SHOW);
-        UpdateWindow(h);
+        if (!s_shell_start_hidden) {
+            ShowWindow(h, SW_SHOW);
+            UpdateWindow(h);
+        }
         SetTimer(h, 1, 250, 0);
         DragAcceptFiles(h, TRUE);
     }
     return (void*)h;
+}
+
+/* 1.14.0: a window that starts hidden still pumps (timers, panels, hotkeys,
+   the tray) - an application whose face is a panel keeps it as its host. */
+static void shell_set_start_hidden(int l_on) {
+    s_shell_start_hidden = l_on ? 1 : 0;
+}
+
+static void shell_show_main(int l_on) {
+    if (!s_shell_hwnd) return;
+    if (l_on) {
+        ShowWindow(s_shell_hwnd, SW_SHOW);
+        SetForegroundWindow(s_shell_hwnd);
+    } else
+        ShowWindow(s_shell_hwnd, SW_HIDE);
+}
+
+static int shell_main_is_shown(void) {
+    return (s_shell_hwnd && IsWindowVisible(s_shell_hwnd)) ? 1 : 0;
 }
 
 static void shell_set_fast_timer(int ms) {
@@ -1007,6 +1037,12 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         }
         case WM_ERASEBKGND:
             return 1;
+        case WM_DROPFILES: {
+            POINT l_dp;
+            shell_collect_drop((HDROP)w, &l_dp);
+            shell_push(50, (int)l_dp.x, (int)l_dp.y, l_slot);
+            return 0;
+        }
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -1114,6 +1150,52 @@ static void shell_panel_set_click_through(int l_slot, int l_on) {
 static int shell_panel_is_click_through(int l_slot) {
     HWND l_hwnd = shell_panel_hwnd(l_slot);
     return (l_hwnd && (GetWindowLongPtrW(l_hwnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT)) ? 1 : 0;
+}
+
+/* 1.14.0: files dropped on the panel arrive as event 50 (x, y, slot); the
+   paths wait in the shared drop buffer (`take_dropped_paths'). */
+static void shell_panel_set_accepts_files(int l_slot, int l_on) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd) DragAcceptFiles(l_hwnd, l_on ? TRUE : FALSE);
+}
+
+static int shell_panel_accepts_files(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return (l_hwnd && (GetWindowLongPtrW(l_hwnd, GWL_EXSTYLE) & WS_EX_ACCEPTFILES)) ? 1 : 0;
+}
+
+/* Test hook: hand the panel a real WM_DROPFILES carrying `l_paths' (newline-joined)
+   at client (x, y), built the way the shell builds one (DROPFILES + a double-null list). */
+typedef struct {        /* DROPFILES' layout (shlobj_core.h, not included: it pulls in COM) */
+    DWORD pFiles;
+    POINT pt;
+    BOOL fNC;
+    BOOL fWide;
+} shell_dropfiles_t;
+
+static void shell_panel_try_drop(int l_slot, int l_x, int l_y, const wchar_t* l_paths) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    size_t l_len, l_i;
+    HGLOBAL l_mem;
+    shell_dropfiles_t* l_df;
+    wchar_t* l_list;
+    if (!l_hwnd || !l_paths) return;
+    l_len = wcslen(l_paths);
+    l_mem = GlobalAlloc(GHND, sizeof(shell_dropfiles_t) + (l_len + 2) * sizeof(wchar_t));
+    if (!l_mem) return;
+    l_df = (shell_dropfiles_t*)GlobalLock(l_mem);
+    l_df->pFiles = sizeof(shell_dropfiles_t);
+    l_df->pt.x = l_x;
+    l_df->pt.y = l_y;
+    l_df->fNC = FALSE;
+    l_df->fWide = TRUE;
+    l_list = (wchar_t*)((BYTE*)l_df + sizeof(shell_dropfiles_t));
+    for (l_i = 0; l_i < l_len; l_i++)
+        l_list[l_i] = (l_paths[l_i] == L'\n') ? 0 : l_paths[l_i];
+    l_list[l_len] = 0;
+    l_list[l_len + 1] = 0;
+    GlobalUnlock(l_mem);
+    SendMessageW(l_hwnd, WM_DROPFILES, (WPARAM)l_mem, 0);
 }
 
 static void shell_panel_set_draggable(int l_slot, int l_on) {
@@ -1713,30 +1795,96 @@ static int shell_input_type (const wchar_t *s) {
 }
 
 /* ============ Notification area (SHELL_TRAY) ============
-   One icon per SHELL_TRAY instance, anchored on a message-only window
-   (DefWindowProc: no callbacks, honoring the queue-polled pump law).
-   Stateless helpers - the HWND is the identity and lives Eiffel-side.
-   RegisterClassW failing with "already exists" is expected after the
-   first instance and harmless. All functions: 1 on success, 0 on failure. */
+   One icon per SHELL_TRAY instance, anchored on a hidden tool window of its
+   own. 1.14.0: its window procedure turns the icon's callback message into
+   queue event 52 (button, 0, tray id) - pushed, never called back into
+   Eiffel, so the queue-polled pump law holds - and the window can own a
+   popup menu (`shell_tray_menu'), which a message-only window cannot: the
+   menu needs a window that may come to the foreground. The icon is the
+   program's own (resource 1 of its .rc) when it has one.
+   The HWND is the identity and lives Eiffel-side; the tray id rides in
+   GWLP_USERDATA. RegisterClassW failing with "already exists" is expected
+   after the first instance and harmless. All functions: 1 on success, 0 on failure. */
+
+#define SHELL_TRAY_CALLBACK (WM_APP + 0x51)
+SHELL_SHARED int s_shell_tray_next = 1;
+
+static LRESULT CALLBACK shell_tray_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == SHELL_TRAY_CALLBACK) {
+        int l_id = (int)GetWindowLongPtrW(h, GWLP_USERDATA);
+        switch (LOWORD(l)) {
+            case WM_LBUTTONUP:     shell_push(52, 1, 0, l_id); break;
+            case WM_RBUTTONUP:     shell_push(52, 2, 0, l_id); break;
+            case WM_LBUTTONDBLCLK: shell_push(52, 3, 0, l_id); break;
+        }
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
 
 static HWND shell_tray_add(const wchar_t* tip) {
     WNDCLASSW wc; HWND h; NOTIFYICONDATAW nid;
     memset(&wc, 0, sizeof(wc));
-    wc.lpfnWndProc = DefWindowProcW;
+    wc.lpfnWndProc = shell_tray_proc;
     wc.hInstance = GetModuleHandleW(NULL);
     wc.lpszClassName = L"SimpleShellTrayWnd";
     RegisterClassW(&wc); /* ERROR_CLASS_ALREADY_EXISTS: fine */
-    h = CreateWindowExW(0, L"SimpleShellTrayWnd", L"", 0, 0, 0, 0, 0,
-                        HWND_MESSAGE, NULL, wc.hInstance, NULL);
+    h = CreateWindowExW(WS_EX_TOOLWINDOW, L"SimpleShellTrayWnd", L"", WS_POPUP, 0, 0, 0, 0,
+                        NULL, NULL, wc.hInstance, NULL);
     if (!h) return NULL;
+    SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)s_shell_tray_next++);
     memset(&nid, 0, sizeof(nid));
     nid.cbSize = sizeof(nid);
     nid.hWnd = h; nid.uID = 1;
-    nid.uFlags = NIF_ICON | NIF_TIP;
-    nid.hIcon = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
+    nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+    nid.uCallbackMessage = SHELL_TRAY_CALLBACK;
+    nid.hIcon = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+    if (!nid.hIcon) nid.hIcon = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
     if (tip) { wcsncpy(nid.szTip, tip, 127); nid.szTip[127] = 0; }
     if (!Shell_NotifyIconW(NIM_ADD, &nid)) { DestroyWindow(h); return NULL; }
     return h;
+}
+
+static int shell_tray_id(HWND h) {
+    return h ? (int)GetWindowLongPtrW(h, GWLP_USERDATA) : 0;
+}
+
+/* Test hook: the icon's callback as the shell sends it for mouse message `l_msg'. */
+static void shell_tray_try_click(HWND h, int l_msg) {
+    if (h) SendMessageW(h, SHELL_TRAY_CALLBACK, 1, (LPARAM)l_msg);
+}
+
+/* A popup menu at the pointer: `l_items' newline-separated, "-" a separator.
+   Answers the chosen line's number (1-based, separators counted), 0 for none. */
+static int shell_tray_menu(HWND h, const wchar_t* l_items) {
+    HMENU l_m; POINT l_pt; int l_r, l_n = 0, l_len, l_c;
+    const wchar_t* l_p = l_items;
+    wchar_t l_line[256];
+    if (!h || !l_items) return 0;
+    l_m = CreatePopupMenu();
+    while (*l_p) {
+        l_len = 0;
+        while (l_p[l_len] && l_p[l_len] != L'\n') l_len++;
+        l_n++;
+        if (l_len == 1 && l_p[0] == L'-')
+            AppendMenuW(l_m, MF_SEPARATOR, 0, 0);
+        else {
+            l_c = l_len < 255 ? l_len : 255;
+            memcpy(l_line, l_p, l_c * sizeof(wchar_t));
+            l_line[l_c] = 0;
+            AppendMenuW(l_m, MF_STRING, (UINT_PTR)l_n, l_line);
+        }
+        l_p += l_len;
+        if (*l_p) l_p++;
+    }
+    GetCursorPos(&l_pt);
+    /* the canonical dance, as in shell_text_menu: foreground first, WM_NULL after */
+    SetForegroundWindow(h);
+    l_r = (int)TrackPopupMenu(l_m, TPM_RETURNCMD | TPM_RIGHTBUTTON, l_pt.x, l_pt.y, 0, h, 0);
+    PostMessageW(h, WM_NULL, 0, 0);
+    DestroyMenu(l_m);
+    return l_r;
 }
 
 static int shell_tray_set_tip(HWND h, const wchar_t* tip) {

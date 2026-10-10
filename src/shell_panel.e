@@ -17,7 +17,9 @@ note
 		Since 1.14.0 a panel can also be a handle - a plain press drags it
 		(`set_drags_on_press'), its moves kept to one axis (`set_drag_axis') - and
 		can size from its left or right edge on a plain press (`set_sides_size_on_press').
-		`press_grip_at' answers what any press would do.
+		`press_grip_at' answers what any press would do. A panel that
+		`accepts_files' reports files dropped on it as event 50 (x, y of the drop);
+		the paths wait in `SHELL_WINDOW.take_dropped_paths'.
 		Paint through `dc' / `release_dc'.
 	]"
 
@@ -58,6 +60,8 @@ feature -- Constants
 	Event_resized: INTEGER = 48
 	Event_moving: INTEGER = 49
 			-- During a move: the panel's left and top now (1.14.0).
+	Event_dropped: INTEGER = 50
+			-- Files dropped on the panel, at (x, y) in it (1.14.0, `set_accepts_files').
 
 	Axis_free: INTEGER = 0
 	Axis_horizontal: INTEGER = 1
@@ -282,6 +286,39 @@ feature -- Appearance
 			c_set_click_through (slot, a_on.to_integer)
 		ensure
 			set: is_click_through = a_on
+		end
+
+	accepts_files: BOOLEAN
+			-- Do files dropped on the panel arrive as `Event_dropped'?
+		require
+			open: is_open
+		do
+			Result := c_accepts_files (slot) = 1
+		end
+
+	set_accepts_files (a_on: BOOLEAN)
+			-- Take files dropped on the panel (event 50; the paths in
+			-- `SHELL_WINDOW.take_dropped_paths'), or refuse them.
+		require
+			open: is_open
+		do
+			c_set_accepts_files (slot, a_on.to_integer)
+		ensure
+			set: accepts_files = a_on
+		end
+
+	simulate_drop (a_x, a_y: INTEGER; a_paths: READABLE_STRING_GENERAL)
+			-- Hand the panel a real drop of `a_paths' (newline-separated) at (`a_x', `a_y'),
+			-- built as the shell builds one: the test door to `Event_dropped'.
+		require
+			open: is_open
+			accepting: accepts_files
+			paths_given: not a_paths.is_empty
+		local
+			l_ns: NATIVE_STRING
+		do
+			create l_ns.make (a_paths)
+			c_try_drop (slot, a_x, a_y, l_ns.item)
 		end
 
 	set_draggable (a_on: BOOLEAN)
@@ -547,6 +584,21 @@ feature {NONE} -- Externals
 	c_set_resizable (a_slot, a_grip, a_min_w, a_min_h: INTEGER)
 		external "C inline use %"simple_shell.h%""
 		alias "shell_panel_set_resizable($a_slot, $a_grip, $a_min_w, $a_min_h);"
+		end
+
+	c_set_accepts_files (a_slot, a_on: INTEGER)
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_set_accepts_files($a_slot, $a_on);"
+		end
+
+	c_accepts_files (a_slot: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_accepts_files($a_slot);"
+		end
+
+	c_try_drop (a_slot, a_x, a_y: INTEGER; a_paths: POINTER)
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_try_drop($a_slot, $a_x, $a_y, (const wchar_t*)$a_paths);"
 		end
 
 	c_set_press_drag (a_slot, a_on: INTEGER)

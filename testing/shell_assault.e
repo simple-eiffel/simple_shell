@@ -24,6 +24,7 @@ feature -- Tray
 			if t.is_installed then
 				t.set_tooltip ("(3) simple_shell assault")
 				t.balloon ("simple_shell", "The tray assault says hello.")
+				assert ("numbered", t.id > 0)
 				t.remove
 				assert ("removed", not t.is_installed and t.handle = default_pointer)
 				t.remove
@@ -290,6 +291,54 @@ feature -- Panels (1.11.0)
 			assert ("geometry read back", p.x = -2950 and p.y = -2990 and p.width = 240 and p.height = 120)
 			p.close
 			assert ("closed", not p.is_open and not p.is_resizable)
+		end
+
+	test_tray_clicks
+			-- 1.14.0: a click on the icon becomes event 52 with the button and the icon's id.
+		local
+			t: SHELL_TRAY
+			w: SHELL_TEST_WINDOW
+		do
+			create t.make ("simple_shell click assault")
+			create w
+			if t.is_installed then
+				t.simulate_click (t.Click_left)
+				assert ("a left click arrives", w.drain_event (t.Event_click, t.Click_left))
+				assert ("carrying the icon's id", w.last_extra = t.id)
+				t.simulate_click (t.Click_right)
+				assert ("a right click arrives", w.drain_event (t.Event_click, t.Click_right) and w.last_extra = t.id)
+				t.remove
+			else
+				assert ("no notification area in this session", True)
+			end
+		end
+
+	test_panel_file_drop
+			-- 1.14.0, a REAL panel offscreen: a drop becomes event 50 at the drop point, the
+			-- paths waiting in the shared drop buffer.
+		local
+			p: SHELL_PANEL
+			w: SHELL_TEST_WINDOW
+			l_paths: ARRAYED_LIST [STRING_32]
+		do
+			create p.make
+			create w
+			p.open (-3000, -3000, 200, 100)
+			p.show (-3000, -3000, 200, 100)
+			assert ("refuses files at first", not p.accepts_files)
+			p.set_accepts_files (True)
+			assert ("accepts files", p.accepts_files)
+			p.simulate_drop (30, 40, {STRING_32} "C:/scripts/one.md%NC:/scripts/two words.txt")
+			assert ("dropped at the point", w.drain_event (p.Event_dropped, 30) and w.last_second = 40)
+			assert ("from this panel", w.last_extra = p.slot)
+			l_paths := w.take_dropped_paths
+			assert ("both paths", l_paths.count = 2)
+			assert ("in order", l_paths [1].same_string ({STRING_32} "C:/scripts/one.md")
+				and l_paths [2].same_string ({STRING_32} "C:/scripts/two words.txt"))
+			assert ("taken once", w.take_dropped_paths.is_empty)
+			p.set_accepts_files (False)
+			assert ("refuses again", not p.accepts_files)
+			p.close
 		end
 
 	test_panel_handle_and_side_grips

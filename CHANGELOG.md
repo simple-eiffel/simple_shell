@@ -17,7 +17,20 @@ All notable changes to simple_shell.
   Shift keeps its meaning (move, or size from any edge or corner).
 - **`press_grip_at (x, y, shift)`**: what a press would do (`Grip_none` for a
   click), and **`axis_result (dx, dy)`**: where a move would land after the
-  axis - both for tests without a mouse. 32 tests.
+  axis - both for tests without a mouse.
+- **Files dropped on a panel**: `SHELL_PANEL.set_accepts_files` turns them into
+  `Event_dropped` (50, the drop point, the slot in the fourth field); the paths
+  wait in `SHELL_WINDOW.take_dropped_paths`, the same buffer the window's own
+  drops (18) use. `simulate_drop` builds a real WM_DROPFILES for tests.
+- **Tray clicks and menu**: a click on a `SHELL_TRAY` icon arrives as
+  `Event_click` (52: `Click_left`, `Click_right` or `Click_double`, the icon's
+  `id` in the fourth field), and `choose` opens a popup menu at the pointer.
+  The icon is the program's own (resource 1) when it has one. The anchor window
+  is now a hidden tool window, not message-only: a menu needs a window that can
+  come to the foreground. `simulate_click` for tests.
+- **A window that starts hidden**: `SHELL_WINDOW.set_starts_hidden` before
+  `shell_run`; it still pumps timers, panels, hotkeys and the tray.
+  `show_window`, `hide_window`, `is_window_shown`. 34 tests.
 
 ## 1.13.1 - 2026-10-10
 

@@ -55,7 +55,7 @@ end
 
 | Class | Service |
 |---|---|
-| `SHELL_WINDOW` | *(deferred)* native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, **cursor shaping** (`set_cursor_kind`: arrow, I-beam, hand, resize, cross, wait); the program's icon from resource 1 of its .rc (1.13.1) |
+| `SHELL_WINDOW` | *(deferred)* native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, **cursor shaping** (`set_cursor_kind`: arrow, I-beam, hand, resize, cross, wait); the program's icon from resource 1 of its .rc (1.13.1); `set_starts_hidden`, `show_window`, `hide_window` for a program whose face is a panel (1.14.0) |
 | `SHELL_KEYS` | physical Shift / Ctrl / Alt state |
 | `SHELL_CLIPBOARD` | Unicode text get/set, and every bitmap read, with history-manager retry (size read-back since 1.12.1); 1M-character headroom; **bitmap put and get** (`set_image`, CF_DIB from an ARGB32 buffer; `image_into`, the DIB back into an ARGB32 buffer, 24/32-bit, alpha forced opaque, refused rather than overrun on a size mismatch) with size read-back |
 | `SHELL_INPUT` | **synthesised input** via SendInput: `pointer_x` / `pointer_y` (calibration), `click_at` (focus lands and stays) / `click_at_quietly` (pointer and foreground restored), `press_chord`, `paste`, `press_enter`, Unicode `type_text`; virtual-desktop bounds guard on every click |
@@ -64,10 +64,10 @@ end
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |
 | `SHELL_STRIP` | small topmost tool-window strip (the dictation-bar pattern) |
 | `SHELL_OUTLINES` | click-through coloured frame regions on the desktop (the region-outline pattern) |
-| `SHELL_PANEL` | borderless topmost instrument panels (up to 8): never take focus, can be left out of screen captures, click-through on demand, whole-window opacity, Shift+drag to move (1.11.0) and to size from an edge or corner (1.12.0), `is_cursor_over` for hover (1.13.0), handles that drag on a plain press kept to one axis, live `Event_moving`, side edges that size on a plain press (1.14.0) |
+| `SHELL_PANEL` | borderless topmost instrument panels (up to 8): never take focus, can be left out of screen captures, click-through on demand, whole-window opacity, Shift+drag to move (1.11.0) and to size from an edge or corner (1.12.0), `is_cursor_over` for hover (1.13.0), handles that drag on a plain press kept to one axis, live `Event_moving`, side edges that size on a plain press, files dropped on them (1.14.0) |
 | `SHELL_HOTKEYS` | global hotkeys as queue event 51; a modifier is required unless a chord is registered bare on purpose (1.11.0) |
 | `SHELL_MONITORS` | snapshot of the displays: bounds, work area, primary, device name (1.11.0) |
-| `SHELL_TRAY` | one notification-area icon on a message-only window (1.9.0): `set_tooltip` (unread counts), `balloon` notices, idempotent `remove`; a refusing environment leaves `is_installed` False and the caller degrades |
+| `SHELL_TRAY` | one notification-area icon (1.9.0): `set_tooltip` (unread counts), `balloon` notices, idempotent `remove`; a refusing environment leaves `is_installed` False and the caller degrades; clicks as `Event_click` (52) and a popup menu with `choose`, the program's own icon (1.14.0) |
 
 ## Keyboard: which keys reach the window
 

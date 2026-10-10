@@ -24,6 +24,7 @@ feature -- Tray
 			if t.is_installed then
 				t.set_tooltip ("(3) simple_shell assault")
 				t.balloon ("simple_shell", "The tray assault says hello.")
+				assert ("numbered", t.id > 0)
 				t.remove
 				assert ("removed", not t.is_installed and t.handle = default_pointer)
 				t.remove
@@ -290,6 +291,92 @@ feature -- Panels (1.11.0)
 			assert ("geometry read back", p.x = -2950 and p.y = -2990 and p.width = 240 and p.height = 120)
 			p.close
 			assert ("closed", not p.is_open and not p.is_resizable)
+		end
+
+	test_tray_clicks
+			-- 1.14.0: a click on the icon becomes event 52 with the button and the icon's id.
+		local
+			t: SHELL_TRAY
+			w: SHELL_TEST_WINDOW
+		do
+			create t.make ("simple_shell click assault")
+			create w
+			if t.is_installed then
+				t.simulate_click (t.Click_left)
+				assert ("a left click arrives", w.drain_event (t.Event_click, t.Click_left))
+				assert ("carrying the icon's id", w.last_extra = t.id)
+				t.simulate_click (t.Click_right)
+				assert ("a right click arrives", w.drain_event (t.Event_click, t.Click_right) and w.last_extra = t.id)
+				t.remove
+			else
+				assert ("no notification area in this session", True)
+			end
+		end
+
+	test_panel_file_drop
+			-- 1.14.0, a REAL panel offscreen: a drop becomes event 50 at the drop point, the
+			-- paths waiting in the shared drop buffer.
+		local
+			p: SHELL_PANEL
+			w: SHELL_TEST_WINDOW
+			l_paths: ARRAYED_LIST [STRING_32]
+		do
+			create p.make
+			create w
+			p.open (-3000, -3000, 200, 100)
+			p.show (-3000, -3000, 200, 100)
+			assert ("refuses files at first", not p.accepts_files)
+			p.set_accepts_files (True)
+			assert ("accepts files", p.accepts_files)
+			p.simulate_drop (30, 40, {STRING_32} "C:/scripts/one.md%NC:/scripts/two words.txt")
+			assert ("dropped at the point", w.drain_event (p.Event_dropped, 30) and w.last_second = 40)
+			assert ("from this panel", w.last_extra = p.slot)
+			l_paths := w.take_dropped_paths
+			assert ("both paths", l_paths.count = 2)
+			assert ("in order", l_paths [1].same_string ({STRING_32} "C:/scripts/one.md")
+				and l_paths [2].same_string ({STRING_32} "C:/scripts/two words.txt"))
+			assert ("taken once", w.take_dropped_paths.is_empty)
+			p.set_accepts_files (False)
+			assert ("refuses again", not p.accepts_files)
+			p.close
+		end
+
+	test_panel_handle_and_side_grips
+			-- 1.14.0, a REAL panel offscreen: a handle drags on a plain press and keeps its moves
+			-- to one axis; side grips size on a plain press; Shift keeps its old meaning.
+		local
+			p: SHELL_PANEL
+			l_to: TUPLE [x, y: INTEGER]
+		do
+			create p.make
+			p.open (-3000, -3000, 200, 100)
+			p.show (-3000, -3000, 200, 100)
+			assert ("a plain press clicks", p.press_grip_at (100, 50, False) = p.Grip_none)
+			p.set_drags_on_press (True)
+			assert ("a handle moves on a plain press", p.press_grip_at (100, 50, False) = p.Grip_move
+				and p.press_grip_at (2, 50, False) = p.Grip_move)
+			l_to := p.axis_result (40, 25)
+			assert ("free by default", l_to.x = -2960 and l_to.y = -2975)
+			p.set_drag_axis (p.Axis_horizontal)
+			l_to := p.axis_result (40, 25)
+			assert ("slides only left and right", l_to.x = -2960 and l_to.y = -3000)
+			p.set_drag_axis (p.Axis_vertical)
+			l_to := p.axis_result (40, 25)
+			assert ("up and down only", l_to.x = -3000 and l_to.y = -2975)
+			p.set_drags_on_press (False)
+			p.set_drag_axis (p.Axis_free)
+			p.set_draggable (True)
+			p.set_resizable (10, 80, 40)
+			assert ("no side grips yet: a click", p.press_grip_at (3, 50, False) = p.Grip_none)
+			p.set_sides_size_on_press (True)
+			assert ("left side sizes", p.press_grip_at (3, 50, False) = p.Grip_left)
+			assert ("right side sizes", p.press_grip_at (195, 50, False) = p.Grip_right)
+			assert ("top is still a click", p.press_grip_at (100, 2, False) = p.Grip_none)
+			assert ("middle is still a click", p.press_grip_at (100, 50, False) = p.Grip_none)
+			assert ("Shift still moves", p.press_grip_at (100, 50, True) = p.Grip_move)
+			assert ("Shift still sizes the top", p.press_grip_at (100, 2, True) = p.Grip_top)
+			p.close
+			assert ("closed: plain again", not p.drags_on_press and not p.sides_size_on_press and p.drag_axis = p.Axis_free)
 		end
 
 	test_panel_capture_exclusion_really_hides

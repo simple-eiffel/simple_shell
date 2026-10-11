@@ -853,6 +853,7 @@ SHELL_SHARED int  s_shell_panel_minh[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_press_drag[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_axis[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_side_grip[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_bottom_grip[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_start_x[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_start_y[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 
@@ -901,6 +902,12 @@ static int shell_panel_press_code(int l_slot, int l_x, int l_y, int l_shift) {
         GetClientRect(l_hwnd, &l_r);
         if (l_x < l_g) return HTLEFT;
         if (l_x >= l_r.right - l_g) return HTRIGHT;
+    }
+    /* 1.15.0: the bottom edge sizes on a plain press; the top stays where it is */
+    if (s_shell_panel_bottom_grip[l_slot] && s_shell_panel_grip[l_slot] > 0) {
+        l_g = s_shell_panel_grip[l_slot];
+        GetClientRect(l_hwnd, &l_r);
+        if (l_y >= l_r.bottom - l_g) return HTBOTTOM;
     }
     return 0;
 }
@@ -1072,6 +1079,7 @@ static int shell_panel_open(int l_x, int l_y, int l_w, int l_h) {
     s_shell_panel_press_drag[l_slot] = 0;
     s_shell_panel_axis[l_slot] = 0;
     s_shell_panel_side_grip[l_slot] = 0;
+    s_shell_panel_bottom_grip[l_slot] = 0;
     s_shell_panel_alpha[l_slot] = 255;
     return l_slot;
 }
@@ -1103,6 +1111,7 @@ static void shell_panel_close(int l_slot) {
         s_shell_panel_press_drag[l_slot] = 0;
         s_shell_panel_axis[l_slot] = 0;
         s_shell_panel_side_grip[l_slot] = 0;
+        s_shell_panel_bottom_grip[l_slot] = 0;
     }
 }
 
@@ -1214,6 +1223,10 @@ static void shell_panel_set_axis(int l_slot, int l_axis) {
 
 static void shell_panel_set_side_grip(int l_slot, int l_on) {
     if (shell_panel_hwnd(l_slot)) s_shell_panel_side_grip[l_slot] = l_on ? 1 : 0;
+}
+
+static void shell_panel_set_bottom_grip(int l_slot, int l_on) {
+    if (shell_panel_hwnd(l_slot)) s_shell_panel_bottom_grip[l_slot] = l_on ? 1 : 0;
 }
 
 /* Test hook: start a move, propose one moved by (dx, dy), and answer where the top-left

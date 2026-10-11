@@ -375,8 +375,14 @@ feature -- Panels (1.11.0)
 			assert ("middle is still a click", p.press_grip_at (100, 50, False) = p.Grip_none)
 			assert ("Shift still moves", p.press_grip_at (100, 50, True) = p.Grip_move)
 			assert ("Shift still sizes the top", p.press_grip_at (100, 2, True) = p.Grip_top)
+			assert ("no bottom grip yet: a click", p.press_grip_at (100, 97, False) = p.Grip_none)
+			p.set_bottom_sizes_on_press (True)
+			assert ("bottom sizes (1.15.0)", p.press_grip_at (100, 97, False) = p.Grip_bottom)
+			assert ("top is still a click with the bottom grip", p.press_grip_at (100, 2, False) = p.Grip_none)
+			assert ("above the bottom grip is a click", p.press_grip_at (100, 85, False) = p.Grip_none)
 			p.close
-			assert ("closed: plain again", not p.drags_on_press and not p.sides_size_on_press and p.drag_axis = p.Axis_free)
+			assert ("closed: plain again", not p.drags_on_press and not p.sides_size_on_press
+				and not p.bottom_sizes_on_press and p.drag_axis = p.Axis_free)
 		end
 
 	test_panel_capture_exclusion_really_hides

@@ -16,7 +16,8 @@ note
 		(left, top during any move, coalesced; 1.14.0).
 		Since 1.14.0 a panel can also be a handle - a plain press drags it
 		(`set_drags_on_press'), its moves kept to one axis (`set_drag_axis') - and
-		can size from its left or right edge on a plain press (`set_sides_size_on_press').
+		can size from its left or right edge on a plain press (`set_sides_size_on_press'),
+		and since 1.15.0 from its bottom edge, the top staying put (`set_bottom_sizes_on_press').
 		`press_grip_at' answers what any press would do. A panel that
 		`accepts_files' reports files dropped on it as event 50 (x, y of the drop);
 		the paths wait in `SHELL_WINDOW.take_dropped_paths'.
@@ -181,6 +182,9 @@ feature -- Status
 	sides_size_on_press: BOOLEAN
 			-- Does a plain press within the grip of the left or right edge size the panel?
 
+	bottom_sizes_on_press: BOOLEAN
+			-- Does a plain press within the grip of the bottom edge size the panel (its top stays)?
+
 	is_capture_excluded: BOOLEAN
 			-- Is the panel left out of screen captures?
 		require
@@ -205,6 +209,7 @@ feature -- Lifecycle
 				drags_on_press := False
 				drag_axis := Axis_free
 				sides_size_on_press := False
+				bottom_sizes_on_press := False
 			end
 		ensure
 			geometry_when_open: is_open implies (x = a_x and y = a_y and width = a_width and height = a_height)
@@ -260,9 +265,10 @@ feature -- Lifecycle
 			drags_on_press := False
 			drag_axis := Axis_free
 			sides_size_on_press := False
+			bottom_sizes_on_press := False
 		ensure
 			closed: not is_open
-			plain: not drags_on_press and not sides_size_on_press and drag_axis = Axis_free
+			plain: not drags_on_press and not sides_size_on_press and not bottom_sizes_on_press and drag_axis = Axis_free
 		end
 
 feature -- Appearance
@@ -373,6 +379,18 @@ feature -- Appearance
 			set: sides_size_on_press = a_on
 		end
 
+	set_bottom_sizes_on_press (a_on: BOOLEAN)
+			-- Let a plain press within the grip of the bottom edge size the panel downward, or not.
+		require
+			open: is_open
+			grips: a_on implies is_resizable
+		do
+			c_set_bottom_grip (slot, a_on.to_integer)
+			bottom_sizes_on_press := a_on
+		ensure
+			set: bottom_sizes_on_press = a_on
+		end
+
 	press_grip_at (a_x, a_y: INTEGER; a_shift: BOOLEAN): INTEGER
 			-- What a press at client point (`a_x', `a_y') does, Shift held or not: `Grip_none' (a
 			-- click: event 41), `Grip_move', or a resize grip.
@@ -383,7 +401,7 @@ feature -- Appearance
 		ensure
 			known: Result = Grip_none or Result = Grip_move or (Result >= Grip_left and Result <= Grip_bottom_right)
 			handle_moves: (drags_on_press and not (a_shift and is_draggable)) implies Result = Grip_move
-			plain_click: (not drags_on_press and not sides_size_on_press and not a_shift) implies Result = Grip_none
+			plain_click: (not drags_on_press and not sides_size_on_press and not bottom_sizes_on_press and not a_shift) implies Result = Grip_none
 		end
 
 	axis_result (a_dx, a_dy: INTEGER): TUPLE [x, y: INTEGER]
@@ -614,6 +632,11 @@ feature {NONE} -- Externals
 	c_set_side_grip (a_slot, a_on: INTEGER)
 		external "C inline use %"simple_shell.h%""
 		alias "shell_panel_set_side_grip($a_slot, $a_on);"
+		end
+
+	c_set_bottom_grip (a_slot, a_on: INTEGER)
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_set_bottom_grip($a_slot, $a_on);"
 		end
 
 	c_press_code (a_slot, a_x, a_y, a_shift: INTEGER): INTEGER

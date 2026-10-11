@@ -2,6 +2,14 @@
 
 All notable changes to simple_shell.
 
+## 1.15.0 - 2026-10-11
+
+### Added
+- **The bottom edge sizes on a plain press**: `SHELL_PANEL.set_bottom_sizes_on_press`
+  lets a plain press within the grip of a panel's bottom edge size it downward, its top
+  staying put (the native HTBOTTOM resize). simple_prompter's pill grows taller from
+  under the webcam.
+
 ## 1.14.0 - 2026-10-10
 
 ### Added

@@ -36,6 +36,9 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_outline_frames_really_create, "outline_frames_really_create")
 			run_test (agent t.test_strip_window_really_creates, "strip_window_really_creates")
 			run_test (agent t.test_queue_is_one_instance_across_units, "queue_is_one_instance_across_units")
+			run_test (agent t.test_appearance_reads_the_windows_setting, "appearance_reads_the_windows_setting")
+			run_test (agent t.test_appearance_change_is_queued, "appearance_change_is_queued")
+			run_test (agent t.test_dark_title_bar_on_a_real_window, "dark_title_bar_on_a_real_window")
 			run_test (agent t.test_clipboard_image_roundtrip, "clipboard_image_roundtrip")
 			run_test (agent t.test_clipboard_image_survives_repeated_round_trips, "clipboard_image_survives_repeated_round_trips")
 			run_test (agent t.test_input_knows_the_desktop, "input_knows_the_desktop")
@@ -79,6 +82,14 @@ feature {NONE} -- Harness
 			end
 		rescue
 			print ("  FAIL: " + a_name + "%N")
+			if attached (create {EXCEPTION_MANAGER}).last_exception as al_e then
+				if attached al_e.tag as al_tag then
+					print ("        tag: " + al_tag.to_string_8 + "%N")
+				end
+				if attached al_e.description as al_why then
+					print ("        why: " + al_why.to_string_8 + "%N")
+				end
+			end
 			failed := failed + 1
 			l_retried := True
 			retry

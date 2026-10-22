@@ -32,6 +32,9 @@ feature -- Operation
 			create ns.make (a_title)
 			hwnd := shell_create_window (ns.item, a_x, a_y, a_w, a_h)
 			if hwnd /= default_pointer then
+				if title_bar_is_dark then
+					appearance.set_dark_title_bar (hwnd, True)
+				end
 				on_shell_open
 				from
 				until
@@ -59,7 +62,8 @@ feature -- Operation
 			-- (delta in `event_extra'), 16 resize, 17 middle, 18 drop;
 			-- 21..23 status strip; 31..37 overlay (renumbered
 			-- 2026-08-23 out of the main window's namespace;
-			-- 36 accept and 37 arrow arrived with adjust mode).
+			-- 36 accept and 37 arrow arrived with adjust mode);
+			-- 53 the Windows light/dark app setting flipped (1.16.0).
 			--
 			-- THE ALT DOOR (1.9.3). Type 4 carries the stepping keys
 			-- from WM_KEYDOWN, and since 1.9.3 also Alt+letter,
@@ -221,6 +225,34 @@ feature -- Cursor
 			known: a_kind >= Cursor_arrow and a_kind <= Cursor_wait
 		do
 			c_set_cursor (a_kind)
+		end
+
+feature -- Appearance (1.16.0)
+
+	Event_appearance_changed: INTEGER = 53
+			-- The Windows light/dark app setting flipped: first field 1
+			-- dark, 0 light (`SHELL_APPEARANCE').
+
+	title_bar_is_dark: BOOLEAN
+			-- Was the caption last asked to be dark?
+
+	set_dark_title_bar (a_dark: BOOLEAN)
+			-- Draw this window's caption dark (or light) to match its
+			-- content. Remembered before the native window exists and
+			-- applied when it opens.
+		do
+			title_bar_is_dark := a_dark
+			if hwnd /= default_pointer then
+				appearance.set_dark_title_bar (hwnd, a_dark)
+			end
+		ensure
+			remembered: title_bar_is_dark = a_dark
+		end
+
+	appearance: SHELL_APPEARANCE
+			-- The Windows light/dark setting.
+		once ("OBJECT")
+			create Result
 		end
 
 feature -- Element change

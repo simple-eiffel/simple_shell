@@ -2,6 +2,30 @@
 
 All notable changes to simple_shell.
 
+## 1.16.0 - 2026-10-22
+
+### Added
+- **Follow the Windows light/dark setting (GW-27, for simple_bible).**
+  - `SHELL_APPEARANCE.system_prefers_dark` reads `AppsUseLightTheme`. The
+    value 0 means dark; a missing or unreadable value means light, as in
+    Windows.
+  - When the setting flips, the main window's queue receives event 53
+    (`Event_appearance_changed`): first field 1 for dark, 0 for light. It
+    comes from WM_SETTINGCHANGE naming "ImmersiveColorSet".
+  - `SHELL_WINDOW.set_dark_title_bar` and `SHELL_APPEARANCE.set_dark_title_bar`
+    ask DWM to draw the caption dark or light, so it matches the content.
+    They use attribute 20, or 19 on builds 1809-1909. The window remembers
+    the choice before it opens.
+  - dwmapi is loaded at run time and the registry is read with
+    RegOpenKeyExW/RegQueryValueExW, both available at the Windows 2000
+    target that ISE's C compiles for.
+- The test runner prints the failing assertion's tag and description.
+- Tests (37 pass, 0 fail, 0 warnings; SCOOP target 4/0):
+  - the reading agrees with reg.exe's;
+  - "ImmersiveColorSet" in any case queues 53 with the setting, and other
+    areas queue nothing;
+  - DWM accepts dark and light captions on a real hidden offscreen window.
+
 ## 1.15.0 - 2026-10-11
 
 ### Added

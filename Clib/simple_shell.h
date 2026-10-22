@@ -30,7 +30,8 @@
 #if defined(l_big) || defined(l_small) || defined(l_vk) || defined(l_ch) || \
     defined(shell_push) || defined(shell_syskey_is_ours) || \
     defined(shell_syschar_is_ours) || \
-    defined(shell_set_window_icon) || defined(shell_set_cursor_kind)
+    defined(shell_set_window_icon) || defined(shell_set_cursor_kind) || \
+    defined(l_area) || defined(l_flag) || defined(l_dwm) || defined(l_hr)
 #error "simple_shell.h: a Windows SDK macro has captured an identifier this header declares - rename it (see SHELL_SDK_MACRO_TRIPWIRE)."
 #endif
 
@@ -62,6 +63,7 @@
                 48 resized | 49 moving (1.14.0) | 50 drop(x,y) (1.14.0)
    hotkeys:     51 hotkey(id, vk, modifiers) - a thread message (1.11.0)
    tray:        52 click(button, 0, tray id) - 1 left, 2 right, 3 double (1.14.0)
+   appearance:  53 light/dark app setting changed(1 dark, 0 light) (1.16.0)
    (overlay renumbered 2026-08-23: 12..16 collided with the main window's
    triple/move/leave/wheel/resize types once one pump served both) */
 #define SHELL_QCAP 1024
@@ -170,6 +172,59 @@ static int shell_collect_drop(HDROP l_hd, POINT* l_at) {
     s_shell_drops[s_shell_drops_len] = 0;
     DragFinish(l_hd);
     return (int)l_n;
+}
+
+/* Appearance (1.16.0, GW-27): the Windows light/dark app setting.
+   Read with RegOpenKeyExW/RegQueryValueExW, which exist at the
+   _WIN32_WINNT=0x0500 target ISE compiles for; dwmapi is loaded at run
+   time for the same reason (its declarations are gated on Vista and up,
+   and the immersive dark-mode attribute is Windows 10 1809 and up). */
+#pragma comment(lib, "advapi32.lib")
+
+static int shell_system_prefers_dark(void) {
+    HKEY l_key;
+    DWORD l_value = 1, l_size = sizeof(DWORD), l_kind = 0;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            0, KEY_QUERY_VALUE, &l_key) != ERROR_SUCCESS)
+        return 0;
+    if (RegQueryValueExW(l_key, L"AppsUseLightTheme", 0, &l_kind,
+            (LPBYTE)&l_value, &l_size) != ERROR_SUCCESS || l_kind != REG_DWORD)
+        l_value = 1;
+    RegCloseKey(l_key);
+    return l_value == 0 ? 1 : 0;
+}
+
+typedef HRESULT (WINAPI *shell_dwm_set_attr_fn)(HWND, DWORD, LPCVOID, DWORD);
+
+static int shell_set_dark_title_bar(void* hwnd, int l_on) {
+    HMODULE l_dwm;
+    shell_dwm_set_attr_fn l_set;
+    BOOL l_flag = l_on ? TRUE : FALSE;
+    HRESULT l_hr;
+    if (!hwnd) return 0;
+    l_dwm = LoadLibraryW(L"dwmapi.dll");
+    if (!l_dwm) return 0;
+    l_set = (shell_dwm_set_attr_fn)GetProcAddress(l_dwm, "DwmSetWindowAttribute");
+    if (!l_set) { FreeLibrary(l_dwm); return 0; }
+    /* 20 = DWMWA_USE_IMMERSIVE_DARK_MODE (Windows 10 20H1 and up);
+       19 was its number in builds 1809-1909. */
+    l_hr = l_set((HWND)hwnd, 20, &l_flag, sizeof(l_flag));
+    if (FAILED(l_hr)) l_hr = l_set((HWND)hwnd, 19, &l_flag, sizeof(l_flag));
+    FreeLibrary(l_dwm);
+    return SUCCEEDED(l_hr) ? 1 : 0;
+}
+
+/* WM_SETTINGCHANGE carries the changed area's name in lParam; Windows
+   names "ImmersiveColorSet" when the light/dark app setting flips. Push
+   53 with the setting as it now stands (1 dark, 0 light). Answers 1 when
+   it pushed. The window procedure calls this; tests call it directly. */
+static int shell_setting_changed(const wchar_t* l_area) {
+    if (l_area && lstrcmpiW(l_area, L"ImmersiveColorSet") == 0) {
+        shell_push(53, shell_system_prefers_dark(), 0, 0);
+        return 1;
+    }
+    return 0;
 }
 
 static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -326,6 +381,9 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 SetCursor(LoadCursorW(0, c));
                 return 1;
             }
+            break;
+        case WM_SETTINGCHANGE:
+            shell_setting_changed((const wchar_t*)l);
             break;
         case WM_DESTROY:
             KillTimer(h, 1);

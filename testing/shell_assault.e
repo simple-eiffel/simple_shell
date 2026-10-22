@@ -518,6 +518,101 @@ feature {NONE} -- Panel probes
 			end
 		end
 
+feature -- Appearance (1.16.0, GW-27)
+
+	test_appearance_reads_the_windows_setting
+			-- `system_prefers_dark' agrees with reg.exe's own reading of
+			-- AppsUseLightTheme: 0x0 is dark, anything else (or no value)
+			-- is light.
+		local
+			a: SHELL_APPEARANCE
+			env: EXECUTION_ENVIRONMENT
+			f: PLAIN_TEXT_FILE
+			l_out: STRING
+			l_path: STRING_32
+		do
+			create a
+			create env
+			l_path := temp_path ("shell_appearance_reg.txt")
+			env.system ("C:\Windows\System32\reg.exe query %"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize%" /v AppsUseLightTheme > %"" + l_path.to_string_8 + "%" 2>&1")
+			create f.make_with_name (l_path)
+			assert ("reg.exe answered", f.exists)
+			create l_out.make_empty
+			f.open_read
+			from until f.end_of_file loop
+				f.read_line
+				if f.last_string.has_substring ("AppsUseLightTheme") then
+					l_out := f.last_string.twin
+				end
+			end
+			f.close
+			f.delete
+			if l_out.is_empty then
+				assert ("no value: Windows' default, light", not a.system_prefers_dark)
+			else
+				l_out.right_adjust
+				assert ("dark exactly when reg.exe reads 0x0: " + l_out,
+					a.system_prefers_dark = l_out.ends_with ("0x0"))
+			end
+		end
+
+	test_appearance_change_is_queued
+			-- The WM_SETTINGCHANGE path: "ImmersiveColorSet" (any case)
+			-- pushes event 53 carrying the setting as it stands; any other
+			-- area pushes nothing.
+		local
+			a: SHELL_APPEARANCE
+			w: SHELL_TEST_WINDOW
+		do
+			create a
+			create w
+			assert_true ("the color set is reported", a.report_setting_change ("ImmersiveColorSet"))
+			assert_true ("event 53 carries the setting", w.drain_event (a.Event_changed, a.system_prefers_dark.to_integer))
+			assert_true ("case does not matter", a.report_setting_change ("immersivecolorset"))
+			assert_true ("and it is queued too", w.drain_event (a.Event_changed, a.system_prefers_dark.to_integer))
+			assert_false ("another area is not", a.report_setting_change ("Policy"))
+			assert_false ("and nothing was queued for it",
+				w.drain_event (a.Event_changed, 0) or w.drain_event (a.Event_changed, 1))
+			assert_integers_equal ("the window names the same event", a.Event_changed, w.Event_appearance_changed)
+		end
+
+	test_dark_title_bar_on_a_real_window
+			-- DWM accepts dark and light captions on a real (hidden,
+			-- offscreen) window; a window not yet open only remembers.
+		local
+			a: SHELL_APPEARANCE
+			p: SHELL_PANEL
+			w: SHELL_TEST_WINDOW
+		do
+			create a
+			create p.make
+			p.open (-3000, -3000, 40, 20)
+			assert_true ("opened", p.is_open)
+			a.set_dark_title_bar (p.handle, True)
+			assert_true ("DWM took dark", a.last_title_bar_applied)
+			a.set_dark_title_bar (p.handle, False)
+			assert_true ("DWM took light", a.last_title_bar_applied)
+			p.close
+			create w
+			w.set_dark_title_bar (True)
+			assert_true ("remembered before the window opens", w.title_bar_is_dark)
+		end
+
+feature {NONE} -- Appearance helpers
+
+	temp_path (a_name: STRING): STRING_32
+			-- `a_name' in the TEMP folder.
+		local
+			env: EXECUTION_ENVIRONMENT
+		do
+			create env
+			if attached env.item ("TEMP") as al_temp then
+				Result := al_temp.to_string_32 + {STRING_32} "\" + a_name.to_string_32
+			else
+				Result := a_name.to_string_32
+			end
+		end
+
 feature -- Shared state
 
 	test_queue_is_one_instance_across_units

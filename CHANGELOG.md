@@ -2,6 +2,31 @@
 
 All notable changes to simple_shell.
 
+## 1.18.0 - 2026-10-23
+
+### Added
+- **A worker wakes the pump at once (GW-26, for simple_bible).** Search
+  streaming and job completion show as soon as they happen, not at the
+  next heartbeat.
+  - `SHELL_WAKE.wake`, from any processor, puts event 54 (`Event_wake`)
+    on the GUI's queue.
+  - The wake goes to the main window when one is open; window messages
+    survive the modal loops of a window drag or resize. Otherwise it goes
+    to a thread claimed with `claim_pump_thread`.
+  - Wakes coalesce while one is pending. The heartbeat clears a stuck
+    flag, so a lost message costs at most one tick.
+  - `last_outcome` reports posted, coalesced, or nobody to wake.
+- **A settable heartbeat:** `SHELL_WINDOW.set_heartbeat_ms` and
+  `heartbeat_ms`. The default is still 250 milliseconds.
+- Tests (41 pass; SCOOP target 5 pass; 0 warnings):
+  - with no pump, nobody is woken;
+  - posted, then coalesced twice, then exactly one event 54 out of a pump,
+    then posted again;
+  - the heartbeat is settable;
+  - SCOOP: a worker processor sleeps 200 milliseconds and wakes the root's
+    windowless pump. Event 54 arrived 16 milliseconds after the post, most
+    of it the test's own `pump_for` sleep granularity; the budget is 50.
+
 ## 1.17.0 - 2026-10-23
 
 ### Added

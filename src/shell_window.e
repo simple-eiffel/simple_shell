@@ -63,7 +63,8 @@ feature -- Operation
 			-- 21..23 status strip; 31..37 overlay (renumbered
 			-- 2026-08-23 out of the main window's namespace;
 			-- 36 accept and 37 arrow arrived with adjust mode);
-			-- 53 the Windows light/dark app setting flipped (1.16.0).
+			-- 53 the Windows light/dark app setting flipped (1.16.0);
+			-- 54 a processor called `SHELL_WAKE.wake' (1.18.0).
 			--
 			-- THE ALT DOOR (1.9.3). Type 4 carries the stepping keys
 			-- from WM_KEYDOWN, and since 1.9.3 also Alt+letter,
@@ -225,6 +226,28 @@ feature -- Cursor
 			known: a_kind >= Cursor_arrow and a_kind <= Cursor_wait
 		do
 			c_set_cursor (a_kind)
+		end
+
+feature -- Heartbeat and wake (1.18.0)
+
+	Event_wake: INTEGER = 54
+			-- A processor called `SHELL_WAKE.wake'.
+
+	heartbeat_ms: INTEGER
+			-- Milliseconds between ticks (event 7).
+		do
+			Result := c_heartbeat_ms
+		end
+
+	set_heartbeat_ms (a_ms: INTEGER)
+			-- Tick every `a_ms' milliseconds; set before or after the
+			-- window opens.
+		require
+			sane: a_ms >= 10 and a_ms <= 60_000
+		do
+			c_set_heartbeat (a_ms)
+		ensure
+			set: heartbeat_ms = a_ms
 		end
 
 feature -- Appearance (1.16.0)
@@ -395,6 +418,20 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_next_event((int*)$a_buf);"
+		end
+
+	c_heartbeat_ms: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return s_shell_heartbeat_ms;"
+		end
+
+	c_set_heartbeat (a_ms: INTEGER)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_set_heartbeat((int)$a_ms);"
 		end
 
 	shell_set_backdrop (a_hwnd: POINTER; a_rgb: INTEGER)

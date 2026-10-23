@@ -36,6 +36,8 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_outline_frames_really_create, "outline_frames_really_create")
 			run_test (agent t.test_strip_window_really_creates, "strip_window_really_creates")
 			run_test (agent t.test_queue_is_one_instance_across_units, "queue_is_one_instance_across_units")
+			run_test (agent t.test_wake_needs_a_pump_and_coalesces, "wake_needs_a_pump_and_coalesces")
+			run_test (agent t.test_heartbeat_is_settable, "heartbeat_is_settable")
 			run_test (agent t.test_appearance_reads_the_windows_setting, "appearance_reads_the_windows_setting")
 			run_test (agent t.test_appearance_change_is_queued, "appearance_change_is_queued")
 			run_test (agent t.test_dark_title_bar_on_a_real_window, "dark_title_bar_on_a_real_window")

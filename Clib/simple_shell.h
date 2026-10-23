@@ -32,7 +32,8 @@
     defined(shell_syschar_is_ours) || \
     defined(shell_set_window_icon) || defined(shell_set_cursor_kind) || \
     defined(l_area) || defined(l_flag) || defined(l_dwm) || defined(l_hr) || \
-    defined(l_ctrl) || defined(l_alt) || defined(shell_keydown_is_ours)
+    defined(l_ctrl) || defined(l_alt) || defined(shell_keydown_is_ours) || \
+    defined(l_on) || defined(l_ms) || defined(shell_wake)
 #error "simple_shell.h: a Windows SDK macro has captured an identifier this header declares - rename it (see SHELL_SDK_MACRO_TRIPWIRE)."
 #endif
 
@@ -64,6 +65,7 @@
                 48 resized | 49 moving (1.14.0) | 50 drop(x,y) (1.14.0)
    hotkeys:     51 hotkey(id, vk, modifiers) - a thread message (1.11.0)
    tray:        52 click(button, 0, tray id) - 1 left, 2 right, 3 double (1.14.0)
+   wake:        54 a worker woke the pump (shell_wake, 1.18.0)
    appearance:  53 light/dark app setting changed(1 dark, 0 light) (1.16.0)
    (overlay renumbered 2026-08-23: 12..16 collided with the main window's
    triple/move/leave/wheel/resize types once one pump served both) */
@@ -81,6 +83,11 @@ SHELL_SHARED int  s_shell_qhead = 0;
 SHELL_SHARED int  s_shell_qtail = 0;
 SHELL_SHARED int  s_shell_cursor = 0;
 SHELL_SHARED int  s_shell_start_hidden = 0;
+/* 1.18.0 (GW-26): the thread a wake is posted to, a coalescing flag,
+   and the heartbeat period. */
+SHELL_SHARED DWORD s_shell_pump_thread = 0;
+SHELL_SHARED volatile LONG s_shell_wake_pending = 0;
+SHELL_SHARED int  s_shell_heartbeat_ms = 250;
 
 /* 0 arrow, 1 ibeam, 2 hand, 3 size-we, 4 size-ns, 5 cross, 6 wait */
 static void shell_set_cursor_kind(int k) {
@@ -255,6 +262,43 @@ static int shell_setting_changed(const wchar_t* l_area) {
     return 0;
 }
 
+/* Wake (1.18.0, GW-26): any thread - a SCOOP worker's processor - makes
+   the GUI's pump return now with event 54, instead of waiting up to a
+   heartbeat. Posted to the main window when there is one: a window
+   message survives the modal loops Windows runs while the user drags or
+   sizes the window, where a thread message (hwnd 0) is dropped. With no
+   window, it goes to the claimed pump thread. Wakes coalesce: while one
+   is pending the next posts nothing. The heartbeat also clears the flag,
+   so a lost message costs at most one tick, never the wake forever.
+   Answers 1 posted, 2 coalesced, 0 nobody to wake. */
+#define SHELL_WM_WAKE (WM_APP + 0x51)
+
+static int shell_wake(void) {
+    if (InterlockedCompareExchange(&s_shell_wake_pending, 1, 0) != 0)
+        return 2;
+    if (s_shell_hwnd && PostMessageW(s_shell_hwnd, SHELL_WM_WAKE, 0, 0))
+        return 1;
+    if (s_shell_pump_thread && PostThreadMessageW(s_shell_pump_thread, SHELL_WM_WAKE, 0, 0))
+        return 1;
+    InterlockedExchange(&s_shell_wake_pending, 0);
+    return 0;
+}
+
+static void shell_wake_arrived(void) {
+    InterlockedExchange(&s_shell_wake_pending, 0);
+    shell_push(54, 0, 0, 0);
+}
+
+static void shell_claim_pump_thread(int l_on) {
+    s_shell_pump_thread = l_on ? GetCurrentThreadId() : 0;
+    InterlockedExchange(&s_shell_wake_pending, 0);
+}
+
+static void shell_set_heartbeat(int l_ms) {
+    s_shell_heartbeat_ms = l_ms;
+    if (s_shell_hwnd) SetTimer(s_shell_hwnd, 1, (UINT)l_ms, 0);
+}
+
 static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
         case WM_LBUTTONDOWN: {
@@ -382,7 +426,13 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
                fast tick (event 25) - polling loops that outpace the
                heartbeat (the OCR capture cycle runs at 50ms) */
             if (w == 2) shell_push(25, 0, 0, 0);
-            else        shell_push(7, 0, 0, 0);
+            else {
+                InterlockedExchange(&s_shell_wake_pending, 0);
+                shell_push(7, 0, 0, 0);
+            }
+            return 0;
+        case SHELL_WM_WAKE:
+            shell_wake_arrived();
             return 0;
         case WM_PAINT: {
             PAINTSTRUCT ps;
@@ -573,7 +623,8 @@ static void* shell_create_window(const wchar_t* title, int px, int py, int cw, i
             ShowWindow(h, SW_SHOW);
             UpdateWindow(h);
         }
-        SetTimer(h, 1, 250, 0);
+        SetTimer(h, 1, (UINT)s_shell_heartbeat_ms, 0);
+        s_shell_pump_thread = GetCurrentThreadId();
         DragAcceptFiles(h, TRUE);
     }
     return (void*)h;
@@ -662,6 +713,8 @@ static void shell_hotkey_simulate(int l_id, int l_mods, int l_vk) {
 static void shell_thread_message(MSG* l_msg) {
     if (l_msg->hwnd == 0 && l_msg->message == WM_HOTKEY)
         shell_push(51, (int)l_msg->wParam, (int)HIWORD(l_msg->lParam), (int)LOWORD(l_msg->lParam));
+    else if (l_msg->hwnd == 0 && l_msg->message == SHELL_WM_WAKE)
+        shell_wake_arrived();
 }
 
 /* Pump this thread's queue for ms milliseconds WITHOUT a main window:

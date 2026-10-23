@@ -518,6 +518,52 @@ feature {NONE} -- Panel probes
 			end
 		end
 
+feature -- Wake and heartbeat (1.18.0, GW-26)
+
+	test_wake_needs_a_pump_and_coalesces
+			-- No window and no claimed thread: nobody to wake. Claimed: the
+			-- first wake posts, the next ones merge into it, one event 54
+			-- comes out of a pump, and after it the next wake posts again.
+		local
+			k: SHELL_WAKE
+			d: SHELL_DESKTOP
+			w: SHELL_TEST_WINDOW
+		do
+			create k
+			create d
+			create w
+			k.release_pump_thread
+			k.wake
+			assert_integers_equal ("nobody to wake", k.Outcome_none, k.last_outcome)
+			k.claim_pump_thread
+			k.wake
+			assert_integers_equal ("first wake posts", k.Outcome_posted, k.last_outcome)
+			k.wake
+			assert_integers_equal ("second merges", k.Outcome_coalesced, k.last_outcome)
+			k.wake
+			assert_integers_equal ("third merges", k.Outcome_coalesced, k.last_outcome)
+			d.pump_for (30)
+			assert_true ("one event 54 came out", w.drain_event (k.Event_wake, 0))
+			assert_false ("and only one", w.drain_event (k.Event_wake, 0))
+			k.wake
+			assert_integers_equal ("after it, the next wake posts", k.Outcome_posted, k.last_outcome)
+			d.pump_for (30)
+			assert_true ("and arrives", w.drain_event (k.Event_wake, 0))
+			k.release_pump_thread
+			assert_integers_equal ("the window names the same event", k.Event_wake, w.Event_wake)
+		end
+
+	test_heartbeat_is_settable
+		local
+			w: SHELL_TEST_WINDOW
+		do
+			create w
+			assert_integers_equal ("250 ms by default", 250, w.heartbeat_ms)
+			w.set_heartbeat_ms (100)
+			assert_integers_equal ("now 100", 100, w.heartbeat_ms)
+			w.set_heartbeat_ms (250)
+		end
+
 feature -- Appearance (1.16.0, GW-27)
 
 	test_appearance_reads_the_windows_setting

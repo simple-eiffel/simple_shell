@@ -79,6 +79,8 @@ feature {NONE} -- Initialization
 				"a blocking-marked C call never stops the allocator")
 			run_test (agent test_a_windowless_pump_never_stops_another_processors_allocator,
 				"a windowless pump never stops another processor's allocator")
+			run_test (agent test_a_worker_wakes_the_pump_at_once,
+				"a worker on another processor wakes the pump at once (GW-26)")
 
 			print ("%N========================%N")
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")
@@ -178,6 +180,67 @@ feature {NONE} -- Tests: the vector
 				l_pump_ms >= (Waits * Wait_ms) * 8 // 10)
 			assert ("no allocation on the root waited on the pump (" + l_worst.out + " ms)",
 				l_worst <= Allocation_budget_ms)
+		end
+
+feature {NONE} -- Tests: the wake (1.18.0, GW-26)
+
+	test_a_worker_wakes_the_pump_at_once
+			-- The root claims its thread as the pump and pumps the
+			-- windowless way; a worker processor sleeps 200 ms and wakes
+			-- it. Event 54 must come out of the root's queue, posted by
+			-- the worker, within 50 ms of the post. With no window there
+			-- is no heartbeat, so without the wake nothing would come.
+		local
+			l_worker: separate WAKE_WORKER
+			l_wake: SHELL_WAKE
+			l_desktop: SHELL_DESKTOP
+			l_drain: WAKE_DRAIN
+			t0, l_seen_at, l_woke_at: INTEGER_64
+			l_seen: BOOLEAN
+		do
+			create l_wake
+			l_wake.claim_pump_thread
+			create l_desktop
+			create l_drain
+			create l_worker.make
+			t0 := now_ms
+			launch_wake (l_worker, 200)
+			from
+			until
+				l_seen or now_ms - t0 > 3000
+			loop
+				l_desktop.pump_for (2)
+				if l_drain.drained_wake then
+					l_seen := True
+					l_seen_at := now_ms
+				end
+			end
+			l_woke_at := worker_woke_at (l_worker)
+			l_wake.release_pump_thread
+			print ("      wake posted at +" + (l_woke_at - t0).out + " ms, seen at +"
+				+ (l_seen_at - t0).out + " ms: latency " + (l_seen_at - l_woke_at).out + " ms%N")
+			assert ("the wake arrived", l_seen)
+			assert ("the worker posted it", worker_outcome (l_worker) = l_wake.Outcome_posted)
+			assert ("not before the worker woke", l_seen_at >= l_woke_at)
+			assert ("within 50 ms of the post (" + (l_seen_at - l_woke_at).out + " ms)",
+				l_seen_at - l_woke_at <= 50)
+		end
+
+	launch_wake (a_worker: separate WAKE_WORKER; a_ms: INTEGER)
+		require
+			positive: a_ms > 0
+		do
+			a_worker.wake_after (a_ms)
+		end
+
+	worker_woke_at (a_worker: separate WAKE_WORKER): INTEGER_64
+		do
+			Result := a_worker.woke_at_ms
+		end
+
+	worker_outcome (a_worker: separate WAKE_WORKER): INTEGER
+		do
+			Result := a_worker.outcome
 		end
 
 feature {NONE} -- The probe's processor (each a short, separate call)

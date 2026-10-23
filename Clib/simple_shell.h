@@ -710,11 +710,42 @@ static void shell_hotkey_simulate(int l_id, int l_mods, int l_vk) {
         MAKELPARAM((WORD)l_mods, (WORD)l_vk));
 }
 
+/* ---- the dwell timer (1.19.0, GW-08) ----
+   ONE-SHOT, on the THREAD queue (SetTimer with no window), so it works
+   with or without a main window and a windowless pump can prove it. A
+   widget that answers a resting pointer - a word's hover card after
+   400 ms - arms it on every pointer move; re-arming replaces the
+   pending shot, so it fires only once the pointer has rested. It fires
+   as event 55 and kills itself. The id is SHELL_SHARED: a private copy
+   per translation unit would leave the pump unable to recognize it. */
+SHELL_SHARED UINT_PTR s_shell_dwell_id = 0;
+
+static void shell_arm_dwell_timer(int l_ms) {
+    if (l_ms > 0)
+        s_shell_dwell_id = SetTimer(0, s_shell_dwell_id, (UINT)l_ms, 0);
+}
+
+static void shell_cancel_dwell_timer(void) {
+    if (s_shell_dwell_id) {
+        KillTimer(0, s_shell_dwell_id);
+        s_shell_dwell_id = 0;
+    }
+}
+
+static int shell_dwell_is_armed(void) {
+    return s_shell_dwell_id ? 1 : 0;
+}
+
 static void shell_thread_message(MSG* l_msg) {
     if (l_msg->hwnd == 0 && l_msg->message == WM_HOTKEY)
         shell_push(51, (int)l_msg->wParam, (int)HIWORD(l_msg->lParam), (int)LOWORD(l_msg->lParam));
     else if (l_msg->hwnd == 0 && l_msg->message == SHELL_WM_WAKE)
         shell_wake_arrived();
+    else if (l_msg->hwnd == 0 && l_msg->message == WM_TIMER
+             && s_shell_dwell_id && l_msg->wParam == s_shell_dwell_id) {
+        shell_cancel_dwell_timer();
+        shell_push(55, 0, 0, 0);
+    }
 }
 
 /* Pump this thread's queue for ms milliseconds WITHOUT a main window:

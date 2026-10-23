@@ -41,7 +41,26 @@ feature -- Status report
 			Result := c_syschar_is_ours (a_code) /= 0
 		end
 
+	keydown_is_claimed (a_vk: INTEGER; a_ctrl, a_alt: BOOLEAN): BOOLEAN
+			-- Does a plain WM_KEYDOWN for `a_vk', under Ctrl `a_ctrl' and
+			-- Alt `a_alt', become event 4 (1.17.0, GW-24)?
+		do
+			Result := c_keydown_is_ours (a_vk, a_ctrl.to_integer, a_alt.to_integer) /= 0
+		end
+
 feature -- Basic operations
+
+	deliver_keydown (a_vk: INTEGER)
+			-- Hand WM_KEYDOWN(`a_vk') to the window procedure with a null
+			-- handle. The procedure reads the LIVE Ctrl and Alt state, so
+			-- only keys claimed with no modifier at all are deliverable.
+		require
+			claimed_bare: keydown_is_claimed (a_vk, False, False)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_wndproc((HWND)0, WM_KEYDOWN, (WPARAM)$a_vk, (LPARAM)0);"
+		end
 
 	deliver_syskeydown (a_vk: INTEGER)
 			-- Hand WM_SYSKEYDOWN(`a_vk') to the window procedure
@@ -63,6 +82,13 @@ feature -- Basic operations
 		end
 
 feature {NONE} -- Externals
+
+	c_keydown_is_ours (a_vk, a_ctrl, a_alt: INTEGER): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_keydown_is_ours((int)$a_vk, (int)$a_ctrl, (int)$a_alt);"
+		end
 
 	c_syskey_is_ours (a_vk: INTEGER): INTEGER
 		external

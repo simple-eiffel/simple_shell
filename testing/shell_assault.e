@@ -564,6 +564,43 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			w.set_heartbeat_ms (250)
 		end
 
+feature -- Dwell timer (1.19.0, GW-08)
+
+	test_dwell_fires_once_after_rest
+			-- Armed on every "move", the shot keeps being replaced and
+			-- nothing fires; once the arming stops, ONE event 55 comes out
+			-- and the timer is spent. A cancelled shot never fires.
+		local
+			d: SHELL_DESKTOP
+			w: SHELL_TEST_WINDOW
+		do
+			create d
+			create w
+			assert_integers_equal ("event 55", 55, w.Event_dwell)
+			w.cancel_dwell_timer
+			from until not w.drain_event (w.Event_dwell, 0) loop end
+			w.arm_dwell_timer (40)
+			assert_true ("armed", w.is_dwell_timer_armed)
+			d.pump_for (15)
+			w.arm_dwell_timer (40)
+			d.pump_for (15)
+			w.arm_dwell_timer (40)
+			d.pump_for (15)
+			assert_false ("re-armed before it ran out: nothing yet", w.drain_event (w.Event_dwell, 0))
+			assert_true ("still pending", w.is_dwell_timer_armed)
+			d.pump_for (150)
+			assert_true ("rested: it fired", w.drain_event (w.Event_dwell, 0))
+			assert_false ("once", w.drain_event (w.Event_dwell, 0))
+			assert_false ("and is spent", w.is_dwell_timer_armed)
+			d.pump_for (100)
+			assert_false ("a spent shot never fires again", w.drain_event (w.Event_dwell, 0))
+			w.arm_dwell_timer (30)
+			w.cancel_dwell_timer
+			assert_false ("cancelled", w.is_dwell_timer_armed)
+			d.pump_for (100)
+			assert_false ("a cancelled shot never fires", w.drain_event (w.Event_dwell, 0))
+		end
+
 feature -- Appearance (1.16.0, GW-27)
 
 	test_appearance_reads_the_windows_setting

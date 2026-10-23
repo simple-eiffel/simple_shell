@@ -250,6 +250,62 @@ feature -- Heartbeat and wake (1.18.0)
 			set: heartbeat_ms = a_ms
 		end
 
+feature -- Dwell timer (1.19.0)
+
+	Event_dwell: INTEGER = 55
+			-- The dwell timer ran out: the pointer has rested.
+
+	arm_dwell_timer (a_ms: INTEGER)
+			-- Fire `Event_dwell' once, `a_ms' milliseconds from now,
+			-- unless re-armed or cancelled first. Re-arming REPLACES the
+			-- pending shot, so a caller that arms on every pointer move
+			-- hears one event, after the pointer rests (GW-08: a word's
+			-- hover card after 400 ms). A thread timer: no window needed.
+		require
+			positive: a_ms > 0
+		do
+			c_arm_dwell_timer (a_ms)
+		ensure
+			armed: is_dwell_timer_armed
+		end
+
+	cancel_dwell_timer
+			-- Nothing pending any more.
+		do
+			c_cancel_dwell_timer
+		ensure
+			disarmed: not is_dwell_timer_armed
+		end
+
+	is_dwell_timer_armed: BOOLEAN
+			-- Is a dwell shot pending?
+		do
+			Result := c_dwell_is_armed = 1
+		end
+
+feature {NONE} -- Dwell externals
+
+	c_arm_dwell_timer (a_ms: INTEGER)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_arm_dwell_timer((int)$a_ms);"
+		end
+
+	c_cancel_dwell_timer
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_cancel_dwell_timer();"
+		end
+
+	c_dwell_is_armed: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_dwell_is_armed();"
+		end
+
 feature -- Appearance (1.16.0)
 
 	Event_appearance_changed: INTEGER = 53

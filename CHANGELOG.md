@@ -2,6 +2,19 @@
 
 All notable changes to simple_shell.
 
+## 1.19.0 - 2026-10-23
+
+### Added
+- **A one-shot dwell timer (GW-08, for simple_bible).** It lets a word's
+  hover card open 400 milliseconds after the pointer rests, instead of
+  waiting for the next 250-millisecond heartbeat.
+  - `SHELL_WINDOW.arm_dwell_timer (ms)` fires event 55 (`Event_dwell`)
+    once. Re-arming replaces the pending shot, so a caller that arms on
+    every pointer move hears one event, after the pointer rests.
+  - `cancel_dwell_timer` and `is_dwell_timer_armed`.
+  - It is a thread timer, so it needs no main window, and the
+    windowless pump delivers it.
+
 ## 1.18.0 - 2026-10-23
 
 ### Added

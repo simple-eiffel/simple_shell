@@ -31,7 +31,8 @@
     defined(shell_push) || defined(shell_syskey_is_ours) || \
     defined(shell_syschar_is_ours) || \
     defined(shell_set_window_icon) || defined(shell_set_cursor_kind) || \
-    defined(l_area) || defined(l_flag) || defined(l_dwm) || defined(l_hr)
+    defined(l_area) || defined(l_flag) || defined(l_dwm) || defined(l_hr) || \
+    defined(l_ctrl) || defined(l_alt) || defined(shell_keydown_is_ours)
 #error "simple_shell.h: a Windows SDK macro has captured an identifier this header declares - rename it (see SHELL_SDK_MACRO_TRIPWIRE)."
 #endif
 
@@ -131,6 +132,33 @@ static void shell_push(int t, int a, int b, int c) {
                             no menu bar has no underlines to reveal.
      Alt+F1..F9, F11, F12, and Alt+arrow/Home/End/Page/Delete - unclaimed.
    ---- */
+/* THE KEY-DOWN DOOR (1.17.0, GW-24): which plain WM_KEYDOWNs become
+   event 4. Always: the stepping keys (arrows, Home/End, Delete,
+   PgUp/PgDn, the zoom keys) and F1-F12 under any modifier. With Ctrl
+   held and Alt NOT held: digits (row and numpad) and the OEM
+   punctuation keys, which make no WM_CHAR a window could hear (or make
+   a control code that reads as another key: Ctrl+[ is 27, Escape).
+   Ctrl+Alt is AltGr on European layouts, where AltGr+2 types @ - that
+   stays a character. Letters stay with WM_CHAR, where Ctrl+letter
+   arrives as the control code 1..26; forwarding them here would
+   deliver every Ctrl+letter twice. */
+static int shell_keydown_is_ours(int l_vk, int l_ctrl, int l_alt) {
+    if (l_vk == VK_LEFT || l_vk == VK_RIGHT || l_vk == VK_HOME || l_vk == VK_END ||
+        l_vk == VK_DELETE || l_vk == VK_UP || l_vk == VK_DOWN ||
+        l_vk == VK_PRIOR || l_vk == VK_NEXT ||
+        l_vk == VK_OEM_PLUS || l_vk == VK_OEM_MINUS ||
+        l_vk == VK_ADD || l_vk == VK_SUBTRACT)
+        return 1;
+    if (l_vk >= VK_F1 && l_vk <= VK_F12)
+        return 1;
+    if (l_ctrl && !l_alt)
+        return (l_vk >= '0' && l_vk <= '9')
+            || (l_vk >= VK_NUMPAD0 && l_vk <= VK_NUMPAD9)
+            || (l_vk >= VK_OEM_1 && l_vk <= VK_OEM_3)
+            || (l_vk >= VK_OEM_4 && l_vk <= VK_OEM_7);
+    return 0;
+}
+
 static int shell_syskey_is_ours(int l_vk) {
     return (l_vk >= 'A' && l_vk <= 'Z')
         || (l_vk >= '0' && l_vk <= '9')
@@ -331,11 +359,7 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             shell_push(3, (int)w, 0, 0);
             return 0;
         case WM_KEYDOWN:
-            if (w == VK_LEFT || w == VK_RIGHT || w == VK_HOME || w == VK_END ||
-                w == VK_DELETE || w == VK_UP || w == VK_DOWN ||
-                w == VK_PRIOR || w == VK_NEXT ||
-                w == VK_OEM_PLUS || w == VK_OEM_MINUS ||
-                w == VK_ADD || w == VK_SUBTRACT)
+            if (shell_keydown_is_ours((int)w, GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_MENU) < 0))
                 shell_push(4, (int)w, 0, 0);
             return 0;
         case WM_SYSKEYDOWN:

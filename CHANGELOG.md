@@ -2,6 +2,26 @@
 
 All notable changes to simple_shell.
 
+## 1.17.0 - 2026-10-23
+
+### Added
+- **Function keys and Ctrl+digit reach the window (GW-24, for simple_bible).**
+  - A plain WM_KEYDOWN now becomes event 4 for F1-F12, under any modifier.
+  - With Ctrl held and Alt not held, digits (row and numpad) and the OEM
+    punctuation keys also become event 4. None of these make a WM_CHAR the
+    window could hear, and Ctrl+[ would otherwise arrive as 27, which reads
+    as Escape.
+  - Ctrl+Alt (AltGr on European layouts) still types its character.
+  - Letters stay with WM_CHAR (Ctrl+letter is the control code 1..26), so
+    nothing is delivered twice.
+  - The policy is one pure predicate, `shell_keydown_is_ours (vk, ctrl, alt)`,
+    which the window procedure consults with the live modifier state.
+- Tests (39 pass, 0 fail, 0 warnings):
+  - F1-F12 bare and with Ctrl; F13 not.
+  - Ctrl+0..9, Ctrl+numpad and Ctrl+[ ] ; / ' , are claimed. Bare digits,
+    AltGr+digit and Ctrl+A are not, and the stepping keys are unchanged.
+  - WM_KEYDOWN(F5) handed to the window procedure comes out of the queue.
+
 ## 1.16.0 - 2026-10-22
 
 ### Added

@@ -787,6 +787,53 @@ feature -- The Alt door
 				and p.syskey_is_claimed (107) and p.syskey_is_claimed (109))
 		end
 
+	test_function_keys_and_ctrl_digits_are_the_windows
+			-- GW-24: F1-F12 under any modifier; Ctrl+digit and
+			-- Ctrl+punctuation; and NOT letters (WM_CHAR carries
+			-- Ctrl+letter), bare digits (typing), or Ctrl+Alt (AltGr).
+		local
+			p: SHELL_SYSKEY_PROBE
+			vk: INTEGER
+		do
+			create p
+			from vk := 112 until vk > 123 loop
+				assert_true ("F" + (vk - 111).out + " bare", p.keydown_is_claimed (vk, False, False))
+				assert_true ("F" + (vk - 111).out + " with Ctrl", p.keydown_is_claimed (vk, True, False))
+				vk := vk + 1
+			end
+			assert_false ("F13 is not", p.keydown_is_claimed (124, False, False))
+			from vk := 48 until vk > 57 loop
+				assert_true ("Ctrl+" + (vk - 48).out, p.keydown_is_claimed (vk, True, False))
+				assert_false ("bare " + (vk - 48).out + " stays typing", p.keydown_is_claimed (vk, False, False))
+				assert_false ("AltGr+" + (vk - 48).out + " stays a character", p.keydown_is_claimed (vk, True, True))
+				vk := vk + 1
+			end
+			assert_true ("Ctrl+numpad 5", p.keydown_is_claimed (101, True, False))
+			assert_true ("Ctrl+[", p.keydown_is_claimed (219, True, False))
+			assert_true ("Ctrl+]", p.keydown_is_claimed (221, True, False))
+			assert_true ("Ctrl+;", p.keydown_is_claimed (186, True, False))
+			assert_true ("Ctrl+/", p.keydown_is_claimed (191, True, False))
+			assert_true ("Ctrl+'", p.keydown_is_claimed (222, True, False))
+			assert_true ("Ctrl+,", p.keydown_is_claimed (188, True, False))
+			assert_false ("bare [ stays typing", p.keydown_is_claimed (219, False, False))
+			assert_false ("Ctrl+A stays with WM_CHAR", p.keydown_is_claimed (65, True, False))
+			assert_true ("the stepping keys are unchanged", p.keydown_is_claimed (37, False, False)
+				and p.keydown_is_claimed (34, True, False) and p.keydown_is_claimed (187, True, False))
+		end
+
+	test_f5_reaches_the_queue
+			-- WM_KEYDOWN(F5) handed to the window procedure comes out of
+			-- SHELL_WINDOW's queue as event 4.
+		local
+			p: SHELL_SYSKEY_PROBE
+			w: SHELL_TEST_WINDOW
+		do
+			create p
+			create w
+			p.deliver_keydown (116)
+			assert_true ("F5 queued as a key-down", w.drain_key (116))
+		end
+
 	test_system_alt_keys_are_left_alone
 			-- The other half of the same policy, and the half a
 			-- careless widening would break: an application that ate

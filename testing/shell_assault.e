@@ -756,6 +756,44 @@ feature -- Appearance (1.16.0, GW-27)
 			assert ("reduced exactly when animation is off", a.system_reduces_motion = l_out.same_string ("False"))
 		end
 
+	test_uia_bridge_serves_the_published_tree
+			-- A UI Automation client, on its own thread, reads back the tree
+			-- published for a hidden probe window on the shipped window
+			-- procedure: names, control types, a value, a nested node, and
+			-- the node told to hold the focus. Disabled, it reads nothing.
+		local
+			acc: SHELL_ACCESSIBILITY
+			h: POINTER
+			l_seen: STRING_32
+		do
+			h := uia_probe_window
+			assert ("a probe window", h /= default_pointer)
+			create acc
+			acc.begin_tree (8)
+			acc.add_node (0, 0, acc.Role_pane, "probe", Void, 0.0, 0.0, 400.0, 300.0, False, True)
+			acc.add_node (1, 0, acc.Role_button, "Search", Void, 10.0, 10.0, 80.0, 30.0, True, True)
+			acc.add_node (2, 0, acc.Role_text, "Genesis 1:1", Void, 10.0, 50.0, 200.0, 20.0, False, True)
+			acc.add_node (3, 0, acc.Role_edit, "Notes", "In the beginning", 10.0, 80.0, 200.0, 30.0, True, True)
+			acc.add_node (4, 3, acc.Role_text, "inner", Void, 12.0, 82.0, 50.0, 20.0, False, True)
+			acc.commit (h)
+			assert_integers_equal ("five rows served", 5, acc.served_rows)
+			assert_true ("the edit row reads back", acc.served_name (acc.served_row_of (3)).same_string ("Notes")
+				and acc.served_value (acc.served_row_of (3)).same_string ("In the beginning") and acc.served_parent (acc.served_row_of (4)) = 3)
+			acc.focus_changed (3)
+			l_seen := uia_read (h)
+			print ("    a UI Automation client read:%N" + utf8 (l_seen))
+			assert ("the client finished: " + utf8 (l_seen), not l_seen.starts_with ("!"))
+			assert ("the button: " + utf8 (l_seen), l_seen.has_substring ("Search|50000%N"))
+			assert ("the text: " + utf8 (l_seen), l_seen.has_substring ("Genesis 1:1|50020%N"))
+			assert ("the edit with its value and the focus: " + utf8 (l_seen), l_seen.has_substring ("Notes|50004=In the beginning*%N"))
+			assert ("the nested node: " + utf8 (l_seen), l_seen.has_substring ("inner|50020%N"))
+			acc.disable
+			assert ("stopped", not acc.is_serving)
+			l_seen := uia_read (h)
+			assert ("disabled: no published node: " + utf8 (l_seen), not l_seen.has_substring ("Search|"))
+			uia_probe_close (h)
+		end
+
 	test_dark_title_bar_on_a_real_window
 			-- DWM accepts dark and light captions on a real (hidden,
 			-- offscreen) window; a window not yet open only remembers.
@@ -779,6 +817,58 @@ feature -- Appearance (1.16.0, GW-27)
 		end
 
 feature {NONE} -- Appearance helpers
+
+	utf8 (a_text: STRING_32): STRING_8
+			-- `a_text' as UTF-8, for an assertion tag.
+		do
+			Result := (create {UTF_CONVERTER}).utf_32_string_to_utf_8_string_8 (a_text)
+		end
+
+	uia_read (a_hwnd: POINTER): STRING_32
+			-- What a UI Automation client reads under `a_hwnd': one line per
+			-- descendant; "!timeout" or "!failed <hr>" when it could not.
+		local
+			l_buf: MANAGED_POINTER
+			l_len: INTEGER
+		do
+			create l_buf.make (8192 * 2)
+			l_len := c_uia_client_read (a_hwnd, l_buf.item, 8192)
+			if l_len = -1 then
+				Result := {STRING_32} "!timeout"
+			elseif l_len = -2 then
+				Result := {STRING_32} "!failed " + c_uia_client_hr.to_hex_string
+			else
+				Result := (create {NATIVE_STRING}.make_from_pointer (l_buf.item)).string
+			end
+		end
+
+	uia_probe_window: POINTER
+		external
+			"C inline use %"shell_uia_client.h%""
+		alias
+			"return shell_uia_probe_window();"
+		end
+
+	uia_probe_close (a_hwnd: POINTER)
+		external
+			"C inline use %"shell_uia_client.h%""
+		alias
+			"shell_uia_probe_close($a_hwnd);"
+		end
+
+	c_uia_client_read (a_hwnd, a_out: POINTER; a_cap: INTEGER): INTEGER
+		external
+			"C inline use %"shell_uia_client.h%""
+		alias
+			"return shell_uia_client_read($a_hwnd, (wchar_t*)$a_out, (int)$a_cap);"
+		end
+
+	c_uia_client_hr: INTEGER
+		external
+			"C inline use %"shell_uia_client.h%""
+		alias
+			"return (EIF_INTEGER)s_uia_client_hr;"
+		end
 
 	reg_value (a_key, a_name: STRING): STRING
 			-- The data of value `a_name' under `a_key' as reg.exe prints it;

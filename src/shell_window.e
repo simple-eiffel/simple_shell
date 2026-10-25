@@ -67,7 +67,9 @@ feature -- Operation
 			-- 54 a processor called `SHELL_WAKE.wake' (1.18.0);
 			-- 55 the dwell timer fired (1.19.0);
 			-- 56 the high-contrast switch flipped or the system colors
-			-- changed (1.20.0); 57 the animation setting flipped (1.21.0).
+			-- changed (1.20.0); 57 the animation setting flipped (1.21.0);
+			-- 58 a UI Automation client asked to focus a node (1.22.0,
+			-- `SHELL_ACCESSIBILITY').
 			--
 			-- THE ALT DOOR (1.9.3). Type 4 carries the stepping keys
 			-- from WM_KEYDOWN, and since 1.9.3 also Alt+letter,

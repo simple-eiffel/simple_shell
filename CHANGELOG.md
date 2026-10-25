@@ -2,6 +2,33 @@
 
 All notable changes to simple_shell.
 
+## 1.22.0 - 2026-10-25
+
+### Added
+- **The UI Automation bridge (GW-14, for simple_bible).** A drawn toolkit
+  has no child windows for a screen reader to find, so `SHELL_ACCESSIBILITY`
+  lets the application publish its widget tree as a table - id, parent,
+  control type (`Role_` constants, UI Automation's control type ids), name,
+  value, bounds, focusable, enabled - with `begin_tree`, `add_node` and
+  `commit`, and tell the focus with `focus_changed`. The new header
+  `Clib/simple_shell_uia.h` serves it: per-node providers for
+  IRawElementProviderSimple, Fragment, FragmentRoot (node 0) and a
+  read-only IValueProvider, behind WM_GETOBJECT through a hook pointer in
+  simple_shell.h, so no COM header enters that file. The table is read
+  under a lock and swapped in whole, because UI Automation calls from its
+  own threads. A client's SetFocus arrives as event 58
+  (`Event_focus_request`) with the node id. `clients_listening`,
+  `served_focus` and readers of the served table (`served_name`,
+  `served_role`, `served_parent`, `served_value`, `served_row_of`).
+- UIAutomationCore.h defines `UIA_ScrollPatternNoScroll` at file scope, which
+  C links twice when two translation units include it; the header renames
+  it into a selectany definition.
+- Test: `uia_bridge_serves_the_published_tree` - a real UI Automation
+  client on a worker thread (testing/Clib/shell_uia_client.h) reads back the
+  tree published for a hidden probe window on the shipped window
+  procedure: names, control types, a value, a nested node and the focus;
+  disabled, nothing. 48 pass.
+
 ## 1.21.0 - 2026-10-25
 
 ### Added

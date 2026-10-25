@@ -24,6 +24,12 @@ note
 class
 	SHELL_APPEARANCE
 
+inherit
+	SHELL_EVENTS
+		rename
+			Event_appearance_changed as Event_changed
+		end
+
 feature -- Access
 
 	system_prefers_dark: BOOLEAN
@@ -32,10 +38,6 @@ feature -- Access
 		do
 			Result := c_system_prefers_dark /= 0
 		end
-
-	Event_changed: INTEGER = 53
-			-- The queue event for a flip of the setting: first field 1
-			-- dark, 0 light.
 
 	system_high_contrast: BOOLEAN
 			-- Is a Windows contrast theme on?
@@ -54,25 +56,12 @@ feature -- Access
 			rgb: Result <= 0xFFFFFF
 		end
 
-	Event_contrast_changed: INTEGER = 56
-			-- The queue event for a flip of the high-contrast switch or a
-			-- change of its palette: first field 1 on, 0 off. Read it as
-			-- "look again": one flip can arrive as two events (the setting
-			-- change and the color change that follows), and a light/dark
-			-- flip also changes the system colors, so it arrives with 0
-			-- while contrast is off. Re-read `system_high_contrast' and
-			-- `system_prefers_dark' rather than counting events.
-
 	system_reduces_motion: BOOLEAN
 			-- Has the user turned Windows' animation effects off? False where
 			-- the setting cannot be read (before Vista).
 		do
 			Result := c_reduces_motion /= 0
 		end
-
-	Event_motion_changed: INTEGER = 57
-			-- The queue event for a flip of the animation setting: first field
-			-- 1 reduced, 0 not.
 
 	Spi_set_client_area_animation: INTEGER = 0x1043
 			-- The SystemParametersInfo action WM_SETTINGCHANGE names when the

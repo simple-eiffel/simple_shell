@@ -1273,6 +1273,28 @@ feature -- The Alt door
 			assert ("F10 arrived as key-down 121", w.drain_key (121))
 		end
 
+feature -- The event registry (2026-10-25)
+
+	test_event_numbers_never_collide
+			-- Every queue event has its own number, and the owners' short
+			-- names are the registry's numbers.
+		local
+			l_seen: ARRAYED_LIST [INTEGER]
+			l_events: SHELL_WAKE
+		do
+			create l_events
+			create l_seen.make (l_events.registry.count)
+			across l_events.registry as ic_event loop
+				assert_false ("event " + ic_event.out + " numbered once", l_seen.has (ic_event))
+				l_seen.extend (ic_event)
+			end
+			assert_integers_equal ("the next free number follows the last", 60, l_events.next_free_event)
+			assert_integers_equal ("panel press", {SHELL_EVENTS}.Event_panel_press, {SHELL_PANEL}.Event_press)
+			assert_integers_equal ("tray click", {SHELL_EVENTS}.Event_tray_click, {SHELL_TRAY}.Event_click)
+			assert_integers_equal ("appearance", {SHELL_EVENTS}.Event_appearance_changed, {SHELL_APPEARANCE}.Event_changed)
+			assert_integers_equal ("the window's wake", {SHELL_WAKE}.Event_wake, {SHELL_WINDOW}.Event_wake)
+		end
+
 feature -- SDK macro tripwire
 
 	test_sdk_macro_poison_is_armed

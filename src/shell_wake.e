@@ -19,10 +19,10 @@ note
 class
 	SHELL_WAKE
 
-feature -- Access
+inherit
+	SHELL_EVENTS
 
-	Event_wake: INTEGER = 54
-			-- The queue event a wake becomes.
+feature -- Access
 
 	Outcome_none: INTEGER = 0
 			-- Nobody to wake: no window open and no thread claimed.

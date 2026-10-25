@@ -11,6 +11,9 @@ note
 deferred class
 	SHELL_WINDOW
 
+inherit
+	SHELL_EVENTS
+
 feature -- Access
 
 	hwnd: POINTER
@@ -235,9 +238,6 @@ feature -- Cursor
 
 feature -- Heartbeat and wake (1.18.0)
 
-	Event_wake: INTEGER = 54
-			-- A processor called `SHELL_WAKE.wake'.
-
 	heartbeat_ms: INTEGER
 			-- Milliseconds between ticks (event 7).
 		do
@@ -256,9 +256,6 @@ feature -- Heartbeat and wake (1.18.0)
 		end
 
 feature -- Dwell timer (1.19.0)
-
-	Event_dwell: INTEGER = 55
-			-- The dwell timer ran out: the pointer has rested.
 
 	arm_dwell_timer (a_ms: INTEGER)
 			-- Fire `Event_dwell' once, `a_ms' milliseconds from now,
@@ -312,18 +309,6 @@ feature {NONE} -- Dwell externals
 		end
 
 feature -- Appearance (1.16.0)
-
-	Event_appearance_changed: INTEGER = 53
-			-- The Windows light/dark app setting flipped: first field 1
-			-- dark, 0 light (`SHELL_APPEARANCE').
-
-	Event_contrast_changed: INTEGER = 56
-			-- The Windows high-contrast switch flipped or its palette
-			-- changed: first field 1 on, 0 off (`SHELL_APPEARANCE', 1.20.0).
-
-	Event_motion_changed: INTEGER = 57
-			-- The Windows animation setting flipped: first field 1 reduced,
-			-- 0 not (`SHELL_APPEARANCE', 1.21.0).
 
 	title_bar_is_dark: BOOLEAN
 			-- Was the caption last asked to be dark?

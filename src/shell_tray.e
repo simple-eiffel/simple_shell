@@ -21,6 +21,12 @@ note
 class
 	SHELL_TRAY
 
+inherit
+	SHELL_EVENTS
+		rename
+			Event_tray_click as Event_click
+		end
+
 create
 	make
 
@@ -59,10 +65,6 @@ feature -- Access
 			-- in the fourth field (`SHELL_WINDOW.event_extra').
 
 feature -- Clicks and menu (1.14.0)
-
-	Event_click: INTEGER = 52
-			-- A click on the icon: the button (`Click_left', `Click_right', `Click_double')
-			-- in the first field, `id' in the fourth.
 
 	Click_left: INTEGER = 1
 	Click_right: INTEGER = 2

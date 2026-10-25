@@ -50,6 +50,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_scan13_focus_request_is_pushed_on_the_pump_thread, "scan13_focus_request_is_pushed_on_the_pump_thread")
 			run_test (agent t.test_scan13_destroying_the_window_stops_serving, "scan13_destroying_the_window_stops_serving")
 			run_test (agent t.test_scan13_a_client_request_asks_for_a_republish, "scan13_a_client_request_asks_for_a_republish")
+			run_test (agent t.test_event_numbers_never_collide, "event_numbers_never_collide")
 			run_test (agent t.test_dark_title_bar_on_a_real_window, "dark_title_bar_on_a_real_window")
 			run_test (agent t.test_clipboard_image_roundtrip, "clipboard_image_roundtrip")
 			run_test (agent t.test_clipboard_image_survives_repeated_round_trips, "clipboard_image_survives_repeated_round_trips")

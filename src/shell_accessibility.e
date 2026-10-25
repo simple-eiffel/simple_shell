@@ -19,6 +19,9 @@ note
 class
 	SHELL_ACCESSIBILITY
 
+inherit
+	SHELL_EVENTS
+
 feature -- Publishing
 
 	begin_tree (a_capacity: INTEGER)
@@ -213,16 +216,6 @@ feature -- Reading the served table (tests and tools)
 				i := i + 1
 			end
 		end
-
-feature -- Events
-
-	Event_focus_request: INTEGER = 58
-			-- The queue event for a client asking to move the focus: first
-			-- field the node id. Pushed on the pump thread.
-
-	Event_refresh_request: INTEGER = 59
-			-- The queue event for a client asking for the tree: republish.
-			-- Once until the next `commit'.
 
 feature -- Control types (UI Automation's UIA_*ControlTypeId)
 

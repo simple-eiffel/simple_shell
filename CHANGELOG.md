@@ -2,6 +2,25 @@
 
 All notable changes to simple_shell.
 
+## 1.22.2 - 2026-10-25
+
+### Changed (one registry of event numbers)
+
+- New deferred **`SHELL_EVENTS`**: every number the native queue carries,
+  named, in one place (window 2-18 and 25, strip 21-23, overlay 31-37,
+  panels 41-50, hot key 51, tray 52, appearance 53, wake 54, dwell 55,
+  contrast 56, motion 57, focus request 58, refresh request 59), with
+  `registry` and `next_free_event`. The numbers had lived in seven
+  classes, 53 to 57 twice. SHELL_WINDOW, SHELL_PANEL, SHELL_TRAY,
+  SHELL_HOTKEYS, SHELL_APPEARANCE, SHELL_WAKE and SHELL_ACCESSIBILITY
+  inherit it; SHELL_PANEL, SHELL_TRAY and SHELL_APPEARANCE keep their
+  short names by renaming (`{SHELL_PANEL}.Event_press`,
+  `{SHELL_TRAY}.Event_click`, `{SHELL_APPEARANCE}.Event_changed`), so no
+  client changes. A new event takes `next_free_event` and joins
+  `registry` before it goes into the header.
+- Test `event_numbers_never_collide`. 52 pass; simple_widgets rebuilt
+  clean against it, 537 pass.
+
 ## 1.22.1 - 2026-10-25
 
 ### Fixed (the design scan since 7443e02)

@@ -19,6 +19,9 @@ note
 class
 	SHELL_HOTKEYS
 
+inherit
+	SHELL_EVENTS
+
 create
 	make
 
@@ -42,8 +45,6 @@ feature -- Constants
 
 	Max_id: INTEGER = 0xBFFF
 			-- Application hotkey ids are 1..0xBFFF (higher ids belong to DLLs).
-
-	Event_hotkey: INTEGER = 51
 
 feature -- Access
 

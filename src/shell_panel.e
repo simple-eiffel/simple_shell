@@ -27,6 +27,21 @@ note
 class
 	SHELL_PANEL
 
+inherit
+	SHELL_EVENTS
+		rename
+			Event_panel_press as Event_press,
+			Event_panel_release as Event_release,
+			Event_panel_move as Event_move,
+			Event_panel_expose as Event_expose,
+			Event_panel_wheel as Event_wheel,
+			Event_panel_right_press as Event_right_press,
+			Event_panel_moved as Event_moved,
+			Event_panel_resized as Event_resized,
+			Event_panel_moving as Event_moving,
+			Event_panel_dropped as Event_dropped
+		end
+
 create
 	make
 
@@ -50,19 +65,6 @@ feature -- Constants
 			-- WDA_MONITOR: captures show a black box (Windows before 10 2004).
 	Affinity_excluded_from_captures: INTEGER = 0x11
 			-- WDA_EXCLUDEFROMCAPTURE: captures show what is behind the panel.
-
-	Event_press: INTEGER = 41
-	Event_release: INTEGER = 42
-	Event_move: INTEGER = 43
-	Event_expose: INTEGER = 44
-	Event_wheel: INTEGER = 45
-	Event_right_press: INTEGER = 46
-	Event_moved: INTEGER = 47
-	Event_resized: INTEGER = 48
-	Event_moving: INTEGER = 49
-			-- During a move: the panel's left and top now (1.14.0).
-	Event_dropped: INTEGER = 50
-			-- Files dropped on the panel, at (x, y) in it (1.14.0, `set_accepts_files').
 
 	Axis_free: INTEGER = 0
 	Axis_horizontal: INTEGER = 1

@@ -64,7 +64,10 @@ feature -- Operation
 			-- 2026-08-23 out of the main window's namespace;
 			-- 36 accept and 37 arrow arrived with adjust mode);
 			-- 53 the Windows light/dark app setting flipped (1.16.0);
-			-- 54 a processor called `SHELL_WAKE.wake' (1.18.0).
+			-- 54 a processor called `SHELL_WAKE.wake' (1.18.0);
+			-- 55 the dwell timer fired (1.19.0);
+			-- 56 the high-contrast switch flipped or the system colors
+			-- changed (1.20.0).
 			--
 			-- THE ALT DOOR (1.9.3). Type 4 carries the stepping keys
 			-- from WM_KEYDOWN, and since 1.9.3 also Alt+letter,

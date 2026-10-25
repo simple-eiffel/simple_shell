@@ -52,7 +52,12 @@ feature -- Access
 
 	Event_contrast_changed: INTEGER = 56
 			-- The queue event for a flip of the high-contrast switch or a
-			-- change of its palette: first field 1 on, 0 off.
+			-- change of its palette: first field 1 on, 0 off. Read it as
+			-- "look again": one flip can arrive as two events (the setting
+			-- change and the color change that follows), and a light/dark
+			-- flip also changes the system colors, so it arrives with 0
+			-- while contrast is off. Re-read `system_high_contrast' and
+			-- `system_prefers_dark' rather than counting events.
 
 feature -- System color indexes (Win32 COLOR_*)
 

@@ -31,6 +31,10 @@
 #endif
 #include <stddef.h>
 #include <windows.h>
+/* simple_shell.h FIRST: SHELL_SHARED, used below before the UIA headers, is
+   defined there (2026-10-25: a unit whose first include was this header
+   failed to compile; the shell's own build had hidden it). */
+#include "simple_shell.h"
 #include <ole2.h>
 #include <oleauto.h>
 /* UIAutomationCore.h DEFINES `const double UIA_ScrollPatternNoScroll = -1;'
@@ -40,7 +44,6 @@
 #define UIA_ScrollPatternNoScroll SHELL_SHARED shell_uia_scroll_pattern_no_scroll
 #include <UIAutomationCore.h>
 #include <UIAutomationCoreApi.h>
-#include "simple_shell.h"
 
 #pragma comment(lib, "uiautomationcore.lib")
 #pragma comment(lib, "ole32.lib")
@@ -97,6 +100,7 @@ SHELL_SHARED int s_uia_stage_cap = 0;
 SHELL_SHARED HWND s_uia_hwnd = 0;
 SHELL_SHARED int s_uia_focus = 0;
 SHELL_SHARED LONG s_uia_lock_state = 0;
+SHELL_SHARED int s_uia_refresh_pending = 0;
 SHELL_SHARED CRITICAL_SECTION s_uia_lock = {0};
 
 static void shell_uia_lock_enter(void) {
@@ -375,8 +379,19 @@ static HRESULT STDMETHODCALLTYPE shell_uia_f_embedded(IRawElementProviderFragmen
 }
 static HRESULT STDMETHODCALLTYPE shell_uia_f_set_focus(IRawElementProviderFragment* l_p) {
     shell_uia_el* l_el = SHELL_UIA_FROM(l_p, l_fragment);
-        /* the application moves its own focus: event 58, first field the id */
-    shell_push(58, l_el->l_id, 0, 0);
+    HWND l_target;
+    int l_known;
+    shell_uia_lock_enter();
+    l_target = s_uia_hwnd;
+    l_known = shell_uia_index(l_el->l_id) >= 0;
+    shell_uia_lock_leave();
+    if (!l_known) return SHELL_UIA_E_NOT_AVAILABLE;
+        /* the application moves its own focus: event 58 (first field the
+           id), pushed by the window procedure on the pump thread - this
+           call comes on UI Automation's thread, and the queue is not
+           synchronized (scan 13) */
+    if (!l_target || !PostMessageW(l_target, SHELL_WM_UIA_FOCUS, (WPARAM)l_el->l_id, 0))
+        return E_FAIL;
     return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE shell_uia_f_root(IRawElementProviderFragment* l_p, IRawElementProviderFragmentRoot** l_out) {
@@ -524,7 +539,20 @@ static int shell_uia_getobject(HWND l_h, WPARAM l_w, LPARAM l_l, LRESULT* l_resu
     if (!l_root) return 0;
     *l_result = UiaReturnRawElementProvider(l_h, l_w, l_l, (IRawElementProviderSimple*)&l_root->l_simple);
     shell_uia_release_el(l_root);
+        /* a client is asking: let the application republish soon (event 59,
+           once until the next commit; this runs on the pump thread) */
+    if (!s_uia_refresh_pending) {
+        s_uia_refresh_pending = 1;
+        shell_push(59, 0, 0, 0);
+    }
     return 1;
+}
+
+static void shell_uia_disable(void);
+
+/* The served window is being destroyed: stop serving (scan 13). */
+static void shell_uia_window_destroyed(HWND l_h) {
+    if (l_h && l_h == s_uia_hwnd) shell_uia_disable();
 }
 
 /* ------------------------------------------------------------ publishing */
@@ -572,7 +600,9 @@ static void shell_uia_commit(void* l_hwnd) {
     s_uia_stage_count = 0;
     s_uia_stage_cap = 0;
     shell_uia_free_table(l_old, l_old_count);
+    s_uia_refresh_pending = 0;
     s_shell_getobject_hook = shell_uia_getobject;
+    s_shell_destroy_hook = shell_uia_window_destroyed;
 }
 
 /* Node `l_id' took the keyboard focus: tell any listening client. */
@@ -596,6 +626,7 @@ static void shell_uia_focus_changed(int l_id) {
 static void shell_uia_disable(void) {
     HWND l_was;
     s_shell_getobject_hook = 0;
+    s_shell_destroy_hook = 0;
     shell_uia_lock_enter();
     l_was = s_uia_hwnd;
     shell_uia_free_table(s_uia_nodes, s_uia_count);
@@ -636,6 +667,14 @@ static int shell_uia_row_text(int l_i, int l_which, wchar_t* l_out, int l_cap) {
     l_out[l_n] = 0;
     shell_uia_lock_leave();
     return l_n;
+}
+
+static void* shell_uia_served_window(void) {
+    void* l_h;
+    shell_uia_lock_enter();
+    l_h = (void*)s_uia_hwnd;
+    shell_uia_lock_leave();
+    return l_h;
 }
 
 static int shell_uia_served_focus(void) {

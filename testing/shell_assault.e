@@ -794,6 +794,75 @@ feature -- Appearance (1.16.0, GW-27)
 			uia_probe_close (h)
 		end
 
+	test_scan13_focus_request_is_pushed_on_the_pump_thread
+			-- HIGH: a client's SetFocus pushed event 58 from UI Automation's
+			-- thread onto the unsynchronized queue. Called from a worker, it
+			-- now reaches the queue through the window procedure, on the
+			-- thread that pumps.
+		local
+			acc: SHELL_ACCESSIBILITY
+			h: POINTER
+			w: SHELL_TEST_WINDOW
+			l_hr: INTEGER
+		do
+			h := uia_probe_window
+			create acc
+			acc.begin_tree (2)
+			acc.add_node (0, 0, acc.Role_pane, "probe", Void, 0.0, 0.0, 400.0, 300.0, False, True)
+			acc.add_node (3, 0, acc.Role_edit, "Notes", "x", 10.0, 10.0, 100.0, 30.0, True, True)
+			acc.commit (h)
+			create w
+			l_hr := uia_focus_from_worker (3)
+			assert_integers_equal ("SetFocus answered S_OK, not " + l_hr.to_hex_string, 0, l_hr)
+			assert_true ("pushed on the pump thread", uia_focus_pushed_here)
+			assert_true ("event 58 names the node", w.drain_event (acc.Event_focus_request, 3))
+			acc.disable
+			uia_probe_close (h)
+		end
+
+	test_scan13_destroying_the_window_stops_serving
+			-- MEDIUM: the table, the hook and the window handle outlived the
+			-- window. Destroyed, it is served no more.
+		local
+			acc: SHELL_ACCESSIBILITY
+			h: POINTER
+		do
+			h := uia_probe_window
+			create acc
+			acc.begin_tree (1)
+			acc.add_node (0, 0, acc.Role_pane, "probe", Void, 0.0, 0.0, 400.0, 300.0, False, True)
+			acc.commit (h)
+			assert_true ("serving its window", acc.is_serving and acc.served_window = h)
+			uia_probe_close (h)
+			assert_false ("the window gone, nothing served", acc.is_serving)
+			assert_true ("and no window named", acc.served_window = default_pointer)
+		end
+
+	test_scan13_a_client_request_asks_for_a_republish
+			-- A client's WM_GETOBJECT pushes event 59 once until the next
+			-- commit, so a window that renders only on input can refresh.
+		local
+			acc: SHELL_ACCESSIBILITY
+			h: POINTER
+			w: SHELL_TEST_WINDOW
+			l_seen: STRING_32
+		do
+			h := uia_probe_window
+			create acc
+			acc.begin_tree (2)
+			acc.add_node (0, 0, acc.Role_pane, "probe", Void, 0.0, 0.0, 400.0, 300.0, False, True)
+			acc.add_node (1, 0, acc.Role_button, "Search", Void, 10.0, 10.0, 80.0, 30.0, True, True)
+			acc.commit (h)
+			create w
+			from until not w.drain_event (acc.Event_refresh_request, 0) loop end
+			l_seen := uia_read (h)
+			assert ("read: " + utf8 (l_seen), l_seen.has_substring ("Search|50000"))
+			assert_true ("event 59 asked for a republish", w.drain_event (acc.Event_refresh_request, 0))
+			assert_false ("only once until the next commit", w.drain_event (acc.Event_refresh_request, 0))
+			acc.disable
+			uia_probe_close (h)
+		end
+
 	test_dark_title_bar_on_a_real_window
 			-- DWM accepts dark and light captions on a real (hidden,
 			-- offscreen) window; a window not yet open only remembers.
@@ -840,6 +909,22 @@ feature {NONE} -- Appearance helpers
 			else
 				Result := (create {NATIVE_STRING}.make_from_pointer (l_buf.item)).string
 			end
+		end
+
+	uia_focus_from_worker (a_id: INTEGER): INTEGER
+			-- The HRESULT of node `a_id''s SetFocus called from a worker; -1 no
+			-- thread, -2 it did not finish.
+		external
+			"C inline use %"shell_uia_client.h%""
+		alias
+			"return (EIF_INTEGER)shell_uia_focus_from_worker((int)$a_id);"
+		end
+
+	uia_focus_pushed_here: BOOLEAN
+		external
+			"C inline use %"shell_uia_client.h%""
+		alias
+			"return (EIF_BOOLEAN)(shell_uia_focus_pushed_on_this_thread() != 0);"
 		end
 
 	uia_probe_window: POINTER

@@ -2,6 +2,29 @@
 
 All notable changes to simple_shell.
 
+## 1.20.0 - 2026-10-25
+
+### Added
+- **Windows high contrast (GW-16, for simple_bible).**
+  - `SHELL_APPEARANCE.system_high_contrast`: is a Windows contrast theme
+    on (SystemParametersInfo, `HCF_HIGHCONTRASTON`)?
+  - `system_color (index)`: a system color as 0xRRGGBB, with the indexes
+    a contrast theme paints with (`Color_window`, `Color_window_text`,
+    `Color_highlight`, `Color_highlight_text`, `Color_button_face`,
+    `Color_gray_text`, `Color_button_text`, `Color_hotlight`).
+  - Event 56 (`Event_contrast_changed`, also on SHELL_WINDOW) with 1 for on
+    or 0 for off, pushed when WM_SETTINGCHANGE names
+    `SPI_SETHIGHCONTRAST` and on WM_SYSCOLORCHANGE (the contrast palette
+    changed).
+  - Test doors `report_contrast_change` and `report_system_colors_change`.
+    A client tested without touching Windows inherits SHELL_APPEARANCE and
+    redefines the three queries (simple_widgets does).
+- Tests: `high_contrast_reads_the_windows_setting` and
+  `system_colors_read_the_windows_palette` (each against reg.exe's own
+  reading of the registry), `contrast_change_is_queued`. 42 of 45 pass in
+  a locked session; `desktop_grab`, `input_keys_are_accepted` and
+  `panel_capture_exclusion_really_hides` need the interactive desktop.
+
 ## 1.19.0 - 2026-10-23
 
 ### Added

@@ -69,7 +69,7 @@ end
 | `SHELL_PANEL` | borderless topmost instrument panels (up to 8): never take focus, can be left out of screen captures, click-through on demand, whole-window opacity, Shift+drag to move (1.11.0) and to size from an edge or corner (1.12.0), `is_cursor_over` for hover (1.13.0), handles that drag on a plain press kept to one axis, live `Event_moving`, side edges that size on a plain press, files dropped on them (1.14.0), a bottom edge that sizes on a plain press (1.15.0) |
 | `SHELL_HOTKEYS` | global hotkeys as queue event 51; a modifier is required unless a chord is registered bare on purpose (1.11.0) |
 | `SHELL_MONITORS` | snapshot of the displays: bounds, work area, primary, device name (1.11.0) |
-| `SHELL_APPEARANCE` | the Windows light/dark app setting (`system_prefers_dark`), event 53 when it flips, and a dark or light DWM caption (1.16.0) |
+| `SHELL_APPEARANCE` | the Windows light/dark app setting (`system_prefers_dark`), event 53 when it flips, and a dark or light DWM caption (1.16.0); the high-contrast switch (`system_high_contrast`), the system colors (`system_color`), event 56 when either changes (1.20.0) |
 | `SHELL_WAKE` | `wake` from any SCOOP processor puts event 54 on the GUI's queue at once, coalesced while one is pending; to the main window, or to a thread claimed with `claim_pump_thread` (1.18.0) |
 | `SHELL_TRAY` | one notification-area icon (1.9.0): `set_tooltip` (unread counts), `balloon` notices, idempotent `remove`; a refusing environment leaves `is_installed` False and the caller degrades; clicks as `Event_click` (52) and a popup menu with `choose`, the program's own icon (1.14.0) |
 
@@ -137,10 +137,11 @@ keystroke. See *Build and test*.
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
 offscreen, the spell checker is consulted. 42/42 under full DBC **at an
-interactive console** (1.19.0). Run it from a locked or headless session and
-`desktop_grab` and `input_keys_are_accepted` fail by design - Windows
-refuses BitBlt and SendInput there (OS error 5), and that refusal is a
-status the tests report rather than swallow.
+interactive console** (1.19.0; 45 tests at 1.20.0). Run it from a locked or
+headless session and `desktop_grab`, `input_keys_are_accepted` and
+`panel_capture_exclusion_really_hides` fail by design - Windows refuses
+BitBlt and SendInput there (OS error 5), and that refusal is a status the
+tests report rather than swallow.
 
 Two of them are the **SDK-macro tripwire** (`SDK_MACRO_TRIPWIRE`),
 which is really a compile-time test: it includes a COM/RPC header ahead of

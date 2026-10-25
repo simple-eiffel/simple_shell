@@ -659,6 +659,53 @@ feature -- Appearance (1.16.0, GW-27)
 			assert_integers_equal ("the window names the same event", a.Event_changed, w.Event_appearance_changed)
 		end
 
+	test_high_contrast_reads_the_windows_setting
+			-- `system_high_contrast' agrees with reg.exe's reading of the
+			-- HighContrast Flags value: bit 1 (HCF_HIGHCONTRASTON) is on.
+		local
+			a: SHELL_APPEARANCE
+			l_value: STRING
+		do
+			create a
+			l_value := reg_value ("HKCU\Control Panel\Accessibility\HighContrast", "Flags")
+			assert ("reg.exe read the flags", l_value.is_integer)
+			assert ("on exactly when bit 1 is set: " + l_value,
+				a.system_high_contrast = (l_value.to_integer \\ 2 = 1))
+		end
+
+	test_system_colors_read_the_windows_palette
+			-- `system_color' answers 0xRRGGBB, agreeing with reg.exe's "R G B"
+			-- reading of the Window and WindowText colors.
+		local
+			a: SHELL_APPEARANCE
+		do
+			create a
+			assert_true ("the window color matches the registry",
+				a.system_color (a.Color_window) = rgb_of (reg_value ("HKCU\Control Panel\Colors", "Window")))
+			assert_true ("the window text color matches the registry",
+				a.system_color (a.Color_window_text) = rgb_of (reg_value ("HKCU\Control Panel\Colors", "WindowText")))
+		end
+
+	test_contrast_change_is_queued
+			-- The WM_SETTINGCHANGE path: SPI_SETHIGHCONTRAST pushes event 56
+			-- carrying the switch as it stands; another action pushes nothing.
+			-- The WM_SYSCOLORCHANGE path pushes it too.
+		local
+			a: SHELL_APPEARANCE
+			w: SHELL_TEST_WINDOW
+		do
+			create a
+			create w
+			assert_true ("the switch is reported", a.report_contrast_change (a.Spi_set_high_contrast))
+			assert_true ("event 56 carries the switch", w.drain_event (a.Event_contrast_changed, a.system_high_contrast.to_integer))
+			assert_false ("another action is not", a.report_contrast_change (0x14))
+			assert_false ("and nothing was queued for it",
+				w.drain_event (a.Event_contrast_changed, 0) or w.drain_event (a.Event_contrast_changed, 1))
+			a.report_system_colors_change
+			assert_true ("a palette change is queued", w.drain_event (a.Event_contrast_changed, a.system_high_contrast.to_integer))
+			assert_integers_equal ("the window names the same event", a.Event_contrast_changed, w.Event_contrast_changed)
+		end
+
 	test_dark_title_bar_on_a_real_window
 			-- DWM accepts dark and light captions on a real (hidden,
 			-- offscreen) window; a window not yet open only remembers.
@@ -682,6 +729,44 @@ feature -- Appearance (1.16.0, GW-27)
 		end
 
 feature {NONE} -- Appearance helpers
+
+	reg_value (a_key, a_name: STRING): STRING
+			-- The data of value `a_name' under `a_key' as reg.exe prints it;
+			-- empty when absent.
+		local
+			env: EXECUTION_ENVIRONMENT
+			f: PLAIN_TEXT_FILE
+			l_path: STRING_32
+		do
+			create Result.make_empty
+			create env
+			l_path := temp_path ("shell_reg_value.txt")
+			env.system ("C:\Windows\System32\reg.exe query %"" + a_key + "%" /v " + a_name + " > %"" + l_path.to_string_8 + "%" 2>&1")
+			create f.make_with_name (l_path)
+			if f.exists then
+				f.open_read
+				from until f.end_of_file loop
+					f.read_line
+					if f.last_string.has_substring ("REG_SZ") then
+						Result := f.last_string.substring (f.last_string.substring_index ("REG_SZ", 1) + 6, f.last_string.count)
+					end
+				end
+				f.close
+				f.delete
+			end
+			Result.left_adjust
+			Result.right_adjust
+		end
+
+	rgb_of (a_triple: STRING): NATURAL_32
+			-- "R G B" as 0xRRGGBB.
+		local
+			l_parts: LIST [STRING]
+		do
+			l_parts := a_triple.split (' ')
+			assert_integers_equal ("three channels in " + a_triple, 3, l_parts.count)
+			Result := (l_parts [1].to_natural_32 |<< 16) | (l_parts [2].to_natural_32 |<< 8) | l_parts [3].to_natural_32
+		end
 
 	temp_path (a_name: STRING): STRING_32
 			-- `a_name' in the TEMP folder.

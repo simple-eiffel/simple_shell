@@ -67,7 +67,7 @@ feature -- Operation
 			-- 54 a processor called `SHELL_WAKE.wake' (1.18.0);
 			-- 55 the dwell timer fired (1.19.0);
 			-- 56 the high-contrast switch flipped or the system colors
-			-- changed (1.20.0).
+			-- changed (1.20.0); 57 the animation setting flipped (1.21.0).
 			--
 			-- THE ALT DOOR (1.9.3). Type 4 carries the stepping keys
 			-- from WM_KEYDOWN, and since 1.9.3 also Alt+letter,
@@ -318,6 +318,10 @@ feature -- Appearance (1.16.0)
 	Event_contrast_changed: INTEGER = 56
 			-- The Windows high-contrast switch flipped or its palette
 			-- changed: first field 1 on, 0 off (`SHELL_APPEARANCE', 1.20.0).
+
+	Event_motion_changed: INTEGER = 57
+			-- The Windows animation setting flipped: first field 1 reduced,
+			-- 0 not (`SHELL_APPEARANCE', 1.21.0).
 
 	title_bar_is_dark: BOOLEAN
 			-- Was the caption last asked to be dark?

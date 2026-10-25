@@ -15,6 +15,10 @@ note
 		for off; `system_high_contrast' and `system_color' answer at any
 		time. A client that must be tested without touching Windows
 		inherits this class and redefines the three queries.
+
+		GW-14 (1.21.0): the Animation effects setting (Settings >
+		Accessibility > Visual effects). `system_reduces_motion' answers;
+		`Event_motion_changed' (57) arrives when it flips, 1 reduced.
 	]"
 
 class
@@ -58,6 +62,21 @@ feature -- Access
 			-- flip also changes the system colors, so it arrives with 0
 			-- while contrast is off. Re-read `system_high_contrast' and
 			-- `system_prefers_dark' rather than counting events.
+
+	system_reduces_motion: BOOLEAN
+			-- Has the user turned Windows' animation effects off? False where
+			-- the setting cannot be read (before Vista).
+		do
+			Result := c_reduces_motion /= 0
+		end
+
+	Event_motion_changed: INTEGER = 57
+			-- The queue event for a flip of the animation setting: first field
+			-- 1 reduced, 0 not.
+
+	Spi_set_client_area_animation: INTEGER = 0x1043
+			-- The SystemParametersInfo action WM_SETTINGCHANGE names when the
+			-- animation setting flips.
 
 feature -- System color indexes (Win32 COLOR_*)
 
@@ -132,6 +151,16 @@ feature -- Test door
 			only_the_switch: Result = (a_spi = Spi_set_high_contrast)
 		end
 
+	report_motion_change (a_spi: INTEGER): BOOLEAN
+			-- What the main window procedure does on WM_SETTINGCHANGE whose
+			-- wParam is `a_spi': push `Event_motion_changed' when it is
+			-- `Spi_set_client_area_animation'. Answers whether it pushed.
+		do
+			Result := c_motion_changed (a_spi.to_natural_32) /= 0
+		ensure
+			only_the_setting: Result = (a_spi = Spi_set_client_area_animation)
+		end
+
 	report_system_colors_change
 			-- What the main window procedure does on WM_SYSCOLORCHANGE: push
 			-- `Event_contrast_changed'.
@@ -181,6 +210,20 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_contrast_changed((unsigned int)$a_spi);"
+		end
+
+	c_reduces_motion: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_reduces_motion();"
+		end
+
+	c_motion_changed (a_spi: NATURAL_32): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_motion_changed((unsigned int)$a_spi);"
 		end
 
 	c_system_colors_changed

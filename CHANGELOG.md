@@ -2,6 +2,20 @@
 
 All notable changes to simple_shell.
 
+## 1.21.0 - 2026-10-25
+
+### Added
+- **Reduced motion (GW-14, for simple_bible).**
+  `SHELL_APPEARANCE.system_reduces_motion`: has the user turned Windows'
+  animation effects off (Settings > Accessibility > Visual effects;
+  SPI_GETCLIENTAREAANIMATION, False where it cannot be read)? Event 57
+  (`Event_motion_changed`, also on SHELL_WINDOW) with 1 for reduced, pushed
+  when WM_SETTINGCHANGE names SPI_SETCLIENTAREAANIMATION. Test door
+  `report_motion_change`.
+- Tests: `motion_change_is_queued`, `reduced_motion_reads_the_windows_setting`
+  (against PowerShell's own SystemParametersInfo call). 47 pass at an
+  interactive console.
+
 ## 1.20.1 - 2026-10-25
 
 ### Changed

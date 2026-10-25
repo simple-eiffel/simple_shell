@@ -373,6 +373,12 @@ static void shell_set_heartbeat(int l_ms) {
     if (s_shell_hwnd) SetTimer(s_shell_hwnd, 1, (UINT)l_ms, 0);
 }
 
+/* UI Automation (1.22.0, GW-14): WM_GETOBJECT is answered by the bridge in
+   simple_shell_uia.h when it is on - it sets this pointer. A pointer, so no
+   COM header ever enters this file (the 1.9.1 SDK-macro lesson). */
+typedef int (*shell_getobject_fn)(HWND, WPARAM, LPARAM, LRESULT*);
+SHELL_SHARED shell_getobject_fn s_shell_getobject_hook = 0;
+
 static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
         case WM_LBUTTONDOWN: {
@@ -537,6 +543,12 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             break;
         case WM_SYSCOLORCHANGE:
             shell_system_colors_changed();
+            break;
+        case WM_GETOBJECT:
+            if (s_shell_getobject_hook) {
+                LRESULT l_answer = 0;
+                if (s_shell_getobject_hook(h, w, l, &l_answer)) return l_answer;
+            }
             break;
         case WM_DESTROY:
             KillTimer(h, 1);

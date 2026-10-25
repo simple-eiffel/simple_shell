@@ -7,6 +7,14 @@ note
 		field; `system_prefers_dark' answers at any time. GW-27, asked
 		for by simple_bible: default Light, Dark on request, and the
 		option to follow Windows.
+
+		GW-16 (1.20.0): the high-contrast switch (Settings >
+		Accessibility > Contrast themes) and the system colors it paints
+		with. When the switch flips, or the contrast palette changes, the
+		queue receives `Event_contrast_changed' (56) with 1 for on or 0
+		for off; `system_high_contrast' and `system_color' answer at any
+		time. A client that must be tested without touching Windows
+		inherits this class and redefines the three queries.
 	]"
 
 class
@@ -24,6 +32,60 @@ feature -- Access
 	Event_changed: INTEGER = 53
 			-- The queue event for a flip of the setting: first field 1
 			-- dark, 0 light.
+
+	system_high_contrast: BOOLEAN
+			-- Is a Windows contrast theme on?
+		do
+			Result := c_high_contrast_on /= 0
+		end
+
+	system_color (a_index: INTEGER): NATURAL_32
+			-- The system color `a_index' (a Win32 COLOR_ index such as
+			-- `Color_window'), as 0xRRGGBB.
+		require
+			known_index: a_index >= 0 and a_index <= Color_last
+		do
+			Result := c_system_color (a_index)
+		ensure
+			rgb: Result <= 0xFFFFFF
+		end
+
+	Event_contrast_changed: INTEGER = 56
+			-- The queue event for a flip of the high-contrast switch or a
+			-- change of its palette: first field 1 on, 0 off.
+
+feature -- System color indexes (Win32 COLOR_*)
+
+	Color_window: INTEGER = 5
+			-- The ground of text areas.
+
+	Color_window_text: INTEGER = 8
+			-- Text on `Color_window'.
+
+	Color_highlight: INTEGER = 13
+			-- The ground of selected items.
+
+	Color_highlight_text: INTEGER = 14
+			-- Text on `Color_highlight'.
+
+	Color_button_face: INTEGER = 15
+			-- The face of buttons.
+
+	Color_gray_text: INTEGER = 17
+			-- Disabled text.
+
+	Color_button_text: INTEGER = 18
+			-- Text on `Color_button_face'.
+
+	Color_hotlight: INTEGER = 26
+			-- Hyperlinks.
+
+	Color_last: INTEGER = 30
+			-- The highest index Windows defines.
+
+	Spi_set_high_contrast: INTEGER = 0x43
+			-- The SystemParametersInfo action WM_SETTINGCHANGE names when
+			-- the high-contrast switch flips.
 
 	last_title_bar_applied: BOOLEAN
 			-- Did DWM accept the last `set_dark_title_bar'? False before
@@ -55,6 +117,23 @@ feature -- Test door
 			only_the_color_set: Result = a_area.as_string_32.is_case_insensitive_equal ({STRING_32} "ImmersiveColorSet")
 		end
 
+	report_contrast_change (a_spi: INTEGER): BOOLEAN
+			-- What the main window procedure does on WM_SETTINGCHANGE whose
+			-- wParam is `a_spi': push `Event_contrast_changed' when it is
+			-- `Spi_set_high_contrast'. Answers whether it pushed.
+		do
+			Result := c_contrast_changed (a_spi.to_natural_32) /= 0
+		ensure
+			only_the_switch: Result = (a_spi = Spi_set_high_contrast)
+		end
+
+	report_system_colors_change
+			-- What the main window procedure does on WM_SYSCOLORCHANGE: push
+			-- `Event_contrast_changed'.
+		do
+			c_system_colors_changed
+		end
+
 feature {NONE} -- Externals
 
 	c_system_prefers_dark: INTEGER
@@ -76,6 +155,34 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_setting_changed((const wchar_t*)$a_area);"
+		end
+
+	c_high_contrast_on: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_high_contrast_on();"
+		end
+
+	c_system_color (a_index: INTEGER): NATURAL_32
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return (EIF_NATURAL_32)shell_system_color((int)$a_index);"
+		end
+
+	c_contrast_changed (a_spi: NATURAL_32): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_contrast_changed((unsigned int)$a_spi);"
+		end
+
+	c_system_colors_changed
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_system_colors_changed();"
 		end
 
 end

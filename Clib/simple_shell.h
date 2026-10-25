@@ -262,6 +262,52 @@ static int shell_setting_changed(const wchar_t* l_area) {
     return 0;
 }
 
+/* High contrast (1.20.0, GW-16): the Windows high-contrast switch and the
+   system colors it paints with. SystemParametersInfoW, HIGHCONTRASTW and
+   GetSysColor all exist at the _WIN32_WINNT=0x0500 target; the constants
+   are spelled out in case a header gates them. */
+#ifndef SPI_GETHIGHCONTRAST
+#define SPI_GETHIGHCONTRAST 0x0042
+#endif
+#ifndef SPI_SETHIGHCONTRAST
+#define SPI_SETHIGHCONTRAST 0x0043
+#endif
+#ifndef HCF_HIGHCONTRASTON
+#define HCF_HIGHCONTRASTON 0x00000001
+#endif
+
+static int shell_high_contrast_on(void) {
+    HIGHCONTRASTW l_hc;
+    ZeroMemory(&l_hc, sizeof(l_hc));
+    l_hc.cbSize = sizeof(l_hc);
+    if (!SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(l_hc), &l_hc, 0))
+        return 0;
+    return (l_hc.dwFlags & HCF_HIGHCONTRASTON) ? 1 : 0;
+}
+
+/* GetSysColor answers 0x00BBGGRR; the toolkit speaks 0xRRGGBB. */
+static unsigned int shell_system_color(int l_index) {
+    DWORD l_c = GetSysColor(l_index);
+    return ((l_c & 0xFF) << 16) | (l_c & 0xFF00) | ((l_c >> 16) & 0xFF);
+}
+
+/* WM_SETTINGCHANGE names SPI_SETHIGHCONTRAST in wParam when the switch
+   flips; WM_SYSCOLORCHANGE follows when the high-contrast palette changes.
+   Either pushes 56 with the switch as it now stands (1 on, 0 off).
+   Answers 1 when it pushed. The window procedure calls these; tests call
+   them directly. */
+static int shell_contrast_changed(unsigned int l_spi) {
+    if (l_spi == SPI_SETHIGHCONTRAST) {
+        shell_push(56, shell_high_contrast_on(), 0, 0);
+        return 1;
+    }
+    return 0;
+}
+
+static void shell_system_colors_changed(void) {
+    shell_push(56, shell_high_contrast_on(), 0, 0);
+}
+
 /* Wake (1.18.0, GW-26): any thread - a SCOOP worker's processor - makes
    the GUI's pump return now with event 54, instead of waiting up to a
    heartbeat. Posted to the main window when there is one: a window
@@ -458,6 +504,10 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             break;
         case WM_SETTINGCHANGE:
             shell_setting_changed((const wchar_t*)l);
+            shell_contrast_changed((unsigned int)w);
+            break;
+        case WM_SYSCOLORCHANGE:
+            shell_system_colors_changed();
             break;
         case WM_DESTROY:
             KillTimer(h, 1);

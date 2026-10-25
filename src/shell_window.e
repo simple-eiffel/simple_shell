@@ -312,6 +312,10 @@ feature -- Appearance (1.16.0)
 			-- The Windows light/dark app setting flipped: first field 1
 			-- dark, 0 light (`SHELL_APPEARANCE').
 
+	Event_contrast_changed: INTEGER = 56
+			-- The Windows high-contrast switch flipped or its palette
+			-- changed: first field 1 on, 0 off (`SHELL_APPEARANCE', 1.20.0).
+
 	title_bar_is_dark: BOOLEAN
 			-- Was the caption last asked to be dark?
 
@@ -329,7 +333,7 @@ feature -- Appearance (1.16.0)
 		end
 
 	appearance: SHELL_APPEARANCE
-			-- The Windows light/dark setting.
+			-- The Windows light/dark setting and the high-contrast switch.
 		once ("OBJECT")
 			create Result
 		end

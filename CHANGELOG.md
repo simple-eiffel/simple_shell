@@ -2,6 +2,29 @@
 
 All notable changes to simple_shell.
 
+## 1.22.1 - 2026-10-25
+
+### Fixed (the design scan since 7443e02)
+Each with a test that failed with the old behaviour:
+- **A client's focus request reaches the queue on the pump thread.** UI
+  Automation calls SetFocus on its own thread, and the provider pushed
+  event 58 straight onto the unsynchronized queue. It now posts a private
+  window message; the window procedure pushes the event
+  (`scan13_focus_request_is_pushed_on_the_pump_thread`).
+- **Destroying the window stops serving.** The table, the hook and the
+  window handle outlived the window; WM_DESTROY now tells the bridge
+  through a second hook (`scan13_destroying_the_window_stops_serving`).
+- **A client's request asks for a republish:** event 59
+  (`Event_refresh_request`), once until the next commit
+  (`scan13_a_client_request_asks_for_a_republish`).
+- `simple_shell_uia.h` includes simple_shell.h first: it used SHELL_SHARED
+  before including the header that defines it, which compiled here only
+  because another class came first (simple_widgets failed with C2061).
+- New: `served_window`, `Role_window`. Not done: one table per process,
+  no property-changed or structure-changed events, only a read-only Value
+  pattern. Report: `.eiffel-workflow/evidence/design-scan-since-7443e02.md`.
+  51 pass.
+
 ## 1.22.0 - 2026-10-25
 
 ### Added

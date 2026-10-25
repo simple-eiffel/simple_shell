@@ -378,6 +378,15 @@ static void shell_set_heartbeat(int l_ms) {
    COM header ever enters this file (the 1.9.1 SDK-macro lesson). */
 typedef int (*shell_getobject_fn)(HWND, WPARAM, LPARAM, LRESULT*);
 SHELL_SHARED shell_getobject_fn s_shell_getobject_hook = 0;
+/* ...and is told when its window is destroyed (scan 13: the table outlived
+   the window). */
+typedef void (*shell_destroy_fn)(HWND);
+SHELL_SHARED shell_destroy_fn s_shell_destroy_hook = 0;
+/* A UI Automation client's focus request, posted from UI Automation's own
+   thread and pushed as event 58 here, on the pump thread (scan 13: the
+   queue is not synchronized). */
+#define SHELL_WM_UIA_FOCUS (WM_APP + 0x52)
+SHELL_SHARED DWORD s_uia_focus_push_thread = 0;
 
 static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
@@ -544,6 +553,10 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_SYSCOLORCHANGE:
             shell_system_colors_changed();
             break;
+        case SHELL_WM_UIA_FOCUS:
+            s_uia_focus_push_thread = GetCurrentThreadId();
+            shell_push(58, (int)w, 0, 0);
+            return 0;
         case WM_GETOBJECT:
             if (s_shell_getobject_hook) {
                 LRESULT l_answer = 0;
@@ -551,6 +564,7 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             }
             break;
         case WM_DESTROY:
+            if (s_shell_destroy_hook) s_shell_destroy_hook(h);
             KillTimer(h, 1);
             PostQuitMessage(0);
             return 0;

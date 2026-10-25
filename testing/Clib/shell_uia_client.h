@@ -118,6 +118,59 @@ static int shell_uia_client_read(void* l_hwnd, wchar_t* l_out, int l_cap) {
     return l_job.l_len;
 }
 
+/* Call node `l_id''s SetFocus from a worker thread, as UI Automation would,
+   pumping meanwhile; answers 1 when the call returned S_OK. */
+typedef struct shell_uia_focus_job_s { int l_id; HRESULT l_hr; volatile LONG l_step; } shell_uia_focus_job;
+
+static DWORD WINAPI shell_uia_focus_main(LPVOID l_arg) {
+    shell_uia_focus_job* l_job = (shell_uia_focus_job*)l_arg;
+    shell_uia_el* l_el = shell_uia_new(l_job->l_id);
+    IRawElementProviderFragment* l_f;
+    l_job->l_step = 1;
+    if (!l_el) { l_job->l_hr = E_OUTOFMEMORY; return 0; }
+    l_f = (IRawElementProviderFragment*)&l_el->l_fragment;
+    l_job->l_step = 2;
+    l_job->l_hr = l_f->lpVtbl->SetFocus(l_f);
+    l_job->l_step = 3;
+    l_f->lpVtbl->Release(l_f);
+    l_job->l_step = 4;
+    return 0;
+}
+
+static int shell_uia_focus_from_worker(int l_id) {
+    shell_uia_focus_job l_job;
+    HANDLE l_thread;
+    MSG l_msg;
+    DWORD l_start;
+    l_job.l_id = l_id;
+    l_job.l_hr = E_FAIL;
+    l_job.l_step = 0;
+    l_thread = CreateThread(0, 0, shell_uia_focus_main, &l_job, 0, 0);
+    if (!l_thread) return -1;
+    l_start = GetTickCount();
+    /* pump while waiting: the posted focus message must reach the window
+       procedure, and an unread message keeps MsgWait answering 'input' */
+    while (WaitForSingleObject(l_thread, 0) != WAIT_OBJECT_0) {
+        MsgWaitForMultipleObjects(1, &l_thread, FALSE, 50, QS_ALLINPUT);
+        while (PeekMessageW(&l_msg, 0, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&l_msg);
+            DispatchMessageW(&l_msg);
+        }
+        if (GetTickCount() - l_start > 5000) return -20 - (int)l_job.l_step;
+    }
+    CloseHandle(l_thread);
+        /* then let the posted message reach the window procedure */
+    while (PeekMessageW(&l_msg, 0, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&l_msg);
+        DispatchMessageW(&l_msg);
+    }
+    return (int)l_job.l_hr;
+}
+
+static int shell_uia_focus_pushed_on_this_thread(void) {
+    return s_uia_focus_push_thread == GetCurrentThreadId() ? 1 : 0;
+}
+
 /* A hidden, offscreen probe window on the shipped window procedure. */
 static void* shell_uia_probe_window(void) {
     WNDCLASSEXW l_wc;

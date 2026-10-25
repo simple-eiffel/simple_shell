@@ -132,6 +132,13 @@ feature -- Status
 			Result := c_clients_listening /= 0
 		end
 
+	served_window: POINTER
+			-- The window the table is served for; `default_pointer' when none
+			-- (published before the window opened, or never).
+		do
+			Result := c_served_window
+		end
+
 	served_focus: INTEGER
 			-- The node last told to hold the focus.
 		do
@@ -211,7 +218,11 @@ feature -- Events
 
 	Event_focus_request: INTEGER = 58
 			-- The queue event for a client asking to move the focus: first
-			-- field the node id.
+			-- field the node id. Pushed on the pump thread.
+
+	Event_refresh_request: INTEGER = 59
+			-- The queue event for a client asking for the tree: republish.
+			-- Once until the next `commit'.
 
 feature -- Control types (UI Automation's UIA_*ControlTypeId)
 
@@ -245,6 +256,7 @@ feature -- Control types (UI Automation's UIA_*ControlTypeId)
 	Role_data_grid: INTEGER = 50028
 	Role_data_item: INTEGER = 50029
 	Role_document: INTEGER = 50030
+	Role_window: INTEGER = 50032
 	Role_pane: INTEGER = 50033
 	Role_header: INTEGER = 50034
 	Role_header_item: INTEGER = 50035
@@ -275,6 +287,13 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell_uia.h%""
 		alias
 			"return shell_uia_row_text((int)$a_i, (int)$a_which, (wchar_t*)$a_out, (int)$a_cap);"
+		end
+
+	c_served_window: POINTER
+		external
+			"C inline use %"simple_shell_uia.h%""
+		alias
+			"return shell_uia_served_window();"
 		end
 
 	c_served_focus: INTEGER

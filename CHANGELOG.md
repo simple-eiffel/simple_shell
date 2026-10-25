@@ -2,6 +2,16 @@
 
 All notable changes to simple_shell.
 
+## 1.20.1 - 2026-10-25
+
+### Changed
+- Documentation only, from the design scan since a8de272 (no HIGH
+  findings): the dispatch comment lists events 55 and 56, and
+  `Event_contrast_changed` says to read event 56 as "look again" (one flip
+  can arrive twice, and a light/dark flip arrives with 0). The scan's
+  shared event-number ancestor (`SHELL_EVENTS`) waits for Larry's word.
+  Report: `.eiffel-workflow/evidence/design-scan-since-a8de272.md`.
+
 ## 1.20.0 - 2026-10-25
 
 ### Added

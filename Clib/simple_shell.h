@@ -308,6 +308,34 @@ static void shell_system_colors_changed(void) {
     shell_push(56, shell_high_contrast_on(), 0, 0);
 }
 
+/* Reduced motion (1.21.0, GW-14): Settings > Accessibility > Visual
+   effects > Animation effects. SPI_GETCLIENTAREAANIMATION is Vista and up
+   (spelled out for the 0x0500 target); where it fails, motion is not
+   reduced. */
+#ifndef SPI_GETCLIENTAREAANIMATION
+#define SPI_GETCLIENTAREAANIMATION 0x1042
+#endif
+#ifndef SPI_SETCLIENTAREAANIMATION
+#define SPI_SETCLIENTAREAANIMATION 0x1043
+#endif
+
+static int shell_reduces_motion(void) {
+    BOOL l_animate = TRUE;
+    if (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &l_animate, 0))
+        return 0;
+    return l_animate ? 0 : 1;
+}
+
+/* WM_SETTINGCHANGE names SPI_SETCLIENTAREAANIMATION in wParam when the
+   setting flips: push 57 with it as it now stands (1 reduced). */
+static int shell_motion_changed(unsigned int l_spi) {
+    if (l_spi == SPI_SETCLIENTAREAANIMATION) {
+        shell_push(57, shell_reduces_motion(), 0, 0);
+        return 1;
+    }
+    return 0;
+}
+
 /* Wake (1.18.0, GW-26): any thread - a SCOOP worker's processor - makes
    the GUI's pump return now with event 54, instead of waiting up to a
    heartbeat. Posted to the main window when there is one: a window
@@ -505,6 +533,7 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_SETTINGCHANGE:
             shell_setting_changed((const wchar_t*)l);
             shell_contrast_changed((unsigned int)w);
+            shell_motion_changed((unsigned int)w);
             break;
         case WM_SYSCOLORCHANGE:
             shell_system_colors_changed();

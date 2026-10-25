@@ -706,6 +706,56 @@ feature -- Appearance (1.16.0, GW-27)
 			assert_integers_equal ("the window names the same event", a.Event_contrast_changed, w.Event_contrast_changed)
 		end
 
+	test_motion_change_is_queued
+			-- The WM_SETTINGCHANGE path: SPI_SETCLIENTAREAANIMATION pushes
+			-- event 57 carrying the setting as it stands; another action
+			-- pushes nothing.
+		local
+			a: SHELL_APPEARANCE
+			w: SHELL_TEST_WINDOW
+		do
+			create a
+			create w
+			assert_true ("the setting is reported", a.report_motion_change (a.Spi_set_client_area_animation))
+			assert_true ("event 57 carries it", w.drain_event (a.Event_motion_changed, a.system_reduces_motion.to_integer))
+			assert_false ("the contrast action is not", a.report_motion_change (a.Spi_set_high_contrast))
+			assert_false ("and nothing was queued for it",
+				w.drain_event (a.Event_motion_changed, 0) or w.drain_event (a.Event_motion_changed, 1))
+			assert_integers_equal ("the window names the same event", a.Event_motion_changed, w.Event_motion_changed)
+		end
+
+	test_reduced_motion_reads_the_windows_setting
+			-- `system_reduces_motion' agrees with PowerShell's own call of
+			-- SystemParametersInfo (a second, independent reading).
+		local
+			a: SHELL_APPEARANCE
+			env: EXECUTION_ENVIRONMENT
+			f: PLAIN_TEXT_FILE
+			l_path: STRING_32
+			l_out: STRING
+		do
+			create a
+			create env
+			l_path := temp_path ("shell_motion.txt")
+			env.system ("C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -Command %"Add-Type -Namespace W -Name S -MemberDefinition '[DllImport(\%"user32.dll\%")] public static extern bool SystemParametersInfo(uint a, uint b, ref bool c, uint d);'; $v = $true; [void][W.S]::SystemParametersInfo(0x1042, 0, [ref]$v, 0); $v%" > %"" + l_path.to_string_8 + "%" 2>&1")
+			create f.make_with_name (l_path)
+			assert ("PowerShell answered", f.exists)
+			create l_out.make_empty
+			f.open_read
+			from until f.end_of_file loop
+				f.read_line
+				if f.last_string.has_substring ("True") or f.last_string.has_substring ("False") then
+					l_out := f.last_string.twin
+				end
+			end
+			f.close
+			f.delete
+			l_out.left_adjust
+			l_out.right_adjust
+			assert ("PowerShell read the setting: " + l_out, l_out.same_string ("True") or l_out.same_string ("False"))
+			assert ("reduced exactly when animation is off", a.system_reduces_motion = l_out.same_string ("False"))
+		end
+
 	test_dark_title_bar_on_a_real_window
 			-- DWM accepts dark and light captions on a real (hidden,
 			-- offscreen) window; a window not yet open only remembers.

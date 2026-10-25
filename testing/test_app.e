@@ -44,6 +44,8 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_high_contrast_reads_the_windows_setting, "high_contrast_reads_the_windows_setting")
 			run_test (agent t.test_system_colors_read_the_windows_palette, "system_colors_read_the_windows_palette")
 			run_test (agent t.test_contrast_change_is_queued, "contrast_change_is_queued")
+			run_test (agent t.test_motion_change_is_queued, "motion_change_is_queued")
+			run_test (agent t.test_reduced_motion_reads_the_windows_setting, "reduced_motion_reads_the_windows_setting")
 			run_test (agent t.test_dark_title_bar_on_a_real_window, "dark_title_bar_on_a_real_window")
 			run_test (agent t.test_clipboard_image_roundtrip, "clipboard_image_roundtrip")
 			run_test (agent t.test_clipboard_image_survives_repeated_round_trips, "clipboard_image_survives_repeated_round_trips")

@@ -2,6 +2,21 @@
 
 All notable changes to simple_shell.
 
+## 1.24.1 - 2026-10-25
+
+### Fixed (design scan 20, since 1260e13; report in simple_widgets)
+
+- `SHELL_PRINTER`'s one document per process was modelled per instance:
+  any instance could end or abort another's document. Now
+  `owns_document` says whether the open document is this printer's, and
+  pages, `dc`, `end_document` and `abort_document` require it. The C side
+  claims the document with an interlocked flag (released on end, abort or
+  a failed begin), so two processors cannot both begin one, and
+  `begin_document` no longer has a check-then-call `not_printing`
+  precondition - it answers False when another document is open. Test
+  `scan20_a_printer_owns_only_its_own_document` failed on the old code
+  (the second printer could not even ask) and passes now. 56 pass.
+
 ## 1.24.0 - 2026-10-25
 
 ### Added (GW-20: printing)

@@ -1404,6 +1404,26 @@ feature -- Printing (GW-20, 1.24.0)
 			end
 		end
 
+	test_scan20_a_printer_owns_only_its_own_document
+			-- One document at a time per process: a second printer cannot
+			-- begin one, and does not own (so cannot end or abort) the first.
+		local
+			a, b: SHELL_PRINTER
+			l_name: STRING_32
+		do
+			create a.make
+			create b.make
+			l_name := {STRING_32} "Microsoft Print to PDF"
+			if a.has_printer (l_name) then
+				assert_true ("the first began", a.begin_document (l_name, "first", temp_path ("simple_shell_scan20.pdf"), a.Paper_letter, False))
+				assert_false ("a second cannot begin", b.begin_document (l_name, "second", temp_path ("simple_shell_scan20b.pdf"), b.Paper_letter, False))
+				assert_true ("the first owns its document", a.owns_document)
+				assert_false ("the second does not", b.owns_document)
+				a.abort_document
+				assert_false ("thrown away by its owner", a.is_printing or a.owns_document)
+			end
+		end
+
 feature {NONE} -- Printing test support
 
 	c_paint_block (a_dc: POINTER; a_dpi_x, a_dpi_y: INTEGER)

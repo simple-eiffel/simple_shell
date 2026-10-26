@@ -140,7 +140,7 @@ keystroke. See *Build and test*.
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
 offscreen, the spell checker is consulted. 42/42 under full DBC **at an
-interactive console** (1.19.0; 55 tests at 1.24.0). Run it from a locked or
+interactive console** (1.19.0; 56 tests at 1.24.1). Run it from a locked or
 headless session and `desktop_grab`, `input_keys_are_accepted` and
 `panel_capture_exclusion_really_hides` fail by design - Windows refuses
 BitBlt and SendInput there (OS error 5), and that refusal is a status the

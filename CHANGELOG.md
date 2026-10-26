@@ -2,6 +2,31 @@
 
 All notable changes to simple_shell.
 
+## 1.23.0 - 2026-10-25
+
+### Added (GW-22: framed panels, the floating windows of a study layout)
+
+- `SHELL_PANEL.open_framed (x, y, width, height, title)`: a panel with a
+  caption and a sizing border that takes the focus when clicked, owned by
+  the main window (above it, minimized with it, no taskbar button) and never
+  topmost - a pane torn off onto a second monitor. `is_framed`, `title`,
+  `set_title`, `client_width`, `client_height`, `is_topmost`.
+- New events (in `SHELL_EVENTS`; `SHELL_PANEL` names them short): 60 key
+  (through the main window's own key filter, Alt door included), 61 char,
+  62 close request (Alt+F4 or the close box; the window stays until
+  `close`), 63 activated (1 or 0), 64 double click, 65 leave. A framed
+  panel's 48 carries the client size on every WM_SIZE, live while sizing;
+  47 still arrives when a move ends.
+- Messages of window creation read slot 0 before the slot is stored; every
+  framed branch checks `s_shell_panel[slot] == h` first, so another panel in
+  slot 0 is never told about them.
+- Test door `simulate_message` (the panel's real window procedure). Test
+  `gw22_framed_panel_is_a_floating_window`, with a plain panel beside it
+  keeping its old behaviour (topmost, never activated, no characters).
+  53 pass.
+- Open: a framed panel shows the arrow cursor only (no per-panel cursor
+  kind yet).
+
 ## 1.22.2 - 2026-10-25
 
 ### Changed (one registry of event numbers)

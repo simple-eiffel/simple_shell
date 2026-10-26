@@ -1273,6 +1273,60 @@ feature -- The Alt door
 			assert ("F10 arrived as key-down 121", w.drain_key (121))
 		end
 
+feature -- Framed panels (GW-22, 1.23.0)
+
+	test_gw22_framed_panel_is_a_floating_window
+			-- A REAL framed panel offscreen and never shown on screen: caption and
+			-- border (client smaller than the window), takes the focus when
+			-- clicked, not topmost, titled; its keys, characters, double clicks,
+			-- leaves, activation and close requests reach the queue with its slot,
+			-- the close request leaving the window open; its 48 is the client
+			-- size. A plain panel beside it answers none of these (before/after).
+		local
+			p, q: SHELL_PANEL
+			w: SHELL_TEST_WINDOW
+		do
+			create p.make
+			create q.make
+			create w
+			from until not w.drain_event (0, 0) loop end
+			p.open_framed (-3000, -3000, 400, 300, {STRING_32} "Word Study")
+			assert_true ("framed", p.is_open and p.is_framed)
+			assert_true ("titled", p.title.same_string ("Word Study"))
+			p.set_title ({STRING_32} "Cross references")
+			assert_true ("retitled", p.title.same_string ("Cross references"))
+			assert_false ("never topmost", p.is_topmost)
+			assert_true ("a border and a caption", p.client_width < 400 and p.client_height < 300 - 10)
+			assert_integers_equal ("a click activates it (MA_ACTIVATE)", 1, p.simulate_message (0x0021, 0, 0))
+			p.place (-3000, -3000, 500, 360)
+			assert_true ("48 carries the client size", w.drain_event (p.Event_resized, p.client_width)
+				and w.last_second = p.client_height and w.last_extra = p.slot)
+			p.simulate_message (0x0100, 0x74, 0).do_nothing
+			assert_true ("F5 as a key (60)", w.drain_event (p.Event_key, 0x74) and w.last_extra = p.slot)
+			p.simulate_message (0x0102, 97, 0).do_nothing
+			assert_true ("a as a character (61)", w.drain_event (p.Event_char, 97) and w.last_extra = p.slot)
+			p.simulate_message (0x0203, 0, 20 * 65536 + 10).do_nothing
+			assert_true ("a double click (64)", w.drain_event (p.Event_double, 10) and w.last_second = 20)
+			p.simulate_message (0x02A3, 0, 0).do_nothing
+			assert_true ("the pointer left (65)", w.drain_event (p.Event_leave, 0))
+			p.simulate_message (0x0006, 0, 0).do_nothing
+			assert_true ("deactivated (63)", w.drain_event (p.Event_activated, 0) and w.last_extra = p.slot)
+			p.simulate_message (0x0010, 0, 0).do_nothing
+			assert_true ("Alt+F4 asks (62)", w.drain_event (p.Event_close_request, 0) and w.last_extra = p.slot)
+			assert_true ("and the window stays", p.is_open and p.client_width > 0)
+				-- before/after: a plain panel keeps its old behaviour
+			q.open (-3000, -3000, 200, 100)
+			assert_true ("the plain panel is topmost", q.is_topmost and not q.is_framed)
+			assert_integers_equal ("a plain panel never takes the focus (MA_NOACTIVATE)", 3, q.simulate_message (0x0021, 0, 0))
+			assert_true ("its client is all of it", q.client_width = 200 and q.client_height = 100)
+			q.simulate_message (0x0102, 97, 0).do_nothing
+			q.simulate_message (0x0100, 0x74, 0).do_nothing
+			assert_false ("no character from a plain panel", w.drain_event (q.Event_char, 97))
+			q.close
+			p.close
+			assert_false ("closed, no longer framed", p.is_framed)
+		end
+
 feature -- The event registry (2026-10-25)
 
 	test_event_numbers_never_collide
@@ -1288,7 +1342,7 @@ feature -- The event registry (2026-10-25)
 				assert_false ("event " + ic_event.out + " numbered once", l_seen.has (ic_event))
 				l_seen.extend (ic_event)
 			end
-			assert_integers_equal ("the next free number follows the last", 60, l_events.next_free_event)
+			assert_integers_equal ("the next free number follows the last", 66, l_events.next_free_event)
 			assert_integers_equal ("panel press", {SHELL_EVENTS}.Event_panel_press, {SHELL_PANEL}.Event_press)
 			assert_integers_equal ("tray click", {SHELL_EVENTS}.Event_tray_click, {SHELL_TRAY}.Event_click)
 			assert_integers_equal ("appearance", {SHELL_EVENTS}.Event_appearance_changed, {SHELL_APPEARANCE}.Event_changed)

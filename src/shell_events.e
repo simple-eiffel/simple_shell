@@ -75,6 +75,23 @@ feature -- Panels (`SHELL_PANEL'; the panel's slot in the third field)
 	Event_panel_dropped: INTEGER = 50
 			-- Files dropped on the panel, at (x, y) in it (1.14.0).
 
+feature -- Framed panels (`SHELL_PANEL.open_framed', 1.23.0; the slot in the third field)
+
+	Event_panel_key: INTEGER = 60
+			-- A key down, its virtual key first; filtered as the main
+			-- window's are (stepping keys, accelerator chords, Alt+letter).
+	Event_panel_char: INTEGER = 61
+			-- A character (a UTF-16 unit) typed into the panel.
+	Event_panel_close_request: INTEGER = 62
+			-- Alt+F4 or the caption's close box; the window stays until
+			-- `SHELL_PANEL.close'.
+	Event_panel_activated: INTEGER = 63
+			-- The panel took (1) or lost (0) the focus.
+	Event_panel_double: INTEGER = 64
+			-- A double click at (x, y).
+	Event_panel_leave: INTEGER = 65
+			-- The pointer left the panel.
+
 feature -- The system
 
 	Event_hotkey: INTEGER = 51
@@ -121,10 +138,12 @@ feature -- The registry
 				Event_panel_press, Event_panel_release, Event_panel_move, Event_panel_expose,
 				Event_panel_wheel, Event_panel_right_press, Event_panel_moved, Event_panel_resized,
 				Event_panel_moving, Event_panel_dropped,
+				Event_panel_key, Event_panel_char, Event_panel_close_request, Event_panel_activated,
+				Event_panel_double, Event_panel_leave,
 				Event_hotkey, Event_tray_click, Event_appearance_changed, Event_wake, Event_dwell,
 				Event_contrast_changed, Event_motion_changed, Event_focus_request, Event_refresh_request>>
 		ensure
-			every_event: Result.count = 46
+			every_event: Result.count = 52
 		end
 
 	next_free_event: INTEGER

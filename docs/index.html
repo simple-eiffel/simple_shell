@@ -96,7 +96,7 @@ end</pre>
   <h2>The Alt door (1.9.3)</h2>
   <p class="muted">Windows routes a key pressed while Alt is held to <code>WM_SYSKEYDOWN</code>, not <code>WM_KEYDOWN</code>. Until 1.9.3 this header answered that message for the OEM plus/minus pair alone and let every other syskey fall through to <code>DefWindowProc</code>, so <code>SHELL_KEYS.alt_down</code> reported Alt perfectly while <strong>Alt+F never reached the window - it opened the system menu</strong>, and a menu mnemonic could not be built on this shell at all. Now <strong>Alt+letter, Alt+digit, the Alt step keys and F10</strong> arrive as the ordinary key-down event 4 with the virtual key in <code>a_x</code>, and the <code>WM_SYSCHAR</code> behind each is swallowed so nothing beeps and no system menu opens behind the application's back. <strong>Alt+F4, Alt+Space, Alt+Enter, Alt+Tab and Alt alone stay with <code>DefWindowProc</code></strong> - an application that ate those would be the badly behaved one, and a test asserts on that half too. The policy is two pure predicates the window procedure does nothing but consult, so it is provable headlessly: what remains checked by inspection is only that Windows delivers the message at all.</p>
 
-  <h2>Recent additions (1.16.0 - 1.22.2, for simple_bible)</h2>
+  <h2>Recent additions (1.16.0 - 1.23.0, for simple_bible)</h2>
   <table>
     <tr><th>Version</th><th>What</th></tr>
     <tr><td><code>1.16.0</code></td><td>Follow Windows light/dark: <code>SHELL_APPEARANCE</code>, event 53, dark title bar.</td></tr>
@@ -107,6 +107,7 @@ end</pre>
     <tr><td><code>1.21.0</code></td><td>Reduced motion: <code>system_reduces_motion</code>, event 57.</td></tr>
     <tr><td><code>1.22.0</code></td><td>UI Automation bridge: <code>SHELL_ACCESSIBILITY</code>, <code>simple_shell_uia.h</code>.</td></tr>
     <tr><td><code>1.22.2</code></td><td>One registry of event numbers: <code>SHELL_EVENTS</code>.</td></tr>
+    <tr><td><code>1.23.0</code></td><td>Framed panels (GW-22): <code>SHELL_PANEL.open_framed</code>, floating windows with focus and events 60-65.</td></tr>
   </table>
 
   <h2>The blocking law (1.9.2)</h2>

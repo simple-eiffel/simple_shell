@@ -22,6 +22,14 @@ note
 		`accepts_files' reports files dropped on it as event 50 (x, y of the drop);
 		the paths wait in `SHELL_WINDOW.take_dropped_paths'.
 		Paint through `dc' / `release_dc'.
+
+		FRAMED PANELS (1.23.0, GW-22): `open_framed' makes a floating window
+		instead - a caption with `title', a sizing border, the focus when
+		clicked, owned by the main window (above it, minimized with it, no
+		taskbar button) and never topmost: a study pane on a second monitor.
+		It also pushes 60 key, 61 char, 62 close request (the window stays),
+		63 activated, 64 double and 65 leave, and its 48 carries the CLIENT
+		size (`client_width', `client_height'), live while sizing.
 	]"
 
 class
@@ -39,7 +47,13 @@ inherit
 			Event_panel_moved as Event_moved,
 			Event_panel_resized as Event_resized,
 			Event_panel_moving as Event_moving,
-			Event_panel_dropped as Event_dropped
+			Event_panel_dropped as Event_dropped,
+			Event_panel_key as Event_key,
+			Event_panel_char as Event_char,
+			Event_panel_close_request as Event_close_request,
+			Event_panel_activated as Event_activated,
+			Event_panel_double as Event_double,
+			Event_panel_leave as Event_leave
 		end
 
 create
@@ -187,6 +201,45 @@ feature -- Status
 	bottom_sizes_on_press: BOOLEAN
 			-- Does a plain press within the grip of the bottom edge size the panel (its top stays)?
 
+	is_framed: BOOLEAN
+			-- Was the panel opened with a caption and border (`open_framed')?
+
+	title: STRING_32
+			-- A framed panel's caption.
+		attribute
+			create Result.make_empty
+		end
+
+	client_width: INTEGER
+			-- The drawable width: `width' less a framed panel's border.
+		require
+			open: is_open
+		local
+			l_w, l_h: INTEGER
+		do
+			c_client_size (slot, $l_w, $l_h)
+			Result := l_w
+		end
+
+	client_height: INTEGER
+			-- The drawable height: `height' less a framed panel's caption and border.
+		require
+			open: is_open
+		local
+			l_w, l_h: INTEGER
+		do
+			c_client_size (slot, $l_w, $l_h)
+			Result := l_h
+		end
+
+	is_topmost: BOOLEAN
+			-- Does the panel stay above every other window? (All but framed panels.)
+		require
+			open: is_open
+		do
+			Result := c_is_topmost (slot) = 1
+		end
+
 	is_capture_excluded: BOOLEAN
 			-- Is the panel left out of screen captures?
 		require
@@ -217,6 +270,45 @@ feature -- Lifecycle
 			geometry_when_open: is_open implies (x = a_x and y = a_y and width = a_width and height = a_height)
 			opaque_when_open: is_open implies opacity = 255
 			hidden_when_open: is_open implies not is_visible
+		end
+
+	open_framed (a_x, a_y, a_width, a_height: INTEGER; a_title: READABLE_STRING_GENERAL)
+			-- Create a framed panel, hidden, at the given outer geometry: a floating
+			-- window titled `a_title' (1.23.0). Stays closed when all `Max_panels'
+			-- slots are in use.
+		require
+			closed: not is_open
+			sane_size: a_width > 0 and a_height > 0
+		local
+			l_ns: NATIVE_STRING
+		do
+			create l_ns.make (a_title)
+			slot := c_open_framed (a_x, a_y, a_width, a_height, l_ns.item)
+			if is_open then
+				set_geometry (a_x, a_y, a_width, a_height)
+				is_framed := True
+				create title.make_from_string_general (a_title)
+			end
+		ensure
+			framed_when_open: is_open implies is_framed and not is_topmost
+			titled_when_open: is_open implies title.same_string_general (a_title)
+			geometry_when_open: is_open implies (x = a_x and y = a_y and width = a_width and height = a_height)
+			hidden_when_open: is_open implies not is_visible
+		end
+
+	set_title (a_title: READABLE_STRING_GENERAL)
+			-- A framed panel's caption.
+		require
+			open: is_open
+			framed: is_framed
+		local
+			l_ns: NATIVE_STRING
+		do
+			create l_ns.make (a_title)
+			c_set_title (slot, l_ns.item)
+			create title.make_from_string_general (a_title)
+		ensure
+			set: title.same_string_general (a_title)
 		end
 
 	show (a_x, a_y, a_width, a_height: INTEGER)
@@ -262,6 +354,7 @@ feature -- Lifecycle
 		do
 			c_close (slot)
 			slot := -1
+			is_framed := False
 			is_draggable := False
 			is_resizable := False
 			drags_on_press := False
@@ -271,6 +364,7 @@ feature -- Lifecycle
 		ensure
 			closed: not is_open
 			plain: not drags_on_press and not sides_size_on_press and not bottom_sizes_on_press and drag_axis = Axis_free
+			not_framed: not is_framed
 		end
 
 feature -- Appearance
@@ -327,6 +421,15 @@ feature -- Appearance
 		do
 			create l_ns.make (a_paths)
 			c_try_drop (slot, a_x, a_y, l_ns.item)
+		end
+
+	simulate_message (a_message, a_wparam, a_lparam: INTEGER): INTEGER
+			-- Send `a_message' through the panel's real window procedure and
+			-- answer what it returned: the test door to events 60 - 65.
+		require
+			open: is_open
+		do
+			Result := c_send (slot, a_message, a_wparam, a_lparam)
 		end
 
 	set_draggable (a_on: BOOLEAN)
@@ -534,6 +637,31 @@ feature {NONE} -- Externals
 	c_open (a_x, a_y, a_w, a_h: INTEGER): INTEGER
 		external "C inline use %"simple_shell.h%""
 		alias "return shell_panel_open($a_x, $a_y, $a_w, $a_h);"
+		end
+
+	c_open_framed (a_x, a_y, a_w, a_h: INTEGER; a_title: POINTER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_open_framed($a_x, $a_y, $a_w, $a_h, (const wchar_t*)$a_title);"
+		end
+
+	c_set_title (a_slot: INTEGER; a_title: POINTER)
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_set_title($a_slot, (const wchar_t*)$a_title);"
+		end
+
+	c_client_size (a_slot: INTEGER; a_w, a_h: TYPED_POINTER [INTEGER])
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_client_size($a_slot, (int*)$a_w, (int*)$a_h);"
+		end
+
+	c_send (a_slot, a_msg, a_w, a_l: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_send($a_slot, $a_msg, $a_w, $a_l);"
+		end
+
+	c_is_topmost (a_slot: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_is_topmost($a_slot);"
 		end
 
 	c_show (a_slot, a_x, a_y, a_w, a_h: INTEGER)

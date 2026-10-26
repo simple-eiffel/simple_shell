@@ -786,6 +786,12 @@ static void shell_close_window(void) {
     if (s_shell_hwnd) DestroyWindow(s_shell_hwnd);
 }
 
+/* The main window's caption, changed while it is up (1.25.0: simple_bible's
+   title names the chapter and version it reads). No window yet: nothing. */
+static void shell_set_caption(const wchar_t* l_title) {
+    if (s_shell_hwnd) SetWindowTextW(s_shell_hwnd, l_title);
+}
+
 /* ---- global hotkeys (1.11.0) ----
    RegisterHotKey with a NULL window binds the hotkey to the CALLING
    THREAD: Windows posts WM_HOTKEY to the thread queue with hwnd = 0,

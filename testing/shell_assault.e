@@ -1347,6 +1347,71 @@ feature -- Framed panels (GW-22, 1.23.0)
 			q.close
 		end
 
+feature -- Printing (GW-20, 1.24.0)
+
+	test_gw20_printers_and_a_document_written_to_a_file
+			-- The printers are listed and the default is one of them. When the
+			-- Windows file printer is installed, a Letter page is printed to a
+			-- file with no dialog - the PDF arrives - and a landscape document
+			-- turns the sheet.
+		local
+			pr: SHELL_PRINTER
+			l_file_printer, l_path: STRING_32
+			l_file: RAW_FILE
+			env: EXECUTION_ENVIRONMENT
+			l_tries: INTEGER
+			l_inches: REAL_64
+		do
+			create pr.make
+			create env
+			assert_true ("the default is listed (or there is none)",
+				pr.default_printer.is_empty or else pr.has_printer (pr.default_printer))
+			l_file_printer := {STRING_32} "Microsoft Print to PDF"
+			if pr.has_printer (l_file_printer) then
+				l_path := temp_path ("simple_shell_gw20_print.pdf")
+				create l_file.make_with_name (l_path)
+				if l_file.exists then
+					l_file.delete
+				end
+				assert_true ("began", pr.begin_document (l_file_printer, "simple_shell GW-20", l_path, pr.Paper_letter, False))
+				assert_true ("a resolution", pr.dots_per_inch_x > 0 and pr.dots_per_inch_y > 0)
+				l_inches := pr.paper_width / pr.dots_per_inch_x
+				assert_true ("Letter is 8.5 inches across: " + l_inches.out, (l_inches - 8.5).abs < 0.1)
+				assert_true ("portrait", pr.paper_width < pr.paper_height)
+				assert_true ("the printable part fits on the sheet",
+					pr.printable_width <= pr.paper_width and pr.unprintable_left >= 0)
+				assert_true ("a page opened", pr.begin_page and pr.is_in_page)
+				c_paint_block (pr.dc, pr.dots_per_inch_x, pr.dots_per_inch_y)
+				assert_true ("the page closed", pr.end_page and not pr.is_in_page)
+				assert_true ("the spooler took it", pr.end_document and not pr.is_printing)
+				from
+				until
+					(l_file.exists and then l_file.count > 4) or l_tries > 300
+				loop
+					env.sleep (100_000_000)
+					l_tries := l_tries + 1
+				end
+				assert_true ("the PDF was written", l_file.exists and then l_file.count > 4)
+				l_file.open_read
+				l_file.read_stream (4)
+				assert_true ("it is a PDF", l_file.last_string.same_string ("%%PDF"))
+				l_file.close
+				l_file.delete
+				assert_true ("landscape began", pr.begin_document (l_file_printer, "landscape", temp_path ("simple_shell_gw20_unused.pdf"), pr.Paper_letter, True))
+				assert_true ("landscape turns the sheet", pr.paper_width > pr.paper_height)
+				pr.abort_document
+				assert_false ("thrown away", pr.is_printing)
+			end
+		end
+
+feature {NONE} -- Printing test support
+
+	c_paint_block (a_dc: POINTER; a_dpi_x, a_dpi_y: INTEGER)
+			-- An inch-square black block an inch in.
+		external "C inline use <windows.h>"
+		alias "PatBlt((HDC)$a_dc, $a_dpi_x, $a_dpi_y, $a_dpi_x, $a_dpi_y, BLACKNESS);"
+		end
+
 feature -- The event registry (2026-10-25)
 
 	test_event_numbers_never_collide

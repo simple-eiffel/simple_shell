@@ -70,6 +70,7 @@ end
 | `SHELL_HOTKEYS` | global hotkeys as queue event 51; a modifier is required unless a chord is registered bare on purpose (1.11.0) |
 | `SHELL_MONITORS` | snapshot of the displays: bounds, work area, primary, device name (1.11.0) |
 | `SHELL_ACCESSIBILITY` | the UI Automation bridge: publish a widget table (ids, parents, control types, names, values, bounds), served to screen readers behind WM_GETOBJECT from `Clib/simple_shell_uia.h`; focus events; event 58 for a client's focus request (1.22.0) |
+| `SHELL_PRINTER` | printers by name, the default printer, and one document at a time: paper, orientation, pages, device metrics, an output file for file printers; no dialog (1.24.0) |
 | `SHELL_EVENTS` | every queue event number, named, in one place, with `registry` and `next_free_event`; the owning classes inherit it (1.22.2) |
 | `SHELL_APPEARANCE` | the Windows light/dark app setting (`system_prefers_dark`), event 53 when it flips, and a dark or light DWM caption (1.16.0); the high-contrast switch (`system_high_contrast`), the system colors (`system_color`), event 56 when either changes (1.20.0); the animation setting (`system_reduces_motion`), event 57 (1.21.0) |
 | `SHELL_WAKE` | `wake` from any SCOOP processor puts event 54 on the GUI's queue at once, coalesced while one is pending; to the main window, or to a thread claimed with `claim_pump_thread` (1.18.0) |
@@ -139,7 +140,7 @@ keystroke. See *Build and test*.
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
 offscreen, the spell checker is consulted. 42/42 under full DBC **at an
-interactive console** (1.19.0; 54 tests at 1.23.1). Run it from a locked or
+interactive console** (1.19.0; 55 tests at 1.24.0). Run it from a locked or
 headless session and `desktop_grab`, `input_keys_are_accepted` and
 `panel_capture_exclusion_really_hides` fail by design - Windows refuses
 BitBlt and SendInput there (OS error 5), and that refusal is a status the

@@ -53,6 +53,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_event_numbers_never_collide, "event_numbers_never_collide")
 			run_test (agent t.test_gw22_framed_panel_is_a_floating_window, "gw22_framed_panel_is_a_floating_window")
 			run_test (agent t.test_scan19_a_panel_destroyed_behind_its_back_is_closed, "scan19_a_panel_destroyed_behind_its_back_is_closed")
+			run_test (agent t.test_gw20_printers_and_a_document_written_to_a_file, "gw20_printers_and_a_document_written_to_a_file")
 			run_test (agent t.test_dark_title_bar_on_a_real_window, "dark_title_bar_on_a_real_window")
 			run_test (agent t.test_clipboard_image_roundtrip, "clipboard_image_roundtrip")
 			run_test (agent t.test_clipboard_image_survives_repeated_round_trips, "clipboard_image_survives_repeated_round_trips")

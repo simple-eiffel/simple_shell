@@ -1127,12 +1127,28 @@ SHELL_SHARED int  s_shell_panel_side_grip[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 
 SHELL_SHARED int  s_shell_panel_bottom_grip[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_start_x[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_start_y[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+/* 1.23.0 (GW-22): a FRAMED panel is a floating window - caption, sizing
+   border, takes the focus, owned by the main window (above it, minimized
+   with it, no taskbar button) and never topmost. Beside the panel events it
+   pushes 60 key(vk) and 61 char(code) through the main window's own key
+   filter, 62 close request (Alt+F4 or the caption's X; the window stays),
+   63 activated(1 or 0), 64 double(x,y), 65 leave; its 48 carries the CLIENT
+   size, live while sizing, and 47 still arrives when a move ends. */
+SHELL_SHARED int  s_shell_panel_framed[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+SHELL_SHARED int  s_shell_panel_tracking[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 typedef BOOL (WINAPI *shell_set_affinity_fn)(HWND, DWORD);
 typedef BOOL (WINAPI *shell_get_affinity_fn)(HWND, DWORD*);
 
 static HWND shell_panel_hwnd(int l_slot) {
     return (l_slot >= 0 && l_slot < SHELL_PANELS) ? s_shell_panel[l_slot] : 0;
+}
+
+/* Is `h' the framed panel in `l_slot'? False during CreateWindowExW, before
+   the slot is stored - the messages of creation then read slot 0, which may
+   belong to another panel. */
+static int shell_panel_is_framed(int l_slot, HWND h) {
+    return l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel[l_slot] == h && s_shell_panel_framed[l_slot];
 }
 
 /* What a Shift+press at client (x, y) does: HTCAPTION moves; an edge or
@@ -1188,7 +1204,52 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     int l_x = (int)(short)LOWORD(l), l_y = (int)(short)HIWORD(l);
     switch (m) {
         case WM_MOUSEACTIVATE:
+            if (shell_panel_is_framed(l_slot, h)) break;
             return MA_NOACTIVATE;
+        case WM_LBUTTONDBLCLK:
+            /* only the framed class asks for double clicks (CS_DBLCLKS) */
+            shell_push(64, l_x, l_y, l_slot);
+            return 0;
+        case WM_MOUSELEAVE:
+            if (l_slot >= 0 && l_slot < SHELL_PANELS) s_shell_panel_tracking[l_slot] = 0;
+            shell_push(65, 0, 0, l_slot);
+            return 0;
+        case WM_KEYDOWN:
+            if (shell_panel_is_framed(l_slot, h)) {
+                if (shell_keydown_is_ours((int)w, GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_MENU) < 0))
+                    shell_push(60, (int)w, 0, l_slot);
+                return 0;
+            }
+            break;
+        case WM_SYSKEYDOWN:
+            if (shell_panel_is_framed(l_slot, h) && shell_syskey_is_ours((int)w)) {
+                shell_push(60, (int)w, 0, l_slot);
+                return 0;
+            }
+            break;
+        case WM_SYSCHAR:
+            if (shell_panel_is_framed(l_slot, h) && shell_syschar_is_ours((int)w)) return 0;
+            break;
+        case WM_CHAR:
+            if (shell_panel_is_framed(l_slot, h)) {
+                shell_push(61, (int)w, 0, l_slot);
+                return 0;
+            }
+            break;
+        case WM_CLOSE:
+            if (shell_panel_is_framed(l_slot, h)) {
+                shell_push(62, 0, 0, l_slot);
+                return 0;
+            }
+            break;
+        case WM_ACTIVATE:
+            if (shell_panel_is_framed(l_slot, h))
+                shell_push(63, LOWORD(w) != WA_INACTIVE ? 1 : 0, 0, l_slot);
+            break;
+        case WM_SIZE:
+            if (shell_panel_is_framed(l_slot, h) && w != SIZE_MINIMIZED)
+                shell_push(48, (int)LOWORD(l), (int)HIWORD(l), l_slot);
+            break;
         case WM_LBUTTONDOWN:
             if (l_slot >= 0 && l_slot < SHELL_PANELS) {
                 int l_code = shell_panel_press_code(l_slot, l_x, l_y,
@@ -1215,6 +1276,15 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case WM_MOUSEMOVE: {
             int l_last = (s_shell_qtail + SHELL_QCAP - 1) % SHELL_QCAP;
+            if (shell_panel_is_framed(l_slot, h) && !s_shell_panel_tracking[l_slot]) {
+                /* a framed panel hears the pointer leave (65), for hover */
+                TRACKMOUSEEVENT l_tme;
+                l_tme.cbSize = sizeof(l_tme);
+                l_tme.dwFlags = TME_LEAVE;
+                l_tme.hwndTrack = h;
+                l_tme.dwHoverTime = 0;
+                if (TrackMouseEvent(&l_tme)) s_shell_panel_tracking[l_slot] = 1;
+            }
             if (s_shell_qtail != s_shell_qhead && s_shell_q[l_last][0] == 43 && s_shell_q[l_last][3] == l_slot) {
                 s_shell_q[l_last][1] = l_x;
                 s_shell_q[l_last][2] = l_y;
@@ -1229,7 +1299,9 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             RECT l_r;
             GetWindowRect(h, &l_r);
             shell_push(47, l_r.left, l_r.top, l_slot);
-            shell_push(48, l_r.right - l_r.left, l_r.bottom - l_r.top, l_slot);
+            /* a framed panel told its client size on every WM_SIZE already */
+            if (!shell_panel_is_framed(l_slot, h))
+                shell_push(48, l_r.right - l_r.left, l_r.bottom - l_r.top, l_slot);
             return 0;
         }
         case WM_ENTERSIZEMOVE: {
@@ -1355,14 +1427,85 @@ static int shell_panel_open(int l_x, int l_y, int l_w, int l_h) {
     return l_slot;
 }
 
+/* Create a hidden FRAMED panel (1.23.0, GW-22) titled `l_title', owned by
+   the main window when there is one; answers its slot, or -1. Layered like
+   every panel, so opacity and click-through still work. */
+static int shell_panel_open_framed(int l_x, int l_y, int l_w, int l_h, const wchar_t* l_title) {
+    WNDCLASSW l_wc;
+    HWND l_hwnd;
+    int l_slot = -1, l_i;
+    for (l_i = 0; l_i < SHELL_PANELS && l_slot < 0; l_i++)
+        if (!s_shell_panel[l_i]) l_slot = l_i;
+    if (l_slot < 0 || l_w <= 0 || l_h <= 0) return -1;
+    ZeroMemory(&l_wc, sizeof(l_wc));
+    l_wc.style = CS_DBLCLKS;
+    l_wc.lpfnWndProc = shell_panel_proc;
+    l_wc.hInstance = GetModuleHandleW(0);
+    l_wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
+    l_wc.lpszClassName = L"SimpleShellFloat";
+    RegisterClassW(&l_wc);          /* a second registration fails harmlessly */
+    l_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_LAYERED, L"SimpleShellFloat", l_title,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME, l_x, l_y, l_w, l_h,
+        s_shell_hwnd, 0, GetModuleHandleW(0), 0);
+    if (!l_hwnd) return -1;
+    SetWindowLongPtrW(l_hwnd, GWLP_USERDATA, (LONG_PTR)l_slot);
+    SetLayeredWindowAttributes(l_hwnd, 0, 255, LWA_ALPHA);
+    s_shell_panel[l_slot] = l_hwnd;
+    s_shell_panel_drag[l_slot] = 0;
+    s_shell_panel_press_drag[l_slot] = 0;
+    s_shell_panel_axis[l_slot] = 0;
+    s_shell_panel_side_grip[l_slot] = 0;
+    s_shell_panel_bottom_grip[l_slot] = 0;
+    s_shell_panel_alpha[l_slot] = 255;
+    s_shell_panel_framed[l_slot] = 1;
+    s_shell_panel_tracking[l_slot] = 0;
+    return l_slot;
+}
+
+static void shell_panel_set_title(int l_slot, const wchar_t* l_title) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd) SetWindowTextW(l_hwnd, l_title);
+}
+
+static void shell_panel_client_size(int l_slot, int* l_w, int* l_h) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    RECT l_r;
+    if (l_hwnd && GetClientRect(l_hwnd, &l_r)) {
+        *l_w = l_r.right - l_r.left;
+        *l_h = l_r.bottom - l_r.top;
+    }
+}
+
+/* Send a message through the panel's real window procedure: the test door. */
+static int shell_panel_send(int l_slot, int l_msg, int l_w, int l_l) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return l_hwnd ? (int)SendMessageW(l_hwnd, (UINT)l_msg, (WPARAM)l_w, (LPARAM)l_l) : 0;
+}
+
+static int shell_panel_is_topmost(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return l_hwnd && (GetWindowLongPtrW(l_hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) ? 1 : 0;
+}
+
+/* A framed panel keeps its place above its owner; the others stay topmost. */
 static void shell_panel_show(int l_slot, int l_x, int l_y, int l_w, int l_h) {
     HWND l_hwnd = shell_panel_hwnd(l_slot);
-    if (l_hwnd) SetWindowPos(l_hwnd, HWND_TOPMOST, l_x, l_y, l_w, l_h, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    if (l_hwnd) {
+        if (s_shell_panel_framed[l_slot])
+            SetWindowPos(l_hwnd, 0, l_x, l_y, l_w, l_h, SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOZORDER);
+        else
+            SetWindowPos(l_hwnd, HWND_TOPMOST, l_x, l_y, l_w, l_h, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    }
 }
 
 static void shell_panel_place(int l_slot, int l_x, int l_y, int l_w, int l_h) {
     HWND l_hwnd = shell_panel_hwnd(l_slot);
-    if (l_hwnd) SetWindowPos(l_hwnd, HWND_TOPMOST, l_x, l_y, l_w, l_h, SWP_NOACTIVATE);
+    if (l_hwnd) {
+        if (s_shell_panel_framed[l_slot])
+            SetWindowPos(l_hwnd, 0, l_x, l_y, l_w, l_h, SWP_NOACTIVATE | SWP_NOZORDER);
+        else
+            SetWindowPos(l_hwnd, HWND_TOPMOST, l_x, l_y, l_w, l_h, SWP_NOACTIVATE);
+    }
 }
 
 static void shell_panel_hide(int l_slot) {
@@ -1375,6 +1518,8 @@ static void shell_panel_close(int l_slot) {
     if (l_hwnd) {
         DestroyWindow(l_hwnd);
         s_shell_panel[l_slot] = 0;
+        s_shell_panel_framed[l_slot] = 0;
+        s_shell_panel_tracking[l_slot] = 0;
         s_shell_panel_drag[l_slot] = 0;
         s_shell_panel_grip[l_slot] = 0;
         s_shell_panel_minw[l_slot] = 0;

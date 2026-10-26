@@ -66,7 +66,7 @@ end
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |
 | `SHELL_STRIP` | small topmost tool-window strip (the dictation-bar pattern) |
 | `SHELL_OUTLINES` | click-through coloured frame regions on the desktop (the region-outline pattern) |
-| `SHELL_PANEL` | borderless topmost instrument panels (up to 8): never take focus, can be left out of screen captures, click-through on demand, whole-window opacity, Shift+drag to move (1.11.0) and to size from an edge or corner (1.12.0), `is_cursor_over` for hover (1.13.0), handles that drag on a plain press kept to one axis, live `Event_moving`, side edges that size on a plain press, files dropped on them (1.14.0), a bottom edge that sizes on a plain press (1.15.0) |
+| `SHELL_PANEL` | borderless topmost instrument panels (up to 8): never take focus, can be left out of screen captures, click-through on demand, whole-window opacity, Shift+drag to move (1.11.0) and to size from an edge or corner (1.12.0), `is_cursor_over` for hover (1.13.0), handles that drag on a plain press kept to one axis, live `Event_moving`, side edges that size on a plain press, files dropped on them (1.14.0), a bottom edge that sizes on a plain press (1.15.0); framed panels - floating windows with a caption, sizing border and focus, owned by the main window, with key, character, close-request, activation, double-click and leave events (`open_framed`, 1.23.0) |
 | `SHELL_HOTKEYS` | global hotkeys as queue event 51; a modifier is required unless a chord is registered bare on purpose (1.11.0) |
 | `SHELL_MONITORS` | snapshot of the displays: bounds, work area, primary, device name (1.11.0) |
 | `SHELL_ACCESSIBILITY` | the UI Automation bridge: publish a widget table (ids, parents, control types, names, values, bounds), served to screen readers behind WM_GETOBJECT from `Clib/simple_shell_uia.h`; focus events; event 58 for a client's focus request (1.22.0) |
@@ -139,7 +139,7 @@ keystroke. See *Build and test*.
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
 offscreen, the spell checker is consulted. 42/42 under full DBC **at an
-interactive console** (1.19.0; 52 tests at 1.22.2). Run it from a locked or
+interactive console** (1.19.0; 53 tests at 1.23.0). Run it from a locked or
 headless session and `desktop_grab`, `input_keys_are_accepted` and
 `panel_capture_exclusion_really_hides` fail by design - Windows refuses
 BitBlt and SendInput there (OS error 5), and that refusal is a status the

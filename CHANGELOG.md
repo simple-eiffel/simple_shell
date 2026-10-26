@@ -2,6 +2,20 @@
 
 All notable changes to simple_shell.
 
+## 1.23.1 - 2026-10-25
+
+### Fixed (design scan 19, since b8d50ce; report in simple_widgets)
+
+- A panel destroyed behind its back - framed panels go with their owner,
+  Windows destroying owned windows first - kept its dead handle in the
+  slot table and `is_open` kept answering True; a later `close` could hit
+  a reused handle. The panel procedure now forgets its slot on
+  WM_NCDESTROY, and `SHELL_PANEL` remembers the window it opened, so
+  `is_open` asks the window itself and never mistakes another panel in
+  the same slot for this one. Test door `simulate_destroyed_behind`; test
+  `scan19_a_panel_destroyed_behind_its_back_is_closed` failed on the old
+  code ("closed when its window is gone") and passes now. 54 pass.
+
 ## 1.23.0 - 2026-10-25
 
 ### Added (GW-22: framed panels, the floating windows of a study layout)

@@ -1327,6 +1327,26 @@ feature -- Framed panels (GW-22, 1.23.0)
 			assert_false ("closed, no longer framed", p.is_framed)
 		end
 
+	test_scan19_a_panel_destroyed_behind_its_back_is_closed
+			-- The owner's destruction takes its framed panels with it (Windows
+			-- destroys owned windows first): the panel must then answer closed,
+			-- and must not mistake another panel in its old slot for itself.
+		local
+			p, q: SHELL_PANEL
+			l_slot: INTEGER
+		do
+			create p.make
+			create q.make
+			p.open_framed (-3000, -3000, 300, 200, {STRING_32} "Doomed")
+			l_slot := p.slot
+			p.simulate_destroyed_behind
+			assert_false ("closed when its window is gone", p.is_open)
+			q.open (-3000, -3000, 100, 50)
+			assert_integers_equal ("the slot is free again", l_slot, q.slot)
+			assert_false ("and another panel there is not this one", p.is_open)
+			q.close
+		end
+
 feature -- The event registry (2026-10-25)
 
 	test_event_numbers_never_collide

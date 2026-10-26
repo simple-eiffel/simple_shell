@@ -136,9 +136,12 @@ feature -- Access
 feature -- Status
 
 	is_open: BOOLEAN
-			-- Does the panel have a native window?
+			-- Does the panel have a native window? (Scan 19: asked of the
+			-- window itself, so a panel destroyed behind its back - with its
+			-- owner - answers False, and another panel opened in the same slot
+			-- is not mistaken for this one.)
 		do
-			Result := slot >= 0
+			Result := slot >= 0 and then native /= default_pointer and then c_handle (slot) = native
 		end
 
 	is_visible: BOOLEAN
@@ -258,6 +261,7 @@ feature -- Lifecycle
 			sane_size: a_width > 0 and a_height > 0
 		do
 			slot := c_open (a_x, a_y, a_width, a_height)
+			remember_native
 			if is_open then
 				set_geometry (a_x, a_y, a_width, a_height)
 				is_draggable := False
@@ -284,6 +288,7 @@ feature -- Lifecycle
 		do
 			create l_ns.make (a_title)
 			slot := c_open_framed (a_x, a_y, a_width, a_height, l_ns.item)
+			remember_native
 			if is_open then
 				set_geometry (a_x, a_y, a_width, a_height)
 				is_framed := True
@@ -354,6 +359,7 @@ feature -- Lifecycle
 		do
 			c_close (slot)
 			slot := -1
+			native := default_pointer
 			is_framed := False
 			is_draggable := False
 			is_resizable := False
@@ -421,6 +427,15 @@ feature -- Appearance
 		do
 			create l_ns.make (a_paths)
 			c_try_drop (slot, a_x, a_y, l_ns.item)
+		end
+
+	simulate_destroyed_behind
+			-- Destroy the native window as its owner's destruction would,
+			-- without `close': the test door to a panel that died elsewhere.
+		require
+			open: is_open
+		do
+			c_destroy_behind (slot)
 		end
 
 	simulate_message (a_message, a_wparam, a_lparam: INTEGER): INTEGER
@@ -617,6 +632,18 @@ feature -- Painting
 
 feature {NONE} -- Implementation
 
+	native: POINTER
+			-- The window `open' made, to tell it from a later one in the slot.
+
+	remember_native
+		do
+			if slot >= 0 then
+				native := c_handle (slot)
+			else
+				native := default_pointer
+			end
+		end
+
 	set_geometry (a_x, a_y, a_width, a_height: INTEGER)
 		do
 			x := a_x
@@ -657,6 +684,11 @@ feature {NONE} -- Externals
 	c_send (a_slot, a_msg, a_w, a_l: INTEGER): INTEGER
 		external "C inline use %"simple_shell.h%""
 		alias "return shell_panel_send($a_slot, $a_msg, $a_w, $a_l);"
+		end
+
+	c_destroy_behind (a_slot: INTEGER)
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_destroy_behind($a_slot);"
 		end
 
 	c_is_topmost (a_slot: INTEGER): INTEGER

@@ -2,6 +2,24 @@
 
 All notable changes to simple_shell.
 
+## 1.24.0 - 2026-10-25
+
+### Added (GW-20: printing)
+
+- **`SHELL_PRINTER`** (header `Clib/simple_shell_print.h`, links
+  winspool): `printer_names`, `default_printer`, `has_printer`; one
+  document at a time per process - `begin_document (printer, title, output,
+  paper, landscape)` with the paper (`Paper_letter`, `Paper_a4`, ...) and
+  orientation set in the printer's own settings, `begin_page`, `end_page`,
+  `end_document`, `abort_document`, `dc`; the page in device dots
+  (`dots_per_inch_x/y`, `paper_width/height`, `printable_width/height`,
+  `unprintable_left/top`). An output file makes a file printer (Microsoft
+  Print to PDF) write there without asking. No print dialog: the
+  application lists the printers itself, so the path runs headless.
+- Test `gw20_printers_and_a_document_written_to_a_file`: on this machine a
+  Letter page went through Microsoft Print to PDF to a temporary file (the
+  PDF arrived), and a landscape document turned the sheet. 55 pass.
+
 ## 1.23.1 - 2026-10-25
 
 ### Fixed (design scan 19, since b8d50ce; report in simple_widgets)

@@ -27,6 +27,9 @@
 #pragma comment(lib, "winspool.lib")
 
 SHELL_SHARED HDC s_shell_print_dc = 0;
+/* scan 20: the one document is CLAIMED atomically, so two processors (SCOOP)
+   cannot both begin it; released when it ends, aborts or fails to begin. */
+SHELL_SHARED volatile LONG s_shell_print_claim = 0;
 SHELL_SHARED int s_shell_print_in_page = 0;
 
 /* The default printer's name into `l_buf' (`l_cap' characters); its length,
@@ -81,7 +84,8 @@ static int shell_print_begin(const wchar_t* l_printer, const wchar_t* l_title, c
     LONG l_size;
     DOCINFOW l_di;
     HDC l_dc;
-    if (s_shell_print_dc || !l_printer || !l_printer[0]) return 0;
+    if (!l_printer || !l_printer[0]) return 0;
+    if (InterlockedCompareExchange(&s_shell_print_claim, 1, 0) != 0) return 0;
     if (OpenPrinterW((LPWSTR)l_printer, &l_h, NULL)) {
         l_size = DocumentPropertiesW(NULL, l_h, (LPWSTR)l_printer, NULL, NULL, 0);
         if (l_size > 0) {
@@ -103,13 +107,17 @@ static int shell_print_begin(const wchar_t* l_printer, const wchar_t* l_title, c
     }
     l_dc = CreateDCW(NULL, l_printer, NULL, l_dm);
     if (l_dm) free(l_dm);
-    if (!l_dc) return 0;
+    if (!l_dc) {
+        InterlockedExchange(&s_shell_print_claim, 0);
+        return 0;
+    }
     ZeroMemory(&l_di, sizeof(l_di));
     l_di.cbSize = sizeof(l_di);
     l_di.lpszDocName = (l_title && l_title[0]) ? l_title : L"Document";
     l_di.lpszOutput = (l_output && l_output[0]) ? l_output : NULL;
     if (StartDocW(l_dc, &l_di) <= 0) {
         DeleteDC(l_dc);
+        InterlockedExchange(&s_shell_print_claim, 0);
         return 0;
     }
     s_shell_print_dc = l_dc;
@@ -139,6 +147,7 @@ static int shell_print_end(void) {
     DeleteDC(s_shell_print_dc);
     s_shell_print_dc = 0;
     s_shell_print_in_page = 0;
+    InterlockedExchange(&s_shell_print_claim, 0);
     return l_ok;
 }
 
@@ -149,6 +158,7 @@ static void shell_print_abort(void) {
     DeleteDC(s_shell_print_dc);
     s_shell_print_dc = 0;
     s_shell_print_in_page = 0;
+    InterlockedExchange(&s_shell_print_claim, 0);
 }
 
 static int shell_print_caps(int l_index) {

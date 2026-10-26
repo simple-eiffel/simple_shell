@@ -9,6 +9,12 @@ note
 
 		No print dialog: the application lists `printer_names' itself, so
 		the whole path runs headless.
+
+		ONE DOCUMENT PER PROCESS (scan 20). `is_printing' says whether any
+		document is open in the process; `owns_document' whether it is this
+		printer's. Pages, the end and the abort belong to the owner only,
+		and the C side claims the document atomically, so two processors
+		cannot both begin one.
 	]"
 
 class
@@ -74,6 +80,12 @@ feature -- Document
 			Result := c_dc /= default_pointer
 		end
 
+	owns_document: BOOLEAN
+			-- Is the open document this printer's?
+		do
+			Result := began and then is_printing
+		end
+
 	is_in_page: BOOLEAN
 			-- Is a page open?
 		do
@@ -85,8 +97,9 @@ feature -- Document
 			-- Begin a document titled `a_title' on `a_printer', written to
 			-- `a_output' when given, on paper `a_paper' (`Paper_default' keeps
 			-- the printer's), landscape when `a_landscape'. True when it began.
+			-- False too when another document is open in the process (the C
+			-- side claims it atomically: no check-then-call race).
 		require
-			not_printing: not is_printing
 			printer_named: not a_printer.is_empty
 			paper_known: a_paper >= 0
 		local
@@ -100,14 +113,15 @@ feature -- Document
 				create l_output.make ("")
 			end
 			Result := c_begin (l_printer.item, l_title.item, l_output.item, a_paper, a_landscape.to_integer) = 1
+			began := Result
 		ensure
-			printing_when_begun: Result = is_printing
+			owned_when_begun: Result = owns_document
 		end
 
 	begin_page: BOOLEAN
 			-- Open the next page. True when it opened.
 		require
-			printing: is_printing
+			owner: owns_document
 			between_pages: not is_in_page
 		do
 			Result := c_begin_page = 1
@@ -118,7 +132,7 @@ feature -- Document
 	end_page: BOOLEAN
 			-- Close the page. True when the printer took it.
 		require
-			printing: is_printing
+			owner: owns_document
 			in_page: is_in_page
 		do
 			Result := c_end_page = 1
@@ -130,27 +144,29 @@ feature -- Document
 			-- Hand the document to the spooler (closing an open page). True
 			-- when it was accepted.
 		require
-			printing: is_printing
+			owner: owns_document
 		do
 			Result := c_end = 1
+			began := False
 		ensure
-			done: not is_printing
+			done: not owns_document
 		end
 
 	abort_document
 			-- Throw the document away.
 		require
-			printing: is_printing
+			owner: owns_document
 		do
 			c_abort
+			began := False
 		ensure
-			done: not is_printing
+			done: not owns_document
 		end
 
 	dc: POINTER
 			-- The printer's device context, to draw a page on.
 		require
-			printing: is_printing
+			owner: owns_document
 		do
 			Result := c_dc
 		end
@@ -217,6 +233,9 @@ feature -- The page (while printing, in device dots)
 		end
 
 feature {NONE} -- Implementation
+
+	began: BOOLEAN
+			-- Did this printer begin the open document?
 
 	Name_capacity: INTEGER = 512
 	List_capacity: INTEGER = 16384

@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.25.0 - 2026-10-26
+
+### Added
+
+- `SHELL_WINDOW.set_caption`: change the main window's caption while it is up (`SetWindowTextW`), as `SHELL_PANEL.set_title` already did for framed panels. First user: simple_bible, whose title names the chapter and version it reads (the GUI guide's C1).
+
 ## 1.24.1 - 2026-10-25
 
 ### Fixed (design scan 20, since 1260e13; report in simple_widgets)

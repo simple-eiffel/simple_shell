@@ -207,6 +207,16 @@ feature -- Timers
 			"shell_kill_fast_timer();"
 		end
 
+	set_caption (a_title: READABLE_STRING_GENERAL)
+			-- Change the native window's caption while it is up; before `shell_run' opens the
+			-- window, nothing happens (the title given to `shell_run' is the first caption).
+		local
+			l_ns: NATIVE_STRING
+		do
+			create l_ns.make (a_title)
+			c_set_caption (l_ns.item)
+		end
+
 	close
 			-- Destroy the native window: the pump sees WM_QUIT and
 			-- `shell_run' returns. The programmatic quit.
@@ -214,6 +224,15 @@ feature -- Timers
 			"C inline use %"simple_shell.h%""
 		alias
 			"shell_close_window();"
+		end
+
+feature {NONE} -- Caption external
+
+	c_set_caption (a_title: POINTER)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_set_caption((const wchar_t*)$a_title);"
 		end
 
 feature -- Cursor

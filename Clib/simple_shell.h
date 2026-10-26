@@ -1144,6 +1144,21 @@ static HWND shell_panel_hwnd(int l_slot) {
     return (l_slot >= 0 && l_slot < SHELL_PANELS) ? s_shell_panel[l_slot] : 0;
 }
 
+/* Clear `l_slot' after its window is gone. */
+static void shell_panel_forget(int l_slot) {
+    s_shell_panel[l_slot] = 0;
+    s_shell_panel_framed[l_slot] = 0;
+    s_shell_panel_tracking[l_slot] = 0;
+    s_shell_panel_drag[l_slot] = 0;
+    s_shell_panel_grip[l_slot] = 0;
+    s_shell_panel_minw[l_slot] = 0;
+    s_shell_panel_minh[l_slot] = 0;
+    s_shell_panel_press_drag[l_slot] = 0;
+    s_shell_panel_axis[l_slot] = 0;
+    s_shell_panel_side_grip[l_slot] = 0;
+    s_shell_panel_bottom_grip[l_slot] = 0;
+}
+
 /* Is `h' the framed panel in `l_slot'? False during CreateWindowExW, before
    the slot is stored - the messages of creation then read slot 0, which may
    belong to another panel. */
@@ -1393,6 +1408,13 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             shell_push(50, (int)l_dp.x, (int)l_dp.y, l_slot);
             return 0;
         }
+        case WM_NCDESTROY:
+            /* scan 19: destroyed by `close' or behind its back (its owner's
+               destruction takes owned panels first) - either way the slot
+               must not keep a dead handle */
+            if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel[l_slot] == h)
+                shell_panel_forget(l_slot);
+            break;
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -1474,6 +1496,13 @@ static void shell_panel_client_size(int l_slot, int* l_w, int* l_h) {
         *l_w = l_r.right - l_r.left;
         *l_h = l_r.bottom - l_r.top;
     }
+}
+
+/* Destroy the panel's window the way its owner's destruction does - without
+   SHELL_PANEL.close: the test door to a panel destroyed behind its back. */
+static void shell_panel_destroy_behind(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    if (l_hwnd) DestroyWindow(l_hwnd);
 }
 
 /* Send a message through the panel's real window procedure: the test door. */

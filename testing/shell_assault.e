@@ -1241,7 +1241,10 @@ feature -- The Alt door
 			assert ("Alt+Enter is still the system's", not p.syskey_is_claimed (13))
 			assert ("Alt alone is still the menu key", not p.syskey_is_claimed (18))
 			assert ("Alt+F1 is unclaimed", not p.syskey_is_claimed (112))
-			assert ("Alt+Left is unclaimed", not p.syskey_is_claimed (37))
+			assert ("Alt+Left is Back (1.26.0)", p.syskey_is_claimed (37))
+			assert ("Alt+Right is Forward (1.26.0)", p.syskey_is_claimed (39))
+			assert ("Alt+Up is unclaimed", not p.syskey_is_claimed (38))
+			assert ("Alt+Down is unclaimed", not p.syskey_is_claimed (40))
 			assert ("Alt+Space's WM_SYSCHAR is NOT swallowed - the menu needs it",
 				not p.syschar_is_swallowed (32))
 			assert ("but the beep behind a claimed letter is",

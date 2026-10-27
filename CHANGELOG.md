@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.27.0 - 2026-10-26
+
+### Added
+
+- `SHELL_DESKTOP.work_area_x`, `work_area_y`, `work_area_width`, `work_area_height`: the primary monitor's work area (`SPI_GETWORKAREA`), where a main window should open; `SW_SCREEN` has them by inheritance. First user: simple_bible opens at most of the screen.
+
 ## 1.26.0 - 2026-10-26
 
 ### Changed

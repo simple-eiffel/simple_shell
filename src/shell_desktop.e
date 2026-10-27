@@ -41,6 +41,40 @@ feature -- Virtual screen
 			"return shell_screen_h();"
 		end
 
+feature -- Work area (1.27.0)
+
+	work_area_x: INTEGER
+			-- Left edge of the primary monitor's work area (the screen less the taskbar).
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"RECT l_r; if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &l_r, 0)) return 0; return l_r.left;"
+		end
+
+	work_area_y: INTEGER
+			-- Top edge of the primary monitor's work area.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"RECT l_r; if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &l_r, 0)) return 0; return l_r.top;"
+		end
+
+	work_area_width: INTEGER
+			-- Width of the primary monitor's work area: where a main window should open (simple_bible opens at most of it).
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"RECT l_r; if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &l_r, 0)) return 0; return l_r.right - l_r.left;"
+		end
+
+	work_area_height: INTEGER
+			-- Height of the primary monitor's work area.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"RECT l_r; if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &l_r, 0)) return 0; return l_r.bottom - l_r.top;"
+		end
+
 feature -- Display scale (1.11.0)
 
 	become_dpi_aware

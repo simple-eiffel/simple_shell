@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.27.1 - 2026-10-27
+
+### Fixed
+
+- `SHELL_DESKTOP.work_area_*` read the rectangle in one system call (`work_area_field`) instead of four, and fall back to the virtual desktop when Windows refuses the work area or answers an empty one (`work_area_or_desktop`); before, a refusal answered 0 and a window sized from it was nothing. The width and height carry `positive` postconditions. Design scan 34; test `work_area_falls_back_to_the_desktop`.
+
 ## 1.27.0 - 2026-10-26
 
 ### Added

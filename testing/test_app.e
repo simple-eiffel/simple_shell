@@ -23,6 +23,7 @@ feature {NONE} -- Initialization
 			print ("=== PLATFORM SHELL ===%N")
 			run_test (agent t.test_tray_lifecycle, "tray_lifecycle")
 			run_test (agent t.test_desktop_metrics, "desktop_metrics")
+			run_test (agent t.test_work_area_falls_back_to_the_desktop, "work_area_falls_back_to_the_desktop")
 			run_test (agent t.test_display_scale, "display_scale")
 			run_test (agent t.test_desktop_grab, "desktop_grab")
 			run_test (agent t.test_clock, "clock")

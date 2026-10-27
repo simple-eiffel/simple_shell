@@ -41,38 +41,100 @@ feature -- Virtual screen
 			"return shell_screen_h();"
 		end
 
-feature -- Work area (1.27.0)
+feature -- Work area (1.27.0; one read since 1.27.1)
 
 	work_area_x: INTEGER
 			-- Left edge of the primary monitor's work area (the screen less the taskbar).
-		external
-			"C inline use %"simple_shell.h%""
-		alias
-			"RECT l_r; if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &l_r, 0)) return 0; return l_r.left;"
+		do
+			Result := work_area_field (Field_x)
 		end
 
 	work_area_y: INTEGER
 			-- Top edge of the primary monitor's work area.
-		external
-			"C inline use %"simple_shell.h%""
-		alias
-			"RECT l_r; if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &l_r, 0)) return 0; return l_r.top;"
+		do
+			Result := work_area_field (Field_y)
 		end
 
 	work_area_width: INTEGER
 			-- Width of the primary monitor's work area: where a main window should open (simple_bible opens at most of it).
-		external
-			"C inline use %"simple_shell.h%""
-		alias
-			"RECT l_r; if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &l_r, 0)) return 0; return l_r.right - l_r.left;"
+		do
+			Result := work_area_field (Field_width)
+		ensure
+			positive: Result > 0
 		end
 
 	work_area_height: INTEGER
 			-- Height of the primary monitor's work area.
+		do
+			Result := work_area_field (Field_height)
+		ensure
+			positive: Result > 0
+		end
+
+	work_area_field (a_field: INTEGER): INTEGER
+			-- Field `a_field' of the work area, the whole rectangle read in one system call; the virtual
+			-- desktop when Windows will not say. Scan 34 (2026-10-27): each field was its own call, and a
+			-- refused call answered 0, which would size a window to nothing.
+		require
+			valid_field: a_field >= Field_x and a_field <= Field_height
+		local
+			l_rect: MANAGED_POINTER
+		do
+			create l_rect.make (16)
+			Result := work_area_or_desktop (c_read_work_area (l_rect.item), l_rect.read_integer_32 (0), l_rect.read_integer_32 (4),
+				l_rect.read_integer_32 (8), l_rect.read_integer_32 (12), a_field)
+		ensure
+			sized: a_field >= Field_width implies Result > 0
+		end
+
+	work_area_or_desktop (a_read: BOOLEAN; a_left, a_top, a_right, a_bottom, a_field: INTEGER): INTEGER
+			-- Field `a_field' of the rectangle `a_left', `a_top', `a_right', `a_bottom' when it was `a_read'
+			-- and is not empty, else of the virtual desktop (a size at least 1).
+		require
+			valid_field: a_field >= Field_x and a_field <= Field_height
+		do
+			if a_read and a_right > a_left and a_bottom > a_top then
+				inspect a_field
+				when Field_x then
+					Result := a_left
+				when Field_y then
+					Result := a_top
+				when Field_width then
+					Result := a_right - a_left
+				else
+					Result := a_bottom - a_top
+				end
+			else
+				inspect a_field
+				when Field_x then
+					Result := virtual_x
+				when Field_y then
+					Result := virtual_y
+				when Field_width then
+					Result := virtual_width.max (1)
+				else
+					Result := virtual_height.max (1)
+				end
+			end
+		ensure
+			sized: a_field >= Field_width implies Result > 0
+			read_kept: (a_read and a_right > a_left and a_bottom > a_top and a_field = Field_width) implies Result = a_right - a_left
+		end
+
+	Field_x: INTEGER = 1
+	Field_y: INTEGER = 2
+	Field_width: INTEGER = 3
+	Field_height: INTEGER = 4
+			-- The fields of a rectangle `work_area_field' answers.
+
+feature {NONE} -- Work area implementation
+
+	c_read_work_area (a_rect: POINTER): BOOLEAN
+			-- Fill the RECT at `a_rect' with the primary work area; False when Windows refuses.
 		external
 			"C inline use %"simple_shell.h%""
 		alias
-			"RECT l_r; if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &l_r, 0)) return 0; return l_r.bottom - l_r.top;"
+			"return (EIF_BOOLEAN) (SystemParametersInfoW(SPI_GETWORKAREA, 0, (RECT *) $a_rect, 0) != 0);"
 		end
 
 feature -- Display scale (1.11.0)

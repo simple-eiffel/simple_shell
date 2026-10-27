@@ -48,6 +48,22 @@ feature -- Desktop
 			assert ("no wider than the desktop", d.work_area_width <= d.virtual_width and d.work_area_height <= d.virtual_height)
 		end
 
+	test_work_area_falls_back_to_the_desktop
+			-- 1.27.1 (scan 34): when Windows refuses the work area, or answers an empty one, the virtual
+			-- desktop answers instead. Before: each query returned 0, and a window sized from it was
+			-- nothing.
+		local
+			d: SHELL_DESKTOP
+		do
+			create d
+			assert ("refused: the desktop's width", d.work_area_or_desktop (False, 0, 0, 0, 0, d.Field_width) = d.virtual_width.max (1))
+			assert ("empty: the desktop's height", d.work_area_or_desktop (True, 10, 20, 10, 20, d.Field_height) = d.virtual_height.max (1))
+			assert ("refused: the desktop's left", d.work_area_or_desktop (False, 5, 5, 9, 9, d.Field_x) = d.virtual_x)
+			assert ("read: its own width", d.work_area_or_desktop (True, 10, 20, 110, 220, d.Field_width) = 100)
+			assert ("read: its own top", d.work_area_or_desktop (True, 10, 20, 110, 220, d.Field_y) = 20)
+			assert ("one read agrees with the fields", d.work_area_field (d.Field_width) = d.work_area_width)
+		end
+
 	test_display_scale
 			-- Once DPI aware, the system DPI is a real value (96 at 100%, 144 at
 			-- 150%) and the scale is that over 96.

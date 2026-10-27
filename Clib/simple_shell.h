@@ -137,7 +137,9 @@ static void shell_push(int t, int a, int b, int c) {
                             Nothing here needs the keystroke; `alt_down'
                             already answers the STATE, and a window with
                             no menu bar has no underlines to reveal.
-     Alt+F1..F9, F11, F12, and Alt+arrow/Home/End/Page/Delete - unclaimed.
+     Alt+F1..F9, F11, F12, Alt+Up/Down/Home/End/Page/Delete - unclaimed.
+   CLAIMED since 1.26.0: Alt+Left and Alt+Right, the Back and Forward keys of
+   every browser (simple_bible's C3); Windows gives them no meaning in a window.
    ---- */
 /* THE KEY-DOWN DOOR (1.17.0, GW-24): which plain WM_KEYDOWNs become
    event 4. Always: the stepping keys (arrows, Home/End, Delete,
@@ -171,7 +173,8 @@ static int shell_syskey_is_ours(int l_vk) {
         || (l_vk >= '0' && l_vk <= '9')
         || l_vk == VK_OEM_PLUS || l_vk == VK_OEM_MINUS
         || l_vk == VK_ADD || l_vk == VK_SUBTRACT
-        || l_vk == VK_F10;
+        || l_vk == VK_F10
+        || l_vk == VK_LEFT || l_vk == VK_RIGHT;   /* 1.26.0: Back and Forward, as in every browser */
 }
 
 /* The WM_SYSCHAR half. A syskey we swallowed still trails a WM_SYSCHAR,

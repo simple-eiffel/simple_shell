@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.26.0 - 2026-10-26
+
+### Changed
+
+- Alt+Left and Alt+Right reach the window (the Alt door claims them): the Back and Forward keys of every browser, which simple_bible's guide puts on its C3 buttons. Before, they went to DefWindowProc and nothing happened. Alt+Up, Alt+Down and the other system keys stay unclaimed.
+
 ## 1.25.0 - 2026-10-26
 
 ### Added

@@ -43,6 +43,9 @@ feature -- Desktop
 			create d
 			assert ("a desktop exists", d.virtual_width > 0)
 			assert ("with height", d.virtual_height > 0)
+				-- 1.27.0: the primary work area, inside the virtual desktop.
+			assert ("a work area", d.work_area_width > 0 and d.work_area_height > 0)
+			assert ("no wider than the desktop", d.work_area_width <= d.virtual_width and d.work_area_height <= d.virtual_height)
 		end
 
 	test_display_scale

@@ -62,7 +62,7 @@ end
 | `SHELL_CLIPBOARD` | Unicode text get/set, and every bitmap read, with history-manager retry (size read-back since 1.12.1); 1M-character headroom; **bitmap put and get** (`set_image`, CF_DIB from an ARGB32 buffer; `image_into`, the DIB back into an ARGB32 buffer, 24/32-bit, alpha forced opaque, refused rather than overrun on a size mismatch) with size read-back |
 | `SHELL_INPUT` | **synthesised input** via SendInput: `pointer_x` / `pointer_y` (calibration), `click_at` (focus lands and stays) / `click_at_quietly` (pointer and foreground restored), `press_chord`, `paste`, `press_enter`, Unicode `type_text`; virtual-desktop bounds guard on every click |
 | `SHELL_SPELLER` | Windows inbox `ISpellChecker` (COM): misspelling ranges + suggestions; degrades to no findings, never to failure |
-| `SHELL_DESKTOP` | virtual-screen metrics, **pure screen grab** into a caller ARGB32 buffer, `now_ms` (QPC), `minutes_of_day`, `open_externally` |
+| `SHELL_DESKTOP` | virtual-screen metrics, **pure screen grab** into a caller ARGB32 buffer, `now_ms` (QPC), `minutes_of_day`, `open_externally` |; the primary **work area** (1.27.0) |
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |
 | `SHELL_STRIP` | small topmost tool-window strip (the dictation-bar pattern) |
 | `SHELL_OUTLINES` | click-through coloured frame regions on the desktop (the region-outline pattern) |

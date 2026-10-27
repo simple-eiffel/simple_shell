@@ -57,7 +57,7 @@ end
 
 | Class | Service |
 |---|---|
-| `SHELL_WINDOW` | *(deferred)* native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, **cursor shaping** (`set_cursor_kind`: arrow, I-beam, hand, resize, cross, wait); the program's icon from resource 1 of its .rc (1.13.1); `set_starts_hidden`, `show_window`, `hide_window` for a program whose face is a panel (1.14.0); `set_dark_title_bar` (1.16.0); `set_heartbeat_ms` (1.18.0); the one-shot **dwell timer** `arm_dwell_timer` / `cancel_dwell_timer`, event 55 once the pointer rests (1.19.0) |
+| `SHELL_WINDOW` | *(deferred)* native window + queue-polled pump; DC access, backdrop brush, drag-drop paths, private fonts, native text menu, tick clock, **cursor shaping** (`set_cursor_kind`: arrow, I-beam, hand, resize, cross, wait); the program's icon from resource 1 of its .rc (1.13.1); `set_starts_hidden`, `show_window`, `hide_window` for a program whose face is a panel (1.14.0); `set_dark_title_bar` (1.16.0); `set_heartbeat_ms` (1.18.0); the one-shot **dwell timer** `arm_dwell_timer` / `cancel_dwell_timer`, event 55 once the pointer rests (1.19.0); `set_caption` changes the caption while the window is up (1.25.0); Alt+Left and Alt+Right reach the window as Back and Forward (1.26.0) |
 | `SHELL_KEYS` | physical Shift / Ctrl / Alt state |
 | `SHELL_CLIPBOARD` | Unicode text get/set, and every bitmap read, with history-manager retry (size read-back since 1.12.1); 1M-character headroom; **bitmap put and get** (`set_image`, CF_DIB from an ARGB32 buffer; `image_into`, the DIB back into an ARGB32 buffer, 24/32-bit, alpha forced opaque, refused rather than overrun on a size mismatch) with size read-back |
 | `SHELL_INPUT` | **synthesised input** via SendInput: `pointer_x` / `pointer_y` (calibration), `click_at` (focus lands and stays) / `click_at_quietly` (pointer and foreground restored), `press_chord`, `paste`, `press_enter`, Unicode `type_text`; virtual-desktop bounds guard on every click |
@@ -140,7 +140,7 @@ keystroke. See *Build and test*.
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
 offscreen, the spell checker is consulted. 42/42 under full DBC **at an
-interactive console** (1.19.0; 56 tests at 1.24.1). Run it from a locked or
+interactive console** (1.19.0; 56 tests at 1.26.0). Run it from a locked or
 headless session and `desktop_grab`, `input_keys_are_accepted` and
 `panel_capture_exclusion_really_hides` fail by design - Windows refuses
 BitBlt and SendInput there (OS error 5), and that refusal is a status the

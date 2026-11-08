@@ -1,10 +1,11 @@
 # simple_shell
 
-![tests](https://img.shields.io/badge/tests-42%2F42-brightgreen) ![freeze assault](https://img.shields.io/badge/freeze%20assault-4%2F4-brightgreen) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
-![Windows: tests pass](https://img.shields.io/badge/Windows-tests%20pass-0078D6?logo=windows&logoColor=white) ![macOS: window core](https://img.shields.io/badge/macOS-window%20core-lightgray?logo=apple) ![Linux: in progress](https://img.shields.io/badge/Linux-in%20progress-lightgray)
+![tests](https://img.shields.io/badge/tests-62%2F62-brightgreen) ![freeze assault](https://img.shields.io/badge/freeze%20assault-4%2F4-brightgreen) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
+![Windows: 62 of 62](https://img.shields.io/badge/Windows-62%2F62-0078D6?logo=windows&logoColor=white) ![macOS: window core](https://img.shields.io/badge/macOS-window%20core-lightgray?logo=apple) ![Linux: in progress](https://img.shields.io/badge/Linux-in%20progress-lightgray)
 
-**The Win32 platform shell for the Simple Eiffel ecosystem.** One header of
-battle-tested C, nine Eiffel classes, no rendering opinion. This is the
+**The platform shell for the Simple Eiffel ecosystem**: Win32 on Windows, AppKit on
+macOS (see [macOS](#macos-1310-in-progress)), GTK on Linux next. Battle-tested C behind
+one set of entry points, a handful of Eiffel classes, no rendering opinion. This is the
 library that owns the native window, the message pump, the clipboard, the
 keyboard, the spell checker, the desktop — so that nothing above it ever
 declares an external again.
@@ -140,8 +141,8 @@ keystroke. See *Build and test*.
 
 The assault is real: the desktop is grabbed (alpha verified opaque), the
 clipboard round-trips a snowman, a strip window is genuinely created
-offscreen, the spell checker is consulted. 42/42 under full DBC **at an
-interactive console** (1.19.0; 56 tests at 1.26.0). Run it from a locked or
+offscreen, the spell checker is consulted. 62/62 under full DBC **at an
+interactive console** (Windows, November 2026). Run it from a locked or
 headless session and `desktop_grab`, `input_keys_are_accepted` and
 `panel_capture_exclusion_really_hides` fail by design - Windows refuses
 BitBlt and SendInput there (OS error 5), and that refusal is a status the
@@ -170,6 +171,20 @@ the blocking-marker law below. It needs no window and no user:
 /d/prod/ec.sh test -config simple_shell.ecf -target simple_shell_scoop_tests
 ./EIFGENs/simple_shell_scoop_tests/F_code/simple_shell.exe
 ```
+
+## simple_gui's groundwork (November 2026)
+
+simple_shell carries the platform half of [simple_gui](https://github.com/simple-eiffel/simple_gui)'s
+Windows backend (simple_gui over simple_widgets):
+- **A pump that returns early:** `SHELL_DESKTOP.pump_for` ends on an event or a timeout,
+  so a backend can pump until idle instead of handing the thread to `shell_run`.
+- **Closing the main window is an event** (66) the program may refuse, as panels' 62 is.
+- **The wake belongs to the pumping thread:** `SHELL_WAKE.claim_pump_thread` and `is_pump_thread`, so a
+  SCOOP worker's wake (event 54) reaches the right loop.
+- **Document windows** (1.30.0): a framed panel opened as a document window has its own taskbar button and Alt+Tab entry, for a program's
+  second top-level window.
+- **Accessibility roles** under the shared role names, and test doors (request close, the
+  pump's thread) for simple_gui's shared test suite, which passes 32 of 32 on Windows.
 
 ## macOS (1.31.0, in progress)
 

@@ -204,6 +204,42 @@ feature -- Status
 	bottom_sizes_on_press: BOOLEAN
 			-- Does a plain press within the grip of the bottom edge size the panel (its top stays)?
 
+	is_document: BOOLEAN
+			-- Was this panel opened with `open_document'?
+
+	is_tool_window: BOOLEAN
+			-- Does the native window carry the tool-window style (no taskbar button)?
+		require
+			open: is_open
+		do
+			Result := c_is_tool_window (slot) /= 0
+		end
+
+	has_owner: BOOLEAN
+			-- Is the native window owned (stacked above, minimized with, its owner)?
+		require
+			open: is_open
+		do
+			Result := c_has_owner (slot) /= 0
+		end
+
+	shows_main_icon: BOOLEAN
+			-- Does the native window show the main window's big icon (none when the main
+			-- window has none)?
+		require
+			open: is_open
+		do
+			Result := c_icon (slot) = c_main_icon
+		end
+
+	can_minimize: BOOLEAN
+			-- Does the native window have a minimize box?
+		require
+			open: is_open
+		do
+			Result := c_can_minimize (slot) /= 0
+		end
+
 	is_framed: BOOLEAN
 			-- Was the panel opened with a caption and border (`open_framed')?
 
@@ -274,6 +310,31 @@ feature -- Lifecycle
 			geometry_when_open: is_open implies (x = a_x and y = a_y and width = a_width and height = a_height)
 			opaque_when_open: is_open implies opacity = 255
 			hidden_when_open: is_open implies not is_visible
+		end
+
+	open_document (a_x, a_y, a_width, a_height: INTEGER; a_title: READABLE_STRING_GENERAL)
+			-- Create a framed panel as a DOCUMENT window, hidden (1.30.0, simple_gui's second
+			-- and later windows): its own taskbar button and Alt+Tab entry, minimize and
+			-- maximize boxes, no owner, so it stays reachable when the main window is hidden.
+			-- Stays closed when all `Max_panels' slots are in use.
+		require
+			closed: not is_open
+			sane_size: a_width > 0 and a_height > 0
+		local
+			l_ns: NATIVE_STRING
+		do
+			create l_ns.make (a_title)
+			slot := c_open_framed_as (a_x, a_y, a_width, a_height, l_ns.item, 1)
+			remember_native
+			if is_open then
+				set_geometry (a_x, a_y, a_width, a_height)
+				is_framed := True
+				is_document := True
+				create title.make_from_string_general (a_title)
+			end
+		ensure
+			document_when_open: is_open implies is_framed and is_document and not is_topmost
+			titled_when_open: is_open implies title.same_string_general (a_title)
 		end
 
 	open_framed (a_x, a_y, a_width, a_height: INTEGER; a_title: READABLE_STRING_GENERAL)
@@ -361,6 +422,7 @@ feature -- Lifecycle
 			slot := -1
 			native := default_pointer
 			is_framed := False
+			is_document := False
 			is_draggable := False
 			is_resizable := False
 			drags_on_press := False
@@ -669,6 +731,36 @@ feature {NONE} -- Externals
 	c_open_framed (a_x, a_y, a_w, a_h: INTEGER; a_title: POINTER): INTEGER
 		external "C inline use %"simple_shell.h%""
 		alias "return shell_panel_open_framed($a_x, $a_y, $a_w, $a_h, (const wchar_t*)$a_title);"
+		end
+
+	c_open_framed_as (a_x, a_y, a_w, a_h: INTEGER; a_title: POINTER; a_document: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_open_framed_as($a_x, $a_y, $a_w, $a_h, (const wchar_t*)$a_title, $a_document);"
+		end
+
+	c_is_tool_window (a_slot: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_is_tool_window($a_slot);"
+		end
+
+	c_has_owner (a_slot: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_has_owner($a_slot);"
+		end
+
+	c_icon (a_slot: INTEGER): POINTER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_icon($a_slot);"
+		end
+
+	c_main_icon: POINTER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_main_icon();"
+		end
+
+	c_can_minimize (a_slot: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_can_minimize($a_slot);"
 		end
 
 	c_set_title (a_slot: INTEGER; a_title: POINTER)

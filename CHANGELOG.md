@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.30.0 - 2026-11-08
+
+### Added
+
+- Framed panels as document windows (simple_gui's Windows backend, gap W3): `SHELL_PANEL.open_document` opens a framed panel without the tool-window style, with minimize and maximize boxes and no owner, so a second application window gets its own taskbar button and Alt+Tab entry, a normal caption and independent stacking, and stays reachable when the main window is hidden (MACMINI's review on port-coordination #15). `is_document`, and `is_tool_window`, `has_owner`, `can_minimize` read from the real window. `open_framed` is unchanged. Test `document_window_is_not_a_tool_window`.
+
 ## 1.29.0 - 2026-11-08
 
 ### Added

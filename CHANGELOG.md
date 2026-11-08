@@ -2,6 +2,16 @@
 
 All notable changes to simple_shell.
 
+## 1.36.0 - 2026-11-08
+
+### Added
+
+- macOS: monitors, the overlay, the strip and outlines (28 stubs left).
+  - **Monitors:** each screen's rectangle and work area (menu bar and Dock left out) in pixels from the main screen's top-left, the primary flag (the screen with the menu bar), and its name in UTF-16.
+  - **The overlay:** a borderless window over the desktop, above the menu bar, taking the keyboard. Events 31-33 (move, press, release), 35 (expose), 36 (Return), 37 (arrows). Escape or a right press hides it in C first, then reports 34. The watchdog does as on Windows: Escape held 2 s cancels, held 5 s ends the process.
+  - **The strip:** a borderless floating window that never takes the focus. A press reports 21 and drags it, except on its buttons (top right, 90 by 26 px); 22 when a drag ends; 23 to draw.
+  - **Outlines:** up to four click-through rectangle frames above everything.
+
 ## 1.35.0 - 2026-11-08
 
 ### Added

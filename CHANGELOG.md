@@ -2,6 +2,18 @@
 
 All notable changes to simple_shell.
 
+## 1.35.0 - 2026-11-08
+
+### Added
+
+- macOS: the panel extras (41 stubs left).
+  - **Unframed panels** (`shell_panel_open`): borderless, above other windows, never made active, as WS_EX_TOPMOST and WS_EX_NOACTIVATE.
+  - **Framed panels:** a tool panel is a utility panel (small title bar, no minimize, at the normal level, as Windows' owned tool window); a document window is an ordinary window.
+  - Opacity, click-through, exclusion from screen capture (WDA_EXCLUDEFROMCAPTURE, 0x11), topmost, tool window, owner, minimize and icon.
+  - Windows' grip and press hit-test codes, by the same numbers.
+  - A move or resize from a press, keeping the panel's axis and minimum size, with grip cursors.
+  - Test doors: `simulate_message` turns Windows messages into events 41-46 and 60-65, `try_move` reports a constrained 49 without moving, and `destroy_behind`.
+
 ## 1.34.0 - 2026-11-08
 
 ### Added

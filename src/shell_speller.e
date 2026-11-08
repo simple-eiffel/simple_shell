@@ -141,7 +141,7 @@ feature {NONE} -- Externals
 		end
 
 	c_spell_ignore (a_word: POINTER): INTEGER
-			-- Same COM object, same first-call initialisation, same proof:
+			-- Same COM object, same first-call initialization, same proof:
 			-- `ignore' passes `NATIVE_STRING.item', which is C heap.
 		external
 			"C blocking inline use %"simple_shell.h%""

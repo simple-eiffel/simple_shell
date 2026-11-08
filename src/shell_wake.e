@@ -33,6 +33,14 @@ feature -- Access
 	Outcome_coalesced: INTEGER = 2
 			-- A wake was already pending; this one merged into it.
 
+	is_pump_thread: BOOLEAN
+			-- Is the calling thread the one that pumps (the main window's, or the claimed
+			-- one), or has none claimed the pump yet? simple_gui's `is_gui_thread' on
+			-- Windows: a SCOOP worker's processor answers False once a pump exists.
+		do
+			Result := c_is_pump_thread /= 0
+		end
+
 	last_outcome: INTEGER
 			-- What the last `wake' did.
 
@@ -62,6 +70,13 @@ feature -- Basic operations
 		end
 
 feature {NONE} -- Externals
+
+	c_is_pump_thread: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_is_pump_thread();"
+		end
 
 	c_wake: INTEGER
 		external

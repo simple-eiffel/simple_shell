@@ -2,6 +2,17 @@
 
 All notable changes to simple_shell.
 
+## 1.37.0 - 2026-11-08
+
+### Added
+
+- macOS: the tray as menu bar icons (21 stubs left).
+  - `shell_tray_add` puts a status item showing the app's icon in the menu bar, with the tip as its tooltip.
+  - Clicks report 52 (1 left, 2 right or Control-click, 3 double; the tray's id), as on Windows.
+  - `shell_tray_menu` takes one item per line, "-" for a separator, and answers the chosen line's number.
+  - A balloon is a popover under the icon that closes itself after six seconds. Notification Center would need a signed bundle and the user's permission.
+  - `set_tip`, `remove`, `id`, and the test door `try_click` (Windows' mouse-message numbers).
+
 ## 1.36.0 - 2026-11-08
 
 ### Added

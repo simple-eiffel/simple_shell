@@ -4,7 +4,7 @@
 ![Windows: 62 of 62](https://img.shields.io/badge/Windows-62%2F62-0078D6?logo=windows&logoColor=white) ![macOS: simple_widgets runs](https://img.shields.io/badge/macOS-simple__widgets%20runs-success?logo=apple) ![Linux: in progress](https://img.shields.io/badge/Linux-in%20progress-lightgray)
 
 **The platform shell for the Simple Eiffel ecosystem**: Win32 on Windows, AppKit on
-macOS (see [macOS](#macos-1310-in-progress)), GTK on Linux next. Battle-tested C behind
+macOS (see [macOS](#macos-131)), GTK on Linux next. Battle-tested C behind
 one set of entry points, a handful of Eiffel classes, no rendering opinion. This is the
 library that owns the native window, the message pump, the clipboard, the
 keyboard, the spell checker, the desktop — so that nothing above it ever

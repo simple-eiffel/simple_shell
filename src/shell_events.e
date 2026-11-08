@@ -125,6 +125,7 @@ feature -- The system
 	Event_window_close_request: INTEGER = 66
 			-- The user asked to close the main window (title-bar X, Alt+F4) while
 			-- `SHELL_WINDOW.close_requests_are_events' holds: the window stays (1.29.0).
+			-- The main window only; framed panels report `Event_panel_close_request' (62).
 
 feature -- The registry
 

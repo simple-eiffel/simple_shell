@@ -110,7 +110,7 @@ feature -- Operation, step by step (1.28.0)
 			non_negative: a_ms >= 0
 		do
 			if shell_pump_until (a_ms) = 0 then
-				is_window_open := False
+				window_destroyed
 			end
 			dispatch_queued
 		end
@@ -121,12 +121,23 @@ feature -- Operation, step by step (1.28.0)
 			open: is_window_open
 		do
 			if shell_pump_pending = 0 then
-				is_window_open := False
+				window_destroyed
 			end
 			dispatch_queued
 		end
 
 feature {NONE} -- Dispatch
+
+	window_destroyed
+			-- The window is gone: it is no longer open, and the C side has dropped its
+			-- close-request setting, so the Eiffel side does too (MACMINI, #10 review).
+		do
+			is_window_open := False
+			close_requests_are_events := False
+		ensure
+			closed: not is_window_open
+			setting_dropped: not close_requests_are_events
+		end
 
 	dispatch_queued
 			-- Hand every queued event to `dispatch'.

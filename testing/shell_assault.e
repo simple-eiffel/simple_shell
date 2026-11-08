@@ -633,6 +633,7 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			w.request_close
 			d.pump_for (40)
 			assert_true ("event 66 queued", w.drain_event (w.Event_window_close_request, 0))
+			assert_true ("asked", w.close_requests_are_events)
 			w.shell_turn_pending
 			assert_true ("the window stays", w.is_window_open)
 			w.set_close_requests_are_events (False)
@@ -642,6 +643,7 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 				i := i + 1
 			end
 			assert_false ("not asked: destroyed", w.is_window_open)
+			assert_false ("the setting went with the window", w.close_requests_are_events)
 		end
 
 	test_heartbeat_is_settable

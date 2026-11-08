@@ -652,7 +652,9 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			-- Closing frees the slot for the next window.
 		local
 			l_document, l_tool: SHELL_PANEL
+			l_shell_window: SHELL_TEST_WINDOW
 		do
+			create l_shell_window
 			create l_document.make
 			create l_tool.make
 			l_document.open_document (-3000, -3000, 400, 300, {STRING_32} "Table of values")
@@ -664,12 +666,49 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			assert_true ("tool still a tool window", l_tool.is_tool_window)
 			assert_false ("tool cannot minimize", l_tool.can_minimize)
 			assert_false ("tool is not a document", l_tool.is_document)
+			assert_true ("the main window's icon on the taskbar button", l_document.shows_main_icon)
+				-- Minimizing reports no 0 x 0 resize (a canvas must never be sized 0).
+			from until not l_shell_window.drain_event (0, 0) loop end
+			l_document.simulate_message (0x0005, 1, 0).do_nothing
+			assert_false ("minimized: no event 48", l_shell_window.drain_event (l_document.Event_resized, 0))
 			l_document.close
 			assert_false ("closed", l_document.is_open or l_document.is_document)
-			l_document.open_document (-3000, -3000, 400, 300, {STRING_32} "Again")
-			assert_true ("the freed slot opens again", l_document.is_open)
-			l_document.close
 			l_tool.close
+		end
+
+	test_panel_slots_are_freed_on_close
+			-- Fill every slot, see one more fail, close one, and the failed one opens.
+		local
+			l_panels: ARRAYED_LIST [SHELL_PANEL]
+			l_panel, l_extra: SHELL_PANEL
+			i: INTEGER
+		do
+			create l_panels.make ({SHELL_PANEL}.Max_panels)
+			from
+				i := 1
+			until
+				i > {SHELL_PANEL}.Max_panels + 1
+			loop
+				create l_panel.make
+				l_panel.open_document (-3000, -3000, 200, 150, {STRING_32} "slot " + i.out)
+				if l_panel.is_open then
+					l_panels.extend (l_panel)
+				end
+				i := i + 1
+			end
+			assert_integers_equal ("every free slot taken", {SHELL_PANEL}.Max_panels, l_panels.count)
+			create l_extra.make
+			l_extra.open_document (-3000, -3000, 200, 150, {STRING_32} "one too many")
+			assert_false ("no slot left", l_extra.is_open)
+			l_panels.first.close
+			l_extra.open_document (-3000, -3000, 200, 150, {STRING_32} "into the freed slot")
+			assert_true ("the freed slot opens", l_extra.is_open)
+			l_extra.close
+			across l_panels as ic loop
+				if ic.is_open then
+					ic.close
+				end
+			end
 		end
 
 	test_heartbeat_is_settable

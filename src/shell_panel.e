@@ -223,6 +223,15 @@ feature -- Status
 			Result := c_has_owner (slot) /= 0
 		end
 
+	shows_main_icon: BOOLEAN
+			-- Does the native window show the main window's big icon (none when the main
+			-- window has none)?
+		require
+			open: is_open
+		do
+			Result := c_icon (slot) = c_main_icon
+		end
+
 	can_minimize: BOOLEAN
 			-- Does the native window have a minimize box?
 		require
@@ -737,6 +746,16 @@ feature {NONE} -- Externals
 	c_has_owner (a_slot: INTEGER): INTEGER
 		external "C inline use %"simple_shell.h%""
 		alias "return shell_panel_has_owner($a_slot);"
+		end
+
+	c_icon (a_slot: INTEGER): POINTER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_icon($a_slot);"
+		end
+
+	c_main_icon: POINTER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_main_icon();"
 		end
 
 	c_can_minimize (a_slot: INTEGER): INTEGER

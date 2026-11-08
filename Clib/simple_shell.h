@@ -1534,7 +1534,18 @@ static int shell_panel_open_framed_as(int l_x, int l_y, int l_w, int l_h, const 
         l_document ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME), l_x, l_y, l_w, l_h,
         l_document ? 0 : s_shell_hwnd, 0, GetModuleHandleW(0), 0);
     if (!l_hwnd) return -1;
+    if (l_document && s_shell_hwnd) {
+        /* The taskbar button and Alt+Tab entry show the application's icon, not the
+           generic one: the float class has none, so take the main window's (MACMINI). */
+        HICON l_big = (HICON)SendMessageW(s_shell_hwnd, WM_GETICON, ICON_BIG, 0);
+        HICON l_small = (HICON)SendMessageW(s_shell_hwnd, WM_GETICON, ICON_SMALL, 0);
+        if (!l_big) l_big = (HICON)GetClassLongPtrW(s_shell_hwnd, GCLP_HICON);
+        if (!l_small) l_small = (HICON)GetClassLongPtrW(s_shell_hwnd, GCLP_HICONSM);
+        if (l_big) SendMessageW(l_hwnd, WM_SETICON, ICON_BIG, (LPARAM)l_big);
+        if (l_small) SendMessageW(l_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)l_small);
+    }
     SetWindowLongPtrW(l_hwnd, GWLP_USERDATA, (LONG_PTR)l_slot);
+    /* Layered on document windows too: SHELL_PANEL.set_opacity works on every panel. */
     SetLayeredWindowAttributes(l_hwnd, 0, 255, LWA_ALPHA);
     s_shell_panel[l_slot] = l_hwnd;
     s_shell_panel_drag[l_slot] = 0;
@@ -1617,6 +1628,16 @@ static int shell_panel_is_tool_window(int l_slot) {
 static int shell_panel_has_owner(int l_slot) {
     HWND l_hwnd = shell_panel_hwnd(l_slot);
     return (l_hwnd && GetWindow(l_hwnd, GW_OWNER)) ? 1 : 0;
+}
+/* The big icon a panel shows, and the main window's (tests compare them). */
+static void* shell_panel_icon(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return l_hwnd ? (void*)SendMessageW(l_hwnd, WM_GETICON, ICON_BIG, 0) : 0;
+}
+static void* shell_main_icon(void) {
+    HICON l_big = s_shell_hwnd ? (HICON)SendMessageW(s_shell_hwnd, WM_GETICON, ICON_BIG, 0) : 0;
+    if (!l_big && s_shell_hwnd) l_big = (HICON)GetClassLongPtrW(s_shell_hwnd, GCLP_HICON);
+    return (void*)l_big;
 }
 static int shell_panel_can_minimize(int l_slot) {
     HWND l_hwnd = shell_panel_hwnd(l_slot);

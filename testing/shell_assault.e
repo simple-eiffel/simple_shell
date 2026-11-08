@@ -646,6 +646,32 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			assert_false ("the setting went with the window", w.close_requests_are_events)
 		end
 
+	test_document_window_is_not_a_tool_window
+			-- 1.30.0 (W3): a document window has no tool-window style, no owner and a minimize
+			-- box, read from the real window; a framed panel beside it keeps all three as before.
+			-- Closing frees the slot for the next window.
+		local
+			l_document, l_tool: SHELL_PANEL
+		do
+			create l_document.make
+			create l_tool.make
+			l_document.open_document (-3000, -3000, 400, 300, {STRING_32} "Table of values")
+			l_tool.open_framed (-3000, -3000, 300, 200, {STRING_32} "Tool")
+			assert_true ("document open", l_document.is_open and l_document.is_framed and l_document.is_document)
+			assert_false ("no tool-window style", l_document.is_tool_window)
+			assert_false ("no owner", l_document.has_owner)
+			assert_true ("can minimize", l_document.can_minimize)
+			assert_true ("tool still a tool window", l_tool.is_tool_window)
+			assert_false ("tool cannot minimize", l_tool.can_minimize)
+			assert_false ("tool is not a document", l_tool.is_document)
+			l_document.close
+			assert_false ("closed", l_document.is_open or l_document.is_document)
+			l_document.open_document (-3000, -3000, 400, 300, {STRING_32} "Again")
+			assert_true ("the freed slot opens again", l_document.is_open)
+			l_document.close
+			l_tool.close
+		end
+
 	test_heartbeat_is_settable
 		local
 			w: SHELL_TEST_WINDOW

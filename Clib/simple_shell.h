@@ -1512,7 +1512,11 @@ static int shell_panel_open(int l_x, int l_y, int l_w, int l_h) {
 /* Create a hidden FRAMED panel (1.23.0, GW-22) titled `l_title', owned by
    the main window when there is one; answers its slot, or -1. Layered like
    every panel, so opacity and click-through still work. */
-static int shell_panel_open_framed(int l_x, int l_y, int l_w, int l_h, const wchar_t* l_title) {
+/* 1.30.0 (W3, simple_gui): l_document = 1 opens a DOCUMENT window instead of a tool
+   window: no WS_EX_TOOLWINDOW, minimize and maximize boxes, no owner. So it gets its own
+   taskbar button and Alt+Tab entry, a normal caption, and stacks and minimizes on its own;
+   it stays reachable when the main window is hidden. */
+static int shell_panel_open_framed_as(int l_x, int l_y, int l_w, int l_h, const wchar_t* l_title, int l_document) {
     WNDCLASSW l_wc;
     HWND l_hwnd;
     int l_slot = -1, l_i;
@@ -1526,9 +1530,9 @@ static int shell_panel_open_framed(int l_x, int l_y, int l_w, int l_h, const wch
     l_wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
     l_wc.lpszClassName = L"SimpleShellFloat";
     RegisterClassW(&l_wc);          /* a second registration fails harmlessly */
-    l_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_LAYERED, L"SimpleShellFloat", l_title,
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME, l_x, l_y, l_w, l_h,
-        s_shell_hwnd, 0, GetModuleHandleW(0), 0);
+    l_hwnd = CreateWindowExW(l_document ? WS_EX_LAYERED : (WS_EX_TOOLWINDOW | WS_EX_LAYERED), L"SimpleShellFloat", l_title,
+        l_document ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME), l_x, l_y, l_w, l_h,
+        l_document ? 0 : s_shell_hwnd, 0, GetModuleHandleW(0), 0);
     if (!l_hwnd) return -1;
     SetWindowLongPtrW(l_hwnd, GWLP_USERDATA, (LONG_PTR)l_slot);
     SetLayeredWindowAttributes(l_hwnd, 0, 255, LWA_ALPHA);
@@ -1600,6 +1604,23 @@ static void shell_panel_place(int l_slot, int l_x, int l_y, int l_w, int l_h) {
 static void shell_panel_hide(int l_slot) {
     HWND l_hwnd = shell_panel_hwnd(l_slot);
     if (l_hwnd) ShowWindow(l_hwnd, SW_HIDE);
+}
+
+static int shell_panel_open_framed(int l_x, int l_y, int l_w, int l_h, const wchar_t* l_title) {
+    return shell_panel_open_framed_as(l_x, l_y, l_w, l_h, l_title, 0);
+}
+/* What the window really is (tests read these, not a remembered flag). */
+static int shell_panel_is_tool_window(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return (l_hwnd && (GetWindowLongPtrW(l_hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) ? 1 : 0;
+}
+static int shell_panel_has_owner(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return (l_hwnd && GetWindow(l_hwnd, GW_OWNER)) ? 1 : 0;
+}
+static int shell_panel_can_minimize(int l_slot) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    return (l_hwnd && (GetWindowLongPtrW(l_hwnd, GWL_STYLE) & WS_MINIMIZEBOX)) ? 1 : 0;
 }
 
 static void shell_panel_close(int l_slot) {

@@ -8,7 +8,7 @@ CAIRO_CFLAGS := $(shell pkg-config --cflags cairo 2>/dev/null || echo -I/opt/hom
 CFLAGS ?= -O2 -g
 CFLAGS += -Wall $(CAIRO_CFLAGS)
 
-SOURCES := macos/shell_appkit.m macos/shell_appkit_ax.m
+SOURCES := macos/shell_appkit.m macos/shell_appkit_ax.m macos/shell_appkit_print.m
 OBJECTS := $(SOURCES:.m=.o) macos/shell_appkit_stubs.o
 
 simple_shell_appkit.o: $(OBJECTS)

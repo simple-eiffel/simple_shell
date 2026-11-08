@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.31.1 - 2026-11-08
+
+### Fixed
+
+- macOS: `shell_add_font` accepts a font file this process has already registered, as Windows' `AddFontResourceEx` accepts repeated loads (Core Text refused the second registration, so simple_narrate's second Studio in a run counted no fonts).
+
 ## 1.31.0 - 2026-11-08
 
 ### Added

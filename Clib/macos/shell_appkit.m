@@ -734,11 +734,17 @@ void shell_set_window_icon(const void *path)
 	if (i) [NSApp setApplicationIconImage:i];
 }
 
-/* A font file for this process, as AddFontResourceEx(FR_PRIVATE): 1 on success. */
+/* A font file for this process, as AddFontResourceEx(FR_PRIVATE): 1 on success. Windows
+   counts repeated loads of one file and accepts each; Core Text refuses a file it already
+   has, so "already registered" is a success here too. */
 int shell_add_font(const char *path)
 {
 	NSURL *u = [NSURL fileURLWithPath:shell_text(path)];
-	return CTFontManagerRegisterFontsForURL((__bridge CFURLRef)u, kCTFontManagerScopeProcess, NULL) ? 1 : 0;
+	CFErrorRef l_error = NULL;
+	if (CTFontManagerRegisterFontsForURL((__bridge CFURLRef)u, kCTFontManagerScopeProcess, &l_error)) return 1;
+	int l_already = l_error && CFErrorGetCode(l_error) == kCTFontManagerErrorAlreadyRegistered;
+	if (l_error) CFRelease(l_error);
+	return l_already ? 1 : 0;
 }
 
 void shell_set_heartbeat(int l_ms)

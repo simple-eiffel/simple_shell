@@ -13,6 +13,9 @@
 #ifdef __APPLE__
 /* macOS: the AppKit half declares the same entry points; Clib/macos/shell_appkit.m has the bodies. */
 #include "macos/shell_appkit.h"
+#elif defined(__linux__)
+/* Linux: the GTK 4 half, the same entry points; Clib/linux/shell_gtk.c has the bodies. */
+#include "linux/shell_gtk.h"
 #else
 
 #include <windows.h>
@@ -2497,6 +2500,6 @@ static int shell_tray_remove(HWND h) {
     return ok;
 }
 
-#endif /* __APPLE__ */
+#endif /* __APPLE__, __linux__ */
 
 #endif

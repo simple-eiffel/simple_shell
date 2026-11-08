@@ -189,13 +189,14 @@ Windows backend (simple_gui over simple_widgets):
 ## macOS (1.31)
 
 On a Mac the same classes run on an AppKit half in `Clib/macos/`: the headers declare the
-same entry points, and `shell_appkit.m` and `shell_appkit_ax.m` supply them. It speaks the
-Windows contract: the same events and numbers, coordinates in device pixels (as for a
+same entry points, and `shell_appkit.m`, `shell_appkit_print.m` and the shared
+`shell_ax_table.c` supply them. It speaks the Windows contract: the same events and numbers, coordinates in device pixels (as for a
 DPI-aware Win32 process: the DPI is 96 times the backing scale), keys as Windows virtual
 keys with Command as the primary modifier, and the window's backing cairo image in place
 of a device context (simple_cairo's off-Windows contract). So simple_widgets runs
-unchanged: its own suite passes 671 of 678 on macOS, and simple_narrate's Studio builds
-and passes its tests.
+unchanged: its own suite passes 691 of 695 on macOS (the four left are three Windows
+drive-letter tests and the screen-reader test), and simple_narrate's Studio builds and
+passes its tests.
 
 ```bash
 make -C Clib     # Clib/simple_shell_appkit.o, which the ECF links on macOS
@@ -214,19 +215,59 @@ Done on the Mac:
   Windows);
 - dark mode, Increase Contrast and Reduce Motion (events 53, 56, 57); the work area and
   DPI;
-- the accessibility table (begin, add, describe, commit, read back).
+- the accessibility table (begin, add, describe, commit, read back);
+- the panel extras (unframed and tool panels, grips, opacity, click-through), file dialogs
+  and drops, spelling, printing (a cairo PDF sent through CUPS), monitors, the overlay and
+  strip, the tray (a status item), hotkeys, input synthesis (it needs macOS's
+  Accessibility permission) and the screen grab (it needs Screen Recording).
 
-Not yet: 89 entry points answer "not available" through stubs that `make` generates
-from the header (`Clib/macos/make_stubs.pl`), so each disappears when its body is
-written. The largest groups are the panel extras (unframed panels, grips, opacity,
-click-through), printing, the tray, input synthesis, spelling, the screen grab (it needs
-macOS's Screen Recording permission), hotkeys, monitors, the overlay and strip, and
-serving the accessibility table to VoiceOver.
+Not yet: serving the accessibility table to VoiceOver, left for last by Larry's order.
+
+Every entry point is declared once, in `Clib/shell_posix.h`, for both the macOS and the
+Linux half. `make` runs `Clib/make_stubs.pl` over that list and a half's sources, and
+gives each entry point without a body a "not available" stub, so the stubs file is the
+half's to-do list (on the Mac it is empty).
 
 `SHELL_APPKIT_SCRIPT="click:X,Y;type:TEXT;shot:FILE;close"` drives a running app through
 AppKit's real event dispatch, one step per heartbeat. simple_shell's own test suite is
 Windows-specific (desktop grab, UI Automation, the Alt door); on the Mac the evidence is
 simple_widgets' suite. The design record is `docs/SHELL_SEAM.md` in port-coordination (#25).
+
+## Linux (GTK 4, in progress)
+
+On Linux the same classes run on a GTK 4 half in `Clib/linux/shell_gtk.c` (with the shared
+`shell_ax_table.c`), built to the same contract as the macOS half: Windows' event numbers,
+device pixels, Windows virtual keys and UTF-16 characters, and the window's backing cairo
+image in place of a device context. So simple_widgets runs unchanged: its suite passes
+684 of 695 on Ubuntu 24.04 under WSL (GTK 4.14).
+
+```bash
+make -C Clib     # Clib/simple_shell_gtk.o, which the ECF links (with GTK 4 and fontconfig) on Linux
+```
+
+Done on Linux: the window and its pump (on GLib's main context), the pointer, keys and
+characters, the cursor kinds, the heartbeat, fast and dwell timers, the wake from any
+thread, close as an event, appearance, the desktop and the clock; the accessibility table;
+private fonts (fontconfig); the clipboard's text and images; and panels (simple_widgets'
+floating and document windows), each a window of its own.
+
+What Wayland does not allow: placing a window or reading where it is (a window's place is
+its size; panel moves are not reported), the global pointer position, and the screen grab
+(it needs the desktop portal; not written yet). Not yet: file dialogs and drops, spelling,
+printing, monitors, the overlay and strip, the tray, hotkeys and input synthesis; serving
+the accessibility table to AT-SPI (checked with Orca) comes last, by Larry's order.
+
+Of simple_widgets' 11 failures on Linux: three are Windows drive-letter tests and one is the
+screen-reader test (as on the Mac), one is the screen grab, and six need fonts this WSL
+image lacks (Noto: `fonts-noto-core`, `fonts-noto-color-emoji`) - pointed Hebrew, emoji.
+
+## Running on macOS and Linux
+
+Set `SIMPLE_EIFFEL` when running a program or test suite, not only when building:
+simple_widgets finds simple_shaping's assets through it. On Linux, also build the C objects
+the libraries need (`make -C Clib` in eiffel_sqlite_2025, with `ISE_EIFFEL` and
+`ISE_PLATFORM` set, and in simple_speech), and set `SHERPA_ONNX_DIR` for simple_widgets'
+speech kit (here `/opt/sherpa-onnx-v1.12.20-linux-x64-shared`).
 
 ## Design rules it obeys
 

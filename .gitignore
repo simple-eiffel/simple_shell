@@ -3,3 +3,6 @@ EIFGENs/
 Clib/*.o
 Clib/macos/*.o
 Clib/macos/shell_appkit_stubs.c
+Clib/linux/*.o
+Clib/linux/shell_gtk_stubs.c
+Clib/shell_ax_table.o

@@ -1,15 +1,15 @@
-/* shell_appkit_ax.m - simple_shell's accessibility table on macOS (M1).
+/* shell_ax_table.c - simple_shell's accessibility table off Windows (macOS and Linux share it;
+   it was macos/shell_appkit_ax.m, pure C apart from an unused Foundation import).
    The same contract as the Windows bridge (simple_shell_uia.h): `shell_uia_begin' stages a
    table, `shell_uia_add' and `shell_uia_describe_last' fill it, `shell_uia_commit' publishes
    it for a window, and the row_* functions read the published table back. Text is kept and
    answered as UTF-8 (the Eiffel side reads it through NATIVE_STRING).
-   Not yet: serving the table to VoiceOver as NSAccessibilityElements (M1 step 2), so
-   `shell_uia_clients_listening' answers 0. */
+   Not yet: serving the table to a screen reader (VoiceOver on macOS, AT-SPI on Linux; last,
+   by Larry's order), so `shell_uia_clients_listening' answers 0. */
 
-#import <Foundation/Foundation.h>
 #include <stdlib.h>
 #include <string.h>
-#include "shell_appkit.h"
+#include "shell_posix.h"
 
 typedef struct {
 	int l_id, l_parent, l_role, l_focusable, l_enabled, l_has_value;

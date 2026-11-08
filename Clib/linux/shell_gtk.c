@@ -69,6 +69,8 @@ int SystemParametersInfoW(unsigned int a_action, unsigned int a_param, void *a_o
 	return 1;
 }
 
+static void shell_take_drops(GtkWidget *a_widget, gpointer d);   /* below, with files */
+
 /* ------------------------------------------------------------------ the queue */
 
 /* [type, a, b, c] per slot, as on Windows. Pushed on the GTK thread only (a worker's wake
@@ -392,6 +394,7 @@ void *shell_create_window(const void *title, int px, int py, int cw, int ch)
 	k = gtk_event_controller_key_new();
 	g_signal_connect(k, "key-pressed", G_CALLBACK(shell_on_key), NULL);
 	gtk_widget_add_controller(s_window, k);
+	shell_take_drops(s_area, GINT_TO_POINTER(0));
 	gtk_window_set_child(GTK_WINDOW(s_window), s_area);
 	g_signal_connect(s_window, "close-request", G_CALLBACK(shell_on_close_request), NULL);
 	g_signal_connect(s_window, "destroy", G_CALLBACK(shell_on_destroy), NULL);
@@ -924,6 +927,7 @@ static int shell_panel_make(int l_w, int l_h, const void *l_title, int l_framed,
 	key = gtk_event_controller_key_new();
 	g_signal_connect(key, "key-pressed", G_CALLBACK(shell_panel_on_key), d);
 	gtk_widget_add_controller(p->window, key);
+	shell_take_drops(p->area, d);
 	gtk_window_set_child(GTK_WINDOW(p->window), p->area);
 	g_signal_connect(p->window, "close-request", G_CALLBACK(shell_panel_on_close), d);
 	g_signal_connect(p->window, "notify::is-active", G_CALLBACK(shell_panel_on_active), d);
@@ -1022,3 +1026,146 @@ int shell_panel_is_click_through(int l_slot) { return shell_panel_ok(l_slot) && 
 void shell_panel_set_accepts_files(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel[l_slot].accepts = l_on ? 1 : 0; }
 int shell_panel_accepts_files(int l_slot) { return shell_panel_ok(l_slot) && s_panel[l_slot].accepts ? 1 : 0; }
 HWND shell_panel_hwnd(int l_slot) { return shell_panel_ok(l_slot) ? (HWND)s_panel[l_slot].window : NULL; }
+
+/* ------------------------------------------------------------------ files: drops and the open dialog */
+
+/* The last drop's paths, UTF-16 and one per line, as the Windows half keeps them for
+   `shell_drop_paths'. */
+#define SHELL_DROPS_CAP 16384
+static gunichar2 s_drops[SHELL_DROPS_CAP];
+static int s_drops_len = 0;
+
+/* Keep `a_paths' (UTF-8, one per line); answers how many paths. */
+static int shell_keep_drops(const char *a_paths)
+{
+	glong n = 0;
+	int l_count = 0;
+	const char *c;
+	gunichar2 *u = g_utf8_to_utf16(a_paths ? a_paths : "", -1, NULL, &n, NULL);
+	if (!u) { s_drops_len = 0; return 0; }
+	if (n > SHELL_DROPS_CAP - 1) n = SHELL_DROPS_CAP - 1;
+	memcpy(s_drops, u, (size_t)n * sizeof(gunichar2));
+	s_drops[n] = 0;
+	s_drops_len = (int)n;
+	g_free(u);
+	if (n > 0) for (l_count = 1, c = a_paths; *c; c++) if (*c == '\n') l_count++;
+	return l_count;
+}
+/* The paths of the last drop, UTF-16 and one per line, into `buf' (the caller reads 16-bit
+   units); taking them empties the store, as on Windows. */
+int shell_drop_paths(void *buf, int cap)
+{
+	int n = s_drops_len;
+	if (cap < 1) return 0;
+	if (n >= cap) n = cap - 1;
+	memcpy(buf, s_drops, (size_t)n * sizeof(gunichar2));
+	((gunichar2 *)buf)[n] = 0;
+	s_drops_len = 0;
+	return n;
+}
+/* A drop delivered as if from the file manager (the test door): `l_paths' one per line, UTF-8. */
+void shell_panel_try_drop(int l_slot, int l_x, int l_y, const void *l_paths)
+{
+	if (!shell_panel_ok(l_slot) || !l_paths) return;
+	shell_keep_drops((const char *)l_paths);
+	shell_push(50, l_x, l_y, l_slot);
+}
+/* Files dropped: the main window always takes them (event 18: x, y, count), a panel when it
+   accepts files (event 50: x, y, slot). `d' is the slot plus 1, or 0 for the main window. */
+static gboolean shell_on_drop(GtkDropTarget *t, const GValue *v, double x, double y, gpointer d)
+{
+	int l_slot = GPOINTER_TO_INT(d) - 1, n;
+	GString *l_paths;
+	GSList *l;
+	(void)t;
+	if (!G_VALUE_HOLDS(v, GDK_TYPE_FILE_LIST)) return FALSE;
+	if (l_slot >= 0 && !shell_panel_accepts_files(l_slot)) return FALSE;
+	l_paths = g_string_new(NULL);
+	for (l = g_value_get_boxed(v); l; l = l->next) {
+		char *p = g_file_get_path(G_FILE(l->data));
+		if (p) { if (l_paths->len) g_string_append_c(l_paths, '\n'); g_string_append(l_paths, p); g_free(p); }
+	}
+	n = shell_keep_drops(l_paths->str);
+	g_string_free(l_paths, TRUE);
+	if (n == 0) return FALSE;
+	if (l_slot < 0) shell_push(18, shell_px(x), shell_px(y), n);
+	else shell_push(50, shell_panel_px(l_slot, x), shell_panel_px(l_slot, y), l_slot);
+	return TRUE;
+}
+static void shell_take_drops(GtkWidget *a_widget, gpointer d)
+{
+	GtkDropTarget *t = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+	g_signal_connect(t, "drop", G_CALLBACK(shell_on_drop), d);
+	gtk_widget_add_controller(a_widget, GTK_EVENT_CONTROLLER(t));
+}
+
+/* The open dialog: GtkFileDialog answers asynchronously, so the call waits on the main loop. */
+typedef struct { int done; GFile *file; } ShellFileChoice;
+static void shell_file_chosen(GObject *o, GAsyncResult *r, gpointer d)
+{
+	ShellFileChoice *c = d;
+	c->file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(o), r, NULL);
+	c->done = 1;
+}
+/* A Windows filter ("Text|*.txt;*.md|All|*.*": description, patterns, ...) as GTK filters;
+   NULL when it allows any file. */
+static GListModel *shell_filters(const char *a_filter)
+{
+	gchar **l_parts;
+	GListStore *l_store;
+	int i, l_any = 0;
+	if (!a_filter || !*a_filter) return NULL;
+	l_parts = g_strsplit(a_filter, "|", -1);
+	l_store = g_list_store_new(GTK_TYPE_FILE_FILTER);
+	for (i = 0; l_parts[i] && l_parts[i + 1]; i += 2) {
+		GtkFileFilter *f = gtk_file_filter_new();
+		gchar **l_patterns = g_strsplit(l_parts[i + 1], ";", -1);
+		int j;
+		gtk_file_filter_set_name(f, l_parts[i]);
+		for (j = 0; l_patterns[j]; j++) {
+			char *p = g_strstrip(l_patterns[j]);
+			if (strcmp(p, "*.*") == 0 || strcmp(p, "*") == 0) l_any = 1;
+			gtk_file_filter_add_pattern(f, strcmp(p, "*.*") == 0 ? "*" : p);
+		}
+		g_strfreev(l_patterns);
+		g_list_store_append(l_store, f);
+		g_object_unref(f);
+	}
+	g_strfreev(l_parts);
+	if (l_any && g_list_model_get_n_items(G_LIST_MODEL(l_store)) <= 1) { g_object_unref(l_store); return NULL; }
+	return G_LIST_MODEL(l_store);
+}
+/* Choose one existing file: its path, UTF-8, into `l_out' (the caller reads NATIVE_STRING;
+   the buffer holds 2 * l_cap bytes). 1 when a file was chosen. */
+int shell_open_file_dialog(const void *l_title, const void *l_filter, const void *l_initial_dir, void *l_out, int l_cap)
+{
+	GtkFileDialog *g;
+	GListModel *l_filters;
+	ShellFileChoice c = {0, NULL};
+	char *l_path;
+	size_t l_len;
+	if (!l_out || l_cap <= 1) return 0;
+	((char *)l_out)[0] = 0;
+	shell_app();
+	g = gtk_file_dialog_new();
+	if (l_title && *(const char *)l_title) gtk_file_dialog_set_title(g, (const char *)l_title);
+	l_filters = shell_filters((const char *)l_filter);
+	if (l_filters) { gtk_file_dialog_set_filters(g, l_filters); g_object_unref(l_filters); }
+	if (l_initial_dir && *(const char *)l_initial_dir) {
+		GFile *d = g_file_new_for_path((const char *)l_initial_dir);
+		gtk_file_dialog_set_initial_folder(g, d);
+		g_object_unref(d);
+	}
+	gtk_file_dialog_open(g, s_window ? GTK_WINDOW(s_window) : NULL, NULL, shell_file_chosen, &c);
+	while (!c.done) g_main_context_iteration(NULL, TRUE);
+	g_object_unref(g);
+	if (!c.file) return 0;
+	l_path = g_file_get_path(c.file);
+	g_object_unref(c.file);
+	if (!l_path) return 0;
+	l_len = strlen(l_path);
+	if (l_len > (size_t)l_cap * 2 - 1) { g_free(l_path); return 0; }
+	memcpy(l_out, l_path, l_len + 1);
+	g_free(l_path);
+	return 1;
+}

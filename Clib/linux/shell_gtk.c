@@ -6,6 +6,8 @@
    available" for them (see shell_gtk.h). */
 
 #include <gtk/gtk.h>
+#include <fontconfig/fontconfig.h>
+#include <string.h>
 #include "shell_gtk.h"
 
 /* ------------------------------------------------------------------ shared state the inline C reads */
@@ -598,4 +600,149 @@ int shell_minutes_of_day(void)
 	int l_minutes = g_date_time_get_hour(l_now) * 60 + g_date_time_get_minute(l_now);
 	g_date_time_unref(l_now);
 	return l_minutes;
+}
+
+/* ------------------------------------------------------------------ fonts */
+
+/* A font file for this process, as AddFontResourceEx(FR_PRIVATE): 1 on success (a font
+   already added counts). fontconfig is what GTK, Pango and simple_shaping all ask. */
+int shell_add_font(const char *path)
+{
+	if (!path || !*path) return 0;
+	return FcConfigAppFontAddFile(FcConfigGetCurrent(), (const FcChar8 *)path) ? 1 : 0;
+}
+
+/* ------------------------------------------------------------------ clipboard */
+
+/* GTK 4's clipboard answers asynchronously; the shell's contract is synchronous, so a read
+   runs the main loop until its answer arrives (a second at most). */
+typedef struct { int done; char *text; GdkTexture *texture; } ShellClipRead;
+static GdkClipboard *shell_clipboard(void)
+{
+	GdkDisplay *l_display;
+	shell_app();
+	l_display = gdk_display_get_default();
+	return l_display ? gdk_display_get_clipboard(l_display) : NULL;
+}
+static void shell_clip_wait(ShellClipRead *a_read)
+{
+	gint64 l_end = g_get_monotonic_time() + 1000000;
+	while (!a_read->done && g_get_monotonic_time() < l_end) g_main_context_iteration(NULL, FALSE);
+}
+static void shell_clip_text_done(GObject *o, GAsyncResult *r, gpointer d)
+{
+	ShellClipRead *l_read = d;
+	l_read->text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(o), r, NULL);
+	l_read->done = 1;
+}
+static void shell_clip_texture_done(GObject *o, GAsyncResult *r, gpointer d)
+{
+	ShellClipRead *l_read = d;
+	l_read->texture = gdk_clipboard_read_texture_finish(GDK_CLIPBOARD(o), r, NULL);
+	l_read->done = 1;
+}
+
+/* Text in as UTF-8. */
+int shell_clip_set(const void *s)
+{
+	GdkClipboard *c = shell_clipboard();
+	if (!c) return 0;
+	gdk_clipboard_set_text(c, s ? (const char *)s : "");
+	return 1;
+}
+/* UTF-16 into `buf' (the caller reads 16-bit units), at most cap - 1 and a terminator. */
+int shell_clip_get(void *buf, int cap)
+{
+	GdkClipboard *c = shell_clipboard();
+	ShellClipRead l_read = {0, NULL, NULL};
+	gunichar2 *l_units;
+	glong l_n = 0;
+	if (!c || cap < 1) return 0;
+	gdk_clipboard_read_text_async(c, NULL, shell_clip_text_done, &l_read);
+	shell_clip_wait(&l_read);
+	if (!l_read.text) return 0;
+	l_units = g_utf8_to_utf16(l_read.text, -1, NULL, &l_n, NULL);
+	g_free(l_read.text);
+	if (!l_units) return 0;
+	if (l_n > cap - 1) l_n = cap - 1;
+	memcpy(buf, l_units, (size_t)l_n * sizeof(gunichar2));
+	((gunichar2 *)buf)[l_n] = 0;
+	g_free(l_units);
+	return (int)l_n;
+}
+int shell_clip_has_text(void)
+{
+	GdkClipboard *c = shell_clipboard();
+	GdkContentFormats *f = c ? gdk_clipboard_get_formats(c) : NULL;
+	return f && (gdk_content_formats_contain_gtype(f, G_TYPE_STRING)
+		|| gdk_content_formats_contain_mime_type(f, "text/plain;charset=utf-8")
+		|| gdk_content_formats_contain_mime_type(f, "text/plain")) ? 1 : 0;
+}
+
+/* Images: 32-bit pixels as cairo keeps them (0xAARRGGBB, top row first; in memory B G R A,
+   which is GDK's default memory format), always opaque, as the Windows half reads and
+   writes them. */
+int shell_clip_set_image(const void *bits, int w, int h, int stride)
+{
+	GdkClipboard *c = shell_clipboard();
+	GBytes *l_bytes;
+	GdkTexture *t;
+	guchar *l_copy;
+	int row, col;
+	if (!c || !bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
+	l_copy = g_malloc((gsize)h * (gsize)w * 4);
+	for (row = 0; row < h; row++) {
+		const guint32 *src = (const guint32 *)((const char *)bits + (size_t)row * stride);
+		guint32 *dst = (guint32 *)(l_copy + (size_t)row * w * 4);
+		for (col = 0; col < w; col++) dst[col] = src[col] | 0xFF000000u;
+	}
+	l_bytes = g_bytes_new_take(l_copy, (gsize)h * (gsize)w * 4);
+	t = gdk_memory_texture_new(w, h, GDK_MEMORY_DEFAULT, l_bytes, (gsize)w * 4);
+	g_bytes_unref(l_bytes);
+	gdk_clipboard_set_texture(c, t);
+	g_object_unref(t);
+	return 1;
+}
+int shell_clip_has_image(void)
+{
+	GdkClipboard *c = shell_clipboard();
+	GdkContentFormats *f = c ? gdk_clipboard_get_formats(c) : NULL;
+	return f && (gdk_content_formats_contain_gtype(f, GDK_TYPE_TEXTURE)
+		|| gdk_content_formats_contain_mime_type(f, "image/png")) ? 1 : 0;
+}
+static GdkTexture *shell_clip_texture(void)
+{
+	GdkClipboard *c = shell_clipboard();
+	ShellClipRead l_read = {0, NULL, NULL};
+	if (!c) return NULL;
+	gdk_clipboard_read_texture_async(c, NULL, shell_clip_texture_done, &l_read);
+	shell_clip_wait(&l_read);
+	return l_read.texture;
+}
+int shell_clip_image_size(int *w, int *h)
+{
+	GdkTexture *t = shell_clip_texture();
+	*w = 0; *h = 0;
+	if (!t) return 0;
+	*w = gdk_texture_get_width(t);
+	*h = gdk_texture_get_height(t);
+	g_object_unref(t);
+	return 1;
+}
+/* Only when the image is exactly `w' x `h' pixels, as on Windows. */
+int shell_clip_get_image(void *bits, int w, int h, int stride)
+{
+	GdkTexture *t;
+	int row, col;
+	if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
+	t = shell_clip_texture();
+	if (!t) return 0;
+	if (gdk_texture_get_width(t) != w || gdk_texture_get_height(t) != h) { g_object_unref(t); return 0; }
+	gdk_texture_download(t, bits, (gsize)stride);
+	g_object_unref(t);
+	for (row = 0; row < h; row++) {
+		guint32 *px = (guint32 *)((char *)bits + (size_t)row * stride);
+		for (col = 0; col < w; col++) px[col] |= 0xFF000000u;
+	}
+	return 1;
 }

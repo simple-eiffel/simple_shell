@@ -38,6 +38,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_strip_window_really_creates, "strip_window_really_creates")
 			run_test (agent t.test_queue_is_one_instance_across_units, "queue_is_one_instance_across_units")
 			run_test (agent t.test_wake_needs_a_pump_and_coalesces, "wake_needs_a_pump_and_coalesces")
+			run_test (agent t.test_stepwise_turns_return_early_and_report_close, "stepwise_turns_return_early_and_report_close")
 			run_test (agent t.test_heartbeat_is_settable, "heartbeat_is_settable")
 			run_test (agent t.test_dwell_fires_once_after_rest, "dwell_fires_once_after_rest")
 			run_test (agent t.test_appearance_reads_the_windows_setting, "appearance_reads_the_windows_setting")

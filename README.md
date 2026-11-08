@@ -194,8 +194,9 @@ Windows contract: the same events and numbers, coordinates in device pixels (as 
 DPI-aware Win32 process: the DPI is 96 times the backing scale), keys as Windows virtual
 keys with Command as the primary modifier, and the window's backing cairo image in place
 of a device context (simple_cairo's off-Windows contract). So simple_widgets runs
-unchanged: its own suite passes 671 of 678 on macOS, and simple_narrate's Studio builds
-and passes its tests.
+unchanged: its own suite passes 691 of 695 on macOS (the four left are three Windows
+drive-letter tests and the screen-reader test), and simple_narrate's Studio builds and
+passes its tests.
 
 ```bash
 make -C Clib     # Clib/simple_shell_appkit.o, which the ECF links on macOS
@@ -214,14 +215,18 @@ Done on the Mac:
   Windows);
 - dark mode, Increase Contrast and Reduce Motion (events 53, 56, 57); the work area and
   DPI;
-- the accessibility table (begin, add, describe, commit, read back).
+- the accessibility table (begin, add, describe, commit, read back);
+- the panel extras (unframed and tool panels, grips, opacity, click-through), file dialogs
+  and drops, spelling, printing (a cairo PDF sent through CUPS), monitors, the overlay and
+  strip, the tray (a status item), hotkeys, input synthesis (it needs macOS's
+  Accessibility permission) and the screen grab (it needs Screen Recording).
 
-Not yet: 89 entry points answer "not available" through stubs that `make` generates
-from the header (`Clib/macos/make_stubs.pl`), so each disappears when its body is
-written. The largest groups are the panel extras (unframed panels, grips, opacity,
-click-through), printing, the tray, input synthesis, spelling, the screen grab (it needs
-macOS's Screen Recording permission), hotkeys, monitors, the overlay and strip, and
-serving the accessibility table to VoiceOver.
+Not yet: serving the accessibility table to VoiceOver, left for last by Larry's order.
+
+Every entry point is declared once, in `Clib/shell_posix.h`, for both the macOS and the
+Linux half. `make` runs `Clib/make_stubs.pl` over that list and a half's sources, and
+gives each entry point without a body a "not available" stub, so the stubs file is the
+half's to-do list (on the Mac it is empty).
 
 `SHELL_APPKIT_SCRIPT="click:X,Y;type:TEXT;shot:FILE;close"` drives a running app through
 AppKit's real event dispatch, one step per heartbeat. simple_shell's own test suite is

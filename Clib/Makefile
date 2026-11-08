@@ -14,13 +14,13 @@ OBJECTS := $(SOURCES:.m=.o) macos/shell_appkit_stubs.o
 simple_shell_appkit.o: $(OBJECTS)
 	ld -r $(OBJECTS) -o simple_shell_appkit.o
 
-macos/%.o: macos/%.m macos/shell_appkit.h
+macos/%.o: macos/%.m macos/shell_appkit.h shell_posix.h
 	$(CC) $(CFLAGS) -fobjc-arc -c $< -o $@
 
-macos/shell_appkit_stubs.c: macos/shell_appkit.h $(SOURCES) macos/make_stubs.pl
-	perl macos/make_stubs.pl macos/shell_appkit.h $(SOURCES) > macos/shell_appkit_stubs.c
+macos/shell_appkit_stubs.c: shell_posix.h $(SOURCES) make_stubs.pl
+	perl make_stubs.pl shell_posix.h $(SOURCES) > macos/shell_appkit_stubs.c
 
-macos/shell_appkit_stubs.o: macos/shell_appkit_stubs.c macos/shell_appkit.h
+macos/shell_appkit_stubs.o: macos/shell_appkit_stubs.c shell_posix.h
 	$(CC) $(CFLAGS) -Wno-unused-parameter -c macos/shell_appkit_stubs.c -o macos/shell_appkit_stubs.o
 
 clean:
@@ -42,14 +42,14 @@ OBJECTS := $(SOURCES:.c=.o) linux/shell_gtk_stubs.o
 simple_shell_gtk.o: $(OBJECTS)
 	ld -r $(OBJECTS) -o simple_shell_gtk.o
 
-linux/%.o: linux/%.c linux/shell_gtk.h macos/shell_appkit.h
+linux/%.o: linux/%.c linux/shell_gtk.h shell_posix.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-linux/shell_gtk_stubs.c: macos/shell_appkit.h $(SOURCES) macos/make_stubs.pl
-	perl macos/make_stubs.pl macos/shell_appkit.h $(SOURCES) > linux/shell_gtk_stubs.c
+linux/shell_gtk_stubs.c: shell_posix.h $(SOURCES) make_stubs.pl
+	perl make_stubs.pl shell_posix.h $(SOURCES) > linux/shell_gtk_stubs.c
 
-linux/shell_gtk_stubs.o: linux/shell_gtk_stubs.c macos/shell_appkit.h
-	$(CC) $(CFLAGS) -Imacos -Wno-unused-parameter -c linux/shell_gtk_stubs.c -o linux/shell_gtk_stubs.o
+linux/shell_gtk_stubs.o: linux/shell_gtk_stubs.c shell_posix.h
+	$(CC) $(CFLAGS) -Wno-unused-parameter -c linux/shell_gtk_stubs.c -o linux/shell_gtk_stubs.o
 
 clean:
 	rm -f simple_shell_gtk.o linux/*.o linux/shell_gtk_stubs.c

@@ -1,7 +1,7 @@
 # simple_shell
 
 ![tests](https://img.shields.io/badge/tests-42%2F42-brightgreen) ![freeze assault](https://img.shields.io/badge/freeze%20assault-4%2F4-brightgreen) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
-![Windows: tests pass](https://img.shields.io/badge/Windows-tests%20pass-0078D6?logo=windows&logoColor=white) ![macOS: window core](https://img.shields.io/badge/macOS-window%20core-lightgray?logo=apple) ![Linux: in progress](https://img.shields.io/badge/Linux-in%20progress-lightgray)
+![Windows: tests pass](https://img.shields.io/badge/Windows-tests%20pass-0078D6?logo=windows&logoColor=white) ![macOS: simple_widgets runs](https://img.shields.io/badge/macOS-simple__widgets%20runs-success?logo=apple) ![Linux: in progress](https://img.shields.io/badge/Linux-in%20progress-lightgray)
 
 **The Win32 platform shell for the Simple Eiffel ecosystem.** One header of
 battle-tested C, nine Eiffel classes, no rendering opinion. This is the
@@ -171,25 +171,47 @@ the blocking-marker law below. It needs no window and no user:
 ./EIFGENs/simple_shell_scoop_tests/F_code/simple_shell.exe
 ```
 
-## macOS (1.31.0, in progress)
+## macOS (1.31)
 
 On a Mac the same classes run on an AppKit half in `Clib/macos/`: the headers declare the
 same entry points, and `shell_appkit.m` and `shell_appkit_ax.m` supply them. It speaks the
 Windows contract: the same events and numbers, coordinates in device pixels (as for a
-DPI-aware Win32 process), keys as Windows virtual keys with Command as the primary
-modifier, and the window's backing cairo image in place of a device context. So
-simple_widgets runs unchanged.
+DPI-aware Win32 process: the DPI is 96 times the backing scale), keys as Windows virtual
+keys with Command as the primary modifier, and the window's backing cairo image in place
+of a device context (simple_cairo's off-Windows contract). So simple_widgets runs
+unchanged: its own suite passes 671 of 678 on macOS, and simple_narrate's Studio builds
+and passes its tests.
 
 ```bash
 make -C Clib     # Clib/simple_shell_appkit.o, which the ECF links on macOS
 ```
 
-Done: the window and its pump, pointer, keys, timers, the wake, close requests, the
-clipboard's text, appearance, the work area and DPI, and the accessibility table. Entry
-points without a Mac body yet (panels, overlay, tray, hotkeys, monitors, input synthesis,
-spelling, printing, file dialogs, and VoiceOver) answer "not available" through stubs that
-`make` generates. `SHELL_APPKIT_SCRIPT="click:X,Y;type:TEXT;shot:FILE;close"` drives a
-running app through AppKit's real event dispatch, one step per heartbeat.
+Done on the Mac:
+
+- the window and its pump (`shell_pump`, `shell_pump_pending`, `shell_pump_until`), with
+  Windows' event numbers, and close as an event;
+- the pointer (press, double and triple, drag, release, move, leave, wheel, middle,
+  right and Control-click), keys and characters, and the cursor kinds;
+- the heartbeat, fast and dwell timers, and the wake from any thread;
+- framed panels (simple_widgets' floating windows), each a window of its own, with the
+  panel events and the slot in the fourth field;
+- the clipboard's text and images; private fonts (a repeated load is accepted, as on
+  Windows);
+- dark mode, Increase Contrast and Reduce Motion (events 53, 56, 57); the work area and
+  DPI;
+- the accessibility table (begin, add, describe, commit, read back).
+
+Not yet: 89 entry points answer "not available" through stubs that `make` generates
+from the header (`Clib/macos/make_stubs.pl`), so each disappears when its body is
+written. The largest groups are the panel extras (unframed panels, grips, opacity,
+click-through), printing, the tray, input synthesis, spelling, the screen grab (it needs
+macOS's Screen Recording permission), hotkeys, monitors, the overlay and strip, and
+serving the accessibility table to VoiceOver.
+
+`SHELL_APPKIT_SCRIPT="click:X,Y;type:TEXT;shot:FILE;close"` drives a running app through
+AppKit's real event dispatch, one step per heartbeat. simple_shell's own test suite is
+Windows-specific (desktop grab, UI Automation, the Alt door); on the Mac the evidence is
+simple_widgets' suite. The design record is `docs/SHELL_SEAM.md` in port-coordination (#25).
 
 ## Design rules it obeys
 

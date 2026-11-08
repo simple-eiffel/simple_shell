@@ -4,7 +4,7 @@ note
 		the calling thread and owned by the application's main window, so it
 		sits above it. `choose_file' blocks until the user answers (other SCOOP
 		processors keep running: the external is marked blocking); read the
-		answer from `chosen_path', empty when the user cancelled.
+		answer from `chosen_path', empty when the user canceled.
 	]"
 
 class
@@ -31,7 +31,7 @@ feature -- Constants
 feature -- Access
 
 	chosen_path: STRING_32
-			-- Full path from the last `choose_file', empty when cancelled.
+			-- Full path from the last `choose_file', empty when canceled.
 
 feature -- Status
 

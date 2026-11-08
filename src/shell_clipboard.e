@@ -158,7 +158,7 @@ feature -- Element change
 			-- surfaces expose, so a screen grab or a decoded PNG goes
 			-- straight through. Alpha is forced opaque: bitmap consumers
 			-- ignore the channel, and a premultiplied transparent pixel
-			-- would otherwise show as its colour over black. Retries
+			-- would otherwise show as its color over black. Retries
 			-- briefly against history managers, as `set_text' does.
 		require
 			positive: a_w > 0 and a_h > 0

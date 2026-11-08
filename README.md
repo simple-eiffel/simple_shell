@@ -66,7 +66,7 @@ end
 | `SHELL_DESKTOP` | virtual-screen metrics, **pure screen grab** into a caller ARGB32 buffer, `now_ms` (QPC), `minutes_of_day`, `open_externally` |; the primary **work area** (1.27.0) |
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |
 | `SHELL_STRIP` | small topmost tool-window strip (the dictation-bar pattern) |
-| `SHELL_OUTLINES` | click-through coloured frame regions on the desktop (the region-outline pattern) |
+| `SHELL_OUTLINES` | click-through colored frame regions on the desktop (the region-outline pattern) |
 | `SHELL_PANEL` | borderless topmost instrument panels (up to 8): never take focus, can be left out of screen captures, click-through on demand, whole-window opacity, Shift+drag to move (1.11.0) and to size from an edge or corner (1.12.0), `is_cursor_over` for hover (1.13.0), handles that drag on a plain press kept to one axis, live `Event_moving`, side edges that size on a plain press, files dropped on them (1.14.0), a bottom edge that sizes on a plain press (1.15.0); framed panels - floating windows with a caption, sizing border and focus, owned by the main window, with key, character, close-request, activation, double-click and leave events (`open_framed`, 1.23.0) |
 | `SHELL_HOTKEYS` | global hotkeys as queue event 51; a modifier is required unless a chord is registered bare on purpose (1.11.0) |
 | `SHELL_MONITORS` | snapshot of the displays: bounds, work area, primary, device name (1.11.0) |
@@ -161,7 +161,7 @@ predicates directly, and hands `WM_SYSKEYDOWN(VK_F)` to the window procedure
 itself - the event comes back out of `SHELL_WINDOW`'s own drain as key-down
 70, across translation units. **What is checked by inspection alone is that
 Windows delivers the message in the first place**, which is the operating
-system's documented contract, not this library's behaviour.
+system's documented contract, not this library's behavior.
 
 A second, SCOOP target carries the **freeze assault** - the vector test for
 the blocking-marker law below. It needs no window and no user:

@@ -376,7 +376,7 @@ feature -- Dwell timer (1.19.0)
 
 	arm_dwell_timer (a_ms: INTEGER)
 			-- Fire `Event_dwell' once, `a_ms' milliseconds from now,
-			-- unless re-armed or cancelled first. Re-arming REPLACES the
+			-- unless re-armed or canceled first. Re-arming REPLACES the
 			-- pending shot, so a caller that arms on every pointer move
 			-- hears one event, after the pointer rests (GW-08: a word's
 			-- hover card after 400 ms). A thread timer: no window needed.
@@ -452,7 +452,7 @@ feature -- Appearance (1.16.0)
 feature -- Element change
 
 	set_backdrop_rgb (a_rgb: INTEGER)
-			-- Keep the class brush on the application's ground colour:
+			-- Keep the class brush on the application's ground color:
 			-- pixels a live resize exposes are erased with it before
 			-- the next frame lands, so growth never flashes.
 		do

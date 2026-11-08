@@ -26,6 +26,34 @@ macos/shell_appkit_stubs.o: macos/shell_appkit_stubs.c macos/shell_appkit.h
 clean:
 	rm -f simple_shell_appkit.o macos/*.o macos/shell_appkit_stubs.c
 
+else ifeq ($(shell uname -s),Linux)
+
+# Linux build of simple_shell's GTK 4 half (item 2 of GUI_PLAN.md), the object simple_shell.ecf
+# links on Linux. The entry points without a body yet get make_stubs.pl's "not available" stubs,
+# generated from the declarations shared with the macOS half.
+CC ?= cc
+GTK_CFLAGS := $(shell pkg-config --cflags gtk4)
+CFLAGS ?= -O2 -g
+CFLAGS += -Wall -fPIC $(GTK_CFLAGS)
+
+SOURCES := linux/shell_gtk.c
+OBJECTS := $(SOURCES:.c=.o) linux/shell_gtk_stubs.o
+
+simple_shell_gtk.o: $(OBJECTS)
+	ld -r $(OBJECTS) -o simple_shell_gtk.o
+
+linux/%.o: linux/%.c linux/shell_gtk.h macos/shell_appkit.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+linux/shell_gtk_stubs.c: macos/shell_appkit.h $(SOURCES) macos/make_stubs.pl
+	perl macos/make_stubs.pl macos/shell_appkit.h $(SOURCES) > linux/shell_gtk_stubs.c
+
+linux/shell_gtk_stubs.o: linux/shell_gtk_stubs.c macos/shell_appkit.h
+	$(CC) $(CFLAGS) -Imacos -Wno-unused-parameter -c linux/shell_gtk_stubs.c -o linux/shell_gtk_stubs.o
+
+clean:
+	rm -f simple_shell_gtk.o linux/*.o linux/shell_gtk_stubs.c
+
 else
 
 all:

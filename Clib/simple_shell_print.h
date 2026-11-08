@@ -20,6 +20,9 @@
 #ifdef __APPLE__
 /* macOS: the printing entry points are declared by the AppKit half. */
 #include "macos/shell_appkit.h"
+#elif defined(__linux__)
+/* Linux: declared by the GTK half. */
+#include "linux/shell_gtk.h"
 #else
 
 #include <stddef.h>

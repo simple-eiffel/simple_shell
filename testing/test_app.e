@@ -80,6 +80,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_sdk_macro_tripwire, "sdk_macro_tripwire")
 				-- Last: it opens and destroys the one main window the tests above share.
 			run_test (agent t.test_stepwise_turns_return_early_and_report_close, "stepwise_turns_return_early_and_report_close")
+			run_test (agent t.test_close_request_is_an_event_when_asked, "close_request_is_an_event_when_asked")
 
 			print ("%N========================%N")
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")

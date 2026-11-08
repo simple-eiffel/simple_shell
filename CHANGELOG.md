@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.29.0 - 2026-11-08
+
+### Added
+
+- The main window's close as an event, when asked (simple_gui's Windows backend, gap W2): `SHELL_WINDOW.set_close_requests_are_events (True)` makes the title-bar X and Alt+F4 queue `Event_window_close_request` (66) and leaves the window open, so the program decides; `request_close` posts the same close (also the test driver's door). Off by default: existing programs still close at once. Test `close_request_is_an_event_when_asked`.
+
 ## 1.28.0 - 2026-11-08
 
 ### Added

@@ -613,6 +613,39 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			k.release_pump_thread
 		end
 
+	test_close_request_is_an_event_when_asked
+			-- 1.29.0 (W2): asked to, a close queues event 66 and the window stays; not asked,
+			-- the same close destroys it.
+		local
+			w: SHELL_TEST_WINDOW
+			d: SHELL_DESKTOP
+			i: INTEGER
+		do
+			create w
+			create d
+			w.shell_open_window ("close requests", 220, 220, 240, 140)
+			assert_true ("opened", w.is_window_open)
+			from i := 1 until i > 20 loop
+				w.shell_turn_pending
+				i := i + 1
+			end
+			w.set_close_requests_are_events (True)
+			w.request_close
+			d.pump_for (40)
+			assert_true ("event 66 queued", w.drain_event (w.Event_window_close_request, 0))
+			assert_true ("asked", w.close_requests_are_events)
+			w.shell_turn_pending
+			assert_true ("the window stays", w.is_window_open)
+			w.set_close_requests_are_events (False)
+			w.request_close
+			from i := 1 until not w.is_window_open or i > 50 loop
+				w.shell_turn (20)
+				i := i + 1
+			end
+			assert_false ("not asked: destroyed", w.is_window_open)
+			assert_false ("the setting went with the window", w.close_requests_are_events)
+		end
+
 	test_heartbeat_is_settable
 		local
 			w: SHELL_TEST_WINDOW
@@ -1510,7 +1543,7 @@ feature -- The event registry (2026-10-25)
 				assert_false ("event " + ic_event.out + " numbered once", l_seen.has (ic_event))
 				l_seen.extend (ic_event)
 			end
-			assert_integers_equal ("the next free number follows the last", 66, l_events.next_free_event)
+			assert_integers_equal ("the next free number follows the last", 67, l_events.next_free_event)
 			assert_integers_equal ("panel press", {SHELL_EVENTS}.Event_panel_press, {SHELL_PANEL}.Event_press)
 			assert_integers_equal ("tray click", {SHELL_EVENTS}.Event_tray_click, {SHELL_TRAY}.Event_click)
 			assert_integers_equal ("appearance", {SHELL_EVENTS}.Event_appearance_changed, {SHELL_APPEARANCE}.Event_changed)

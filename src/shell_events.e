@@ -122,6 +122,10 @@ feature -- The system
 	Event_refresh_request: INTEGER = 59
 			-- A UI Automation client asked for the tree: republish. Once
 			-- until the next `SHELL_ACCESSIBILITY.commit'.
+	Event_window_close_request: INTEGER = 66
+			-- The user asked to close the main window (title-bar X, Alt+F4) while
+			-- `SHELL_WINDOW.close_requests_are_events' holds: the window stays (1.29.0).
+			-- The main window only; framed panels report `Event_panel_close_request' (62).
 
 feature -- The registry
 
@@ -141,9 +145,10 @@ feature -- The registry
 				Event_panel_key, Event_panel_char, Event_panel_close_request, Event_panel_activated,
 				Event_panel_double, Event_panel_leave,
 				Event_hotkey, Event_tray_click, Event_appearance_changed, Event_wake, Event_dwell,
-				Event_contrast_changed, Event_motion_changed, Event_focus_request, Event_refresh_request>>
+				Event_contrast_changed, Event_motion_changed, Event_focus_request, Event_refresh_request,
+				Event_window_close_request>>
 		ensure
-			every_event: Result.count = 52
+			every_event: Result.count = 53
 		end
 
 	next_free_event: INTEGER

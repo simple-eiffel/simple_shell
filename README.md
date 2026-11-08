@@ -233,6 +233,42 @@ AppKit's real event dispatch, one step per heartbeat. simple_shell's own test su
 Windows-specific (desktop grab, UI Automation, the Alt door); on the Mac the evidence is
 simple_widgets' suite. The design record is `docs/SHELL_SEAM.md` in port-coordination (#25).
 
+## Linux (GTK 4, in progress)
+
+On Linux the same classes run on a GTK 4 half in `Clib/linux/shell_gtk.c` (with the shared
+`shell_ax_table.c`), built to the same contract as the macOS half: Windows' event numbers,
+device pixels, Windows virtual keys and UTF-16 characters, and the window's backing cairo
+image in place of a device context. So simple_widgets runs unchanged: its suite passes
+684 of 695 on Ubuntu 24.04 under WSL (GTK 4.14).
+
+```bash
+make -C Clib     # Clib/simple_shell_gtk.o, which the ECF links (with GTK 4 and fontconfig) on Linux
+```
+
+Done on Linux: the window and its pump (on GLib's main context), the pointer, keys and
+characters, the cursor kinds, the heartbeat, fast and dwell timers, the wake from any
+thread, close as an event, appearance, the desktop and the clock; the accessibility table;
+private fonts (fontconfig); the clipboard's text and images; and panels (simple_widgets'
+floating and document windows), each a window of its own.
+
+What Wayland does not allow: placing a window or reading where it is (a window's place is
+its size; panel moves are not reported), the global pointer position, and the screen grab
+(it needs the desktop portal; not written yet). Not yet: file dialogs and drops, spelling,
+printing, monitors, the overlay and strip, the tray, hotkeys and input synthesis; serving
+the accessibility table to AT-SPI (checked with Orca) comes last, by Larry's order.
+
+Of simple_widgets' 11 failures on Linux: three are Windows drive-letter tests and one is the
+screen-reader test (as on the Mac), one is the screen grab, and six need fonts this WSL
+image lacks (Noto: `fonts-noto-core`, `fonts-noto-color-emoji`) - pointed Hebrew, emoji.
+
+## Running on macOS and Linux
+
+Set `SIMPLE_EIFFEL` when running a program or test suite, not only when building:
+simple_widgets finds simple_shaping's assets through it. On Linux, also build the C objects
+the libraries need (`make -C Clib` in eiffel_sqlite_2025, with `ISE_EIFFEL` and
+`ISE_PLATFORM` set, and in simple_speech), and set `SHERPA_ONNX_DIR` for simple_widgets'
+speech kit (here `/opt/sherpa-onnx-v1.12.20-linux-x64-shared`).
+
 ## Design rules it obeys
 
 - **Design by Contract** throughout; the finalized test binary keeps assertions.

@@ -78,6 +78,8 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_alt_letter_reaches_the_queue, "alt_letter_reaches_the_queue")
 			run_test (agent t.test_sdk_macro_poison_is_armed, "sdk_macro_poison_is_armed")
 			run_test (agent t.test_sdk_macro_tripwire, "sdk_macro_tripwire")
+				-- Last: it opens and destroys the one main window the tests above share.
+			run_test (agent t.test_stepwise_turns_return_early_and_report_close, "stepwise_turns_return_early_and_report_close")
 
 			print ("%N========================%N")
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")

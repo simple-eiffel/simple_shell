@@ -572,6 +572,47 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			assert_integers_equal ("the window names the same event", k.Event_wake, w.Event_wake)
 		end
 
+	test_stepwise_turns_return_early_and_report_close
+			-- 1.28.0 (W1): a long turn returns as soon as an event is queued (a wake),
+			-- an idle turn returns on its deadline, and a destroyed window is reported.
+		local
+			w: SHELL_TEST_WINDOW
+			k: SHELL_WAKE
+			d: SHELL_DESKTOP
+			t0, l_took: REAL_64
+			l_seen, i: INTEGER
+		do
+			create w
+			create k
+			create d
+			w.shell_open_window ("stepwise turns", 200, 200, 240, 140)
+			assert_true ("opened", w.is_window_open)
+				-- Let the opening messages settle.
+			from i := 1 until i > 20 loop
+				w.shell_turn_pending
+				i := i + 1
+			end
+			k.claim_pump_thread
+			l_seen := w.events_seen
+			k.wake
+			t0 := d.now_ms
+			w.shell_turn (5000)
+			l_took := d.now_ms - t0
+			assert_true ("woke early: " + l_took.out + " ms", l_took < 1000.0)
+			assert_true ("the wake was dispatched", w.events_seen > l_seen)
+			t0 := d.now_ms
+			w.shell_turn (40)
+			l_took := d.now_ms - t0
+			assert_true ("an idle turn ends near its deadline: " + l_took.out + " ms", l_took < 1000.0)
+			w.close
+			from i := 1 until not w.is_window_open or i > 50 loop
+				w.shell_turn (20)
+				i := i + 1
+			end
+			assert_false ("the destroyed window is reported", w.is_window_open)
+			k.release_pump_thread
+		end
+
 	test_heartbeat_is_settable
 		local
 			w: SHELL_TEST_WINDOW

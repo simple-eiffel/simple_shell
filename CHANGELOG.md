@@ -2,6 +2,12 @@
 
 All notable changes to simple_shell.
 
+## 1.28.0 - 2026-11-08
+
+### Added
+
+- A stepwise pump, for hosts that run their own loop (simple_gui's Windows backend, gap W1): `SHELL_WINDOW.shell_open_window` creates the window without pumping; `shell_turn (ms)` pumps until an event is queued or the time is up, whichever is first, then dispatches the queue; `shell_turn_pending` dispatches what is waiting without waiting; `is_window_open` goes False when the window is destroyed. The wait is `MsgWaitForMultipleObjectsEx`, so an idle loop costs nothing. `shell_run` is unchanged. Test `stepwise_turns_return_early_and_report_close`.
+
 ## 1.27.1 - 2026-10-27
 
 ### Fixed

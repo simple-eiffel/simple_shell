@@ -898,6 +898,43 @@ static int shell_pump(void) {
     return 1;
 }
 
+/* 1.28.0 (W1, simple_gui): pump until an event is queued or `ms' milliseconds pass,
+   whichever is first. Returns 0 once WM_QUIT arrives (the main window was destroyed),
+   else 1. It waits in MsgWaitForMultipleObjectsEx, so an idle loop costs nothing;
+   the heartbeat and wakes arrive as messages and end the wait. */
+static int shell_pump_until(int ms) {
+    LARGE_INTEGER l_freq, l_start, l_now;
+    double l_left;
+    MSG m;
+    QueryPerformanceFrequency(&l_freq);
+    QueryPerformanceCounter(&l_start);
+    for (;;) {
+        while (PeekMessageW(&m, 0, 0, 0, PM_REMOVE)) {
+            if (m.message == WM_QUIT) return 0;
+            shell_thread_message(&m);
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+        }
+        if (s_shell_qhead != s_shell_qtail) return 1;
+        QueryPerformanceCounter(&l_now);
+        l_left = ms - (double)(l_now.QuadPart - l_start.QuadPart) * 1000.0 / (double)l_freq.QuadPart;
+        if (l_left <= 0) return 1;
+        MsgWaitForMultipleObjectsEx(0, NULL, (DWORD)(l_left + 0.999), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    }
+}
+
+/* Dispatch every message already waiting, never blocking. 0 once WM_QUIT arrives. */
+static int shell_pump_pending(void) {
+    MSG m;
+    while (PeekMessageW(&m, 0, 0, 0, PM_REMOVE)) {
+        if (m.message == WM_QUIT) return 0;
+        shell_thread_message(&m);
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    return 1;
+}
+
 static int shell_next_event(int* out4) {
     if (s_shell_qhead == s_shell_qtail) return 0;
     out4[0] = s_shell_q[s_shell_qhead][0];

@@ -30,7 +30,6 @@ feature -- Operation
 		local
 			ns: NATIVE_STRING
 			quit: BOOLEAN
-			ev: INTEGER
 		do
 			create ns.make (a_title)
 			hwnd := shell_create_window (ns.item, a_x, a_y, a_w, a_h)
@@ -46,15 +45,77 @@ feature -- Operation
 					if shell_pump = 0 then
 						quit := True
 					end
-					from
-						ev := shell_next_event (ev_buf.item)
-					until
-						ev = 0
-					loop
-						dispatch (ev, ev_buf.read_integer_32 (4), ev_buf.read_integer_32 (8))
-						ev := shell_next_event (ev_buf.item)
-					end
+					dispatch_queued
 				end
+			end
+		end
+
+feature -- Operation, step by step (1.28.0)
+
+	is_window_open: BOOLEAN
+			-- Did `shell_open_window' create the window, and is it still there?
+
+	shell_open_window (a_title: READABLE_STRING_GENERAL; a_x, a_y, a_w, a_h: INTEGER)
+			-- Create the native window WITHOUT pumping; the caller drives it with
+			-- `shell_turn', so it can interleave its own work (simple_gui's loop).
+		require
+			sane_size: a_w > 0 and a_h > 0
+			not_open: not is_window_open
+		local
+			ns: NATIVE_STRING
+		do
+			create ns.make (a_title)
+			hwnd := shell_create_window (ns.item, a_x, a_y, a_w, a_h)
+			if hwnd /= default_pointer then
+				if title_bar_is_dark then
+					appearance.set_dark_title_bar (hwnd, True)
+				end
+				on_shell_open
+				is_window_open := True
+			end
+		ensure
+			open_when_created: is_window_open = (hwnd /= default_pointer)
+		end
+
+	shell_turn (a_ms: INTEGER)
+			-- Pump until an event is queued or `a_ms' milliseconds pass, whichever is
+			-- first, then hand every queued event to `dispatch'. When the window has
+			-- been destroyed, `is_window_open' becomes False.
+		require
+			open: is_window_open
+			non_negative: a_ms >= 0
+		do
+			if shell_pump_until (a_ms) = 0 then
+				is_window_open := False
+			end
+			dispatch_queued
+		end
+
+	shell_turn_pending
+			-- Dispatch what is already waiting, without waiting for more.
+		require
+			open: is_window_open
+		do
+			if shell_pump_pending = 0 then
+				is_window_open := False
+			end
+			dispatch_queued
+		end
+
+feature {NONE} -- Dispatch
+
+	dispatch_queued
+			-- Hand every queued event to `dispatch'.
+		local
+			ev: INTEGER
+		do
+			from
+				ev := shell_next_event (ev_buf.item)
+			until
+				ev = 0
+			loop
+				dispatch (ev, ev_buf.read_integer_32 (4), ev_buf.read_integer_32 (8))
+				ev := shell_next_event (ev_buf.item)
 			end
 		end
 
@@ -484,6 +545,23 @@ feature {NONE} -- Externals
 			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_pump();"
+		end
+
+	shell_pump_until (a_ms: INTEGER): INTEGER
+			-- Pump until an event is queued or `a_ms' pass; 0 after WM_QUIT.
+			-- `blocking' for the same reason as `shell_pump'.
+		external
+			"C blocking inline use %"simple_shell.h%""
+		alias
+			"return shell_pump_until($a_ms);"
+		end
+
+	shell_pump_pending: INTEGER
+			-- Dispatch waiting messages without blocking; 0 after WM_QUIT.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_pump_pending();"
 		end
 
 	shell_next_event (a_buf: POINTER): INTEGER

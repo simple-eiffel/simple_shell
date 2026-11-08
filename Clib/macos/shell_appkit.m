@@ -1657,6 +1657,142 @@ void shell_outline_show(int slot, int x, int y, int w, int h, int thick, int rgb
 }
 void shell_outline_hide(int slot) { if (slot >= 0 && slot < 4 && s_outline[slot]) [s_outline[slot] orderOut:nil]; }
 
+/* ------------------------------------------------------------------ the tray (menu bar icons) */
+
+/* A notification-area icon is a menu bar status item showing the application's icon. A click
+   reports 52 with the button (1 left, 2 right or Control-click, 3 double) and the tray's id, as
+   on Windows. A balloon is a popover under the icon that closes itself: Notification Center
+   needs a signed bundle and the user's permission, which a plain program has not got. */
+@interface SSTray : NSObject {
+@public
+	NSStatusItem *item;
+	int tray_id;
+	NSPopover *balloon;
+}
+- (void)clicked:(id)sender;
+@end
+static NSMutableArray<SSTray *> *s_trays = nil;
+static int s_tray_next = 1;
+
+static void shell_tray_push(SSTray *t, int a_button) { shell_push(52, a_button, 0, t->tray_id); shell_nudge(); }
+
+@implementation SSTray
+- (void)clicked:(id)sender
+{
+	(void)sender;
+	NSEvent *e = [NSApp currentEvent];
+	BOOL l_right = [e type] == NSEventTypeRightMouseUp || ([e modifierFlags] & NSEventModifierFlagControl);
+	shell_tray_push(self, l_right ? 2 : [e clickCount] >= 2 ? 3 : 1);
+}
+- (void)closeBalloon:(id)sender { (void)sender; [balloon close]; balloon = nil; }
+@end
+
+static SSTray *shell_tray_of(HWND h)
+{
+	for (SSTray *t in s_trays) if ((__bridge void *)t == h) return t;
+	return nil;
+}
+
+HWND shell_tray_add(const void *tip)
+{
+	shell_app();
+	if (!s_trays) s_trays = [NSMutableArray array];
+	SSTray *t = [[SSTray alloc] init];
+	t->item = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+	NSImage *l_icon = [[NSApp applicationIconImage] copy];
+	[l_icon setSize:NSMakeSize(18, 18)];
+	[[t->item button] setImage:l_icon];
+	[[t->item button] setToolTip:shell_text(tip)];
+	[[t->item button] setTarget:t];
+	[[t->item button] setAction:@selector(clicked:)];
+	[[t->item button] sendActionOn:NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp];
+	t->tray_id = s_tray_next++;
+	[s_trays addObject:t];
+	return (__bridge HWND)t;
+}
+int shell_tray_id(HWND h) { SSTray *t = shell_tray_of(h); return t ? t->tray_id : 0; }
+int shell_tray_set_tip(HWND h, const void *tip)
+{
+	SSTray *t = shell_tray_of(h);
+	if (!t) return 0;
+	[[t->item button] setToolTip:shell_text(tip)];
+	return 1;
+}
+int shell_tray_balloon(HWND h, const void *title, const void *body)
+{
+	SSTray *t = shell_tray_of(h);
+	if (!t || ![t->item button]) return 0;
+	[t->balloon close];
+	NSTextField *l_title = [NSTextField labelWithString:shell_text(title)];
+	[l_title setFont:[NSFont boldSystemFontOfSize:[NSFont systemFontSize]]];
+	NSTextField *l_body = [NSTextField wrappingLabelWithString:shell_text(body)];
+	[l_body setPreferredMaxLayoutWidth:280];
+	NSStackView *l_stack = [NSStackView stackViewWithViews:@[l_title, l_body]];
+	[l_stack setOrientation:NSUserInterfaceLayoutOrientationVertical];
+	[l_stack setAlignment:NSLayoutAttributeLeading];
+	[l_stack setEdgeInsets:NSEdgeInsetsMake(10, 12, 10, 12)];
+	NSViewController *c = [[NSViewController alloc] init];
+	[c setView:l_stack];
+	t->balloon = [[NSPopover alloc] init];
+	[t->balloon setContentViewController:c];
+	[t->balloon setBehavior:NSPopoverBehaviorTransient];
+	[t->balloon showRelativeToRect:[[t->item button] bounds] ofView:[t->item button] preferredEdge:NSRectEdgeMinY];
+	[NSTimer scheduledTimerWithTimeInterval:6.0 target:t selector:@selector(closeBalloon:) userInfo:nil repeats:NO];
+	return 1;
+}
+int shell_tray_remove(HWND h)
+{
+	SSTray *t = shell_tray_of(h);
+	if (!t) return 0;
+	[t->balloon close];
+	[[NSStatusBar systemStatusBar] removeStatusItem:t->item];
+	[s_trays removeObject:t];
+	return 1;
+}
+
+/* A menu from `l_items' (one item per line, "-" a separator) under the icon, waited for: the
+   chosen line's number (separators count, as on Windows), or 0 when dismissed. */
+static int s_tray_choice = 0;
+@interface SSTrayChoice : NSObject
+@end
+@implementation SSTrayChoice
+- (void)choose:(NSMenuItem *)i { s_tray_choice = (int)[i tag]; }
+@end
+int shell_tray_menu(HWND h, const void *l_items)
+{
+	SSTray *t = shell_tray_of(h);
+	if (!t || !l_items) return 0;
+	SSTrayChoice *l_target = [[SSTrayChoice alloc] init];
+	NSMenu *m = [[NSMenu alloc] initWithTitle:@""];
+	[m setAutoenablesItems:NO];
+	int n = 0;
+	for (NSString *l_line in [shell_text(l_items) componentsSeparatedByString:@"\n"]) {
+		n++;
+		if ([l_line isEqualToString:@"-"]) { [m addItem:[NSMenuItem separatorItem]]; continue; }
+		NSMenuItem *i = [[NSMenuItem alloc] initWithTitle:l_line action:@selector(choose:) keyEquivalent:@""];
+		[i setTarget:l_target];
+		[i setTag:n];
+		[m addItem:i];
+	}
+	s_tray_choice = 0;
+	NSStatusBarButton *b = [t->item button];
+	[m popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, NSMinY([b bounds]) - 4) inView:b];
+	return s_tray_choice;
+}
+
+/* The test door: a click delivered as Windows' tray callback would (WM_LBUTTONUP 0x202,
+   WM_RBUTTONUP 0x205, WM_LBUTTONDBLCLK 0x203). */
+void shell_tray_try_click(HWND h, int l_msg)
+{
+	SSTray *t = shell_tray_of(h);
+	if (!t) return;
+	switch (l_msg) {
+		case 0x0202: shell_tray_push(t, 1); break;
+		case 0x0205: shell_tray_push(t, 2); break;
+		case 0x0203: shell_tray_push(t, 3); break;
+	}
+}
+
 /* ------------------------------------------------------------------ the desktop, the clock, small things */
 
 /* The virtual desktop (every screen together), in pixels from the main screen's top-left,

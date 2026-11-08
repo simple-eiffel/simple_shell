@@ -59,6 +59,7 @@
 #define SHELL_UIA_PROP_ENABLED         30010
 #define SHELL_UIA_PROP_AUTOMATION_ID   30011
 #define SHELL_UIA_PROP_CLASS_NAME      30012
+#define SHELL_UIA_PROP_HELP_TEXT       30013
 #define SHELL_UIA_PROP_CONTROL_ELEMENT 30016
 #define SHELL_UIA_PROP_CONTENT_ELEMENT 30017
 #define SHELL_UIA_PROP_FRAMEWORK_ID    30024
@@ -90,6 +91,7 @@ typedef struct shell_uia_node_s {
     double l_x, l_y, l_w, l_h;
     wchar_t* l_name;
     wchar_t* l_value;
+    wchar_t* l_description;   /* UI Automation's HelpText; NULL when none */
 } shell_uia_node;
 
 SHELL_SHARED shell_uia_node* s_uia_nodes = 0;
@@ -132,6 +134,7 @@ static void shell_uia_free_table(shell_uia_node* l_table, int l_count) {
     for (l_i = 0; l_i < l_count; l_i++) {
         free(l_table[l_i].l_name);
         free(l_table[l_i].l_value);
+        free(l_table[l_i].l_description);
     }
     free(l_table);
 }
@@ -259,6 +262,9 @@ static HRESULT STDMETHODCALLTYPE shell_uia_s_property(IRawElementProviderSimple*
             break;
         case SHELL_UIA_PROP_CLASS_NAME:
             l_out->vt = VT_BSTR; l_out->bstrVal = SysAllocString(L"SimpleWidget");
+            break;
+        case SHELL_UIA_PROP_HELP_TEXT:
+            if (l_n->l_description) { l_out->vt = VT_BSTR; l_out->bstrVal = SysAllocString(l_n->l_description); }
             break;
         case SHELL_UIA_PROP_FRAMEWORK_ID:
             l_out->vt = VT_BSTR; l_out->bstrVal = SysAllocString(L"simple_widgets");
@@ -582,6 +588,17 @@ static int shell_uia_add(int l_id, int l_parent, int l_role, int l_focusable, in
     l_n->l_x = l_x; l_n->l_y = l_y; l_n->l_w = l_w; l_n->l_h = l_h;
     l_n->l_name = shell_uia_copy(l_name);
     l_n->l_value = shell_uia_copy(l_value);
+    l_n->l_description = 0;
+    return 1;
+}
+
+/* Give the row added last a description (UI Automation's HelpText); answers 0 when none. */
+static int shell_uia_describe_last(const wchar_t* l_text) {
+    shell_uia_node* l_n;
+    if (!s_uia_stage || s_uia_stage_count < 1) return 0;
+    l_n = &s_uia_stage[s_uia_stage_count - 1];
+    free(l_n->l_description);
+    l_n->l_description = shell_uia_copy(l_text);
     return 1;
 }
 
@@ -656,13 +673,14 @@ static int shell_uia_row_int(int l_i, int l_field) {
     return l_answer;
 }
 
-/* Copy row `l_i''s name (`l_which' 0) or value (1) into `l_out'. */
+/* Copy row `l_i''s name (`l_which' 0), value (1) or description (2) into `l_out'. */
 static int shell_uia_row_text(int l_i, int l_which, wchar_t* l_out, int l_cap) {
     const wchar_t* l_text = 0;
     int l_n = 0;
     shell_uia_lock_enter();
     if (l_i >= 0 && l_i < s_uia_count)
-        l_text = l_which == 0 ? s_uia_nodes[l_i].l_name : s_uia_nodes[l_i].l_value;
+        l_text = l_which == 0 ? s_uia_nodes[l_i].l_name
+            : l_which == 1 ? s_uia_nodes[l_i].l_value : s_uia_nodes[l_i].l_description;
     while (l_text && l_text[l_n] && l_n < l_cap - 1) { l_out[l_n] = l_text[l_n]; l_n++; }
     l_out[l_n] = 0;
     shell_uia_lock_leave();

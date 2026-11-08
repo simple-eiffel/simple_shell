@@ -7,6 +7,8 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreText/CoreText.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <Carbon/Carbon.h>
+#import <ScreenCaptureKit/ScreenCaptureKit.h>
 #include <cairo.h>
 #include <stdatomic.h>
 #include <pthread.h>
@@ -1791,6 +1793,238 @@ void shell_tray_try_click(HWND h, int l_msg)
 		case 0x0205: shell_tray_push(t, 2); break;
 		case 0x0203: shell_tray_push(t, 3); break;
 	}
+}
+
+/* ------------------------------------------------------------------ keys by Windows' number */
+
+/* The Mac key code for a Windows virtual key (the US layout's positions for letters and
+   digits), or -1. The reverse of `shell_vk'. */
+static int shell_keycode_of_vk(int a_vk)
+{
+	static const int l_letters[26] = {0x00, 0x0B, 0x08, 0x02, 0x0E, 0x03, 0x05, 0x04, 0x22, 0x26, 0x28, 0x25, 0x2E,
+		0x2D, 0x1F, 0x23, 0x0C, 0x0F, 0x01, 0x11, 0x20, 0x09, 0x0D, 0x07, 0x10, 0x06};
+	static const int l_digits[10] = {0x1D, 0x12, 0x13, 0x14, 0x15, 0x17, 0x16, 0x1A, 0x1C, 0x19};
+	static const int l_f[12] = {122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111};
+	if (a_vk >= 'A' && a_vk <= 'Z') return l_letters[a_vk - 'A'];
+	if (a_vk >= '0' && a_vk <= '9') return l_digits[a_vk - '0'];
+	if (a_vk >= 0x70 && a_vk <= 0x7B) return l_f[a_vk - 0x70];
+	if (a_vk >= 0x60 && a_vk <= 0x69) { static const int k[10] = {82, 83, 84, 85, 86, 87, 88, 89, 91, 92}; return k[a_vk - 0x60]; }
+	switch (a_vk) {
+		case 0x25: return 123; case 0x27: return 124; case 0x28: return 125; case 0x26: return 126;
+		case 0x24: return 115; case 0x23: return 119; case 0x21: return 116; case 0x22: return 121;
+		case 0x2E: return 117; case 0x08: return 51; case 0x0D: return 36; case 0x09: return 48;
+		case 0x1B: return 53; case 0x20: return 49;
+		case 0xBB: return 24; case 0xBD: return 27; case 0x6B: return 69; case 0x6D: return 78;
+		case 0xBA: return 41; case 0xBF: return 44; case 0xC0: return 50; case 0xDB: return 33;
+		case 0xDC: return 42; case 0xDD: return 30; case 0xDE: return 39; case 0xBC: return 43; case 0xBE: return 47;
+	}
+	return -1;
+}
+
+/* ------------------------------------------------------------------ global hotkeys */
+
+/* Carbon's system-wide hotkeys, which need no permission. Windows' modifiers (1 Alt, 2 Ctrl,
+   4 Shift, 8 Win) become Option, Command (the primary modifier), Shift and Control; a press
+   reports 51 (id, virtual key, modifiers) as WM_HOTKEY does. */
+#define SHELL_HOTKEYS 64
+static struct { int used, id, vk, mods; EventHotKeyRef ref; } s_hotkey[SHELL_HOTKEYS];
+static int s_hotkey_handler = 0;
+
+static OSStatus shell_hotkey_pressed(EventHandlerCallRef a_next, EventRef a_event, void *a_data)
+{
+	(void)a_next; (void)a_data;
+	EventHotKeyID k;
+	if (GetEventParameter(a_event, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof k, NULL, &k) != noErr) return eventNotHandledErr;
+	for (int i = 0; i < SHELL_HOTKEYS; i++)
+		if (s_hotkey[i].used && s_hotkey[i].id == (int)k.id) { shell_push(51, s_hotkey[i].id, s_hotkey[i].vk, s_hotkey[i].mods); shell_nudge(); return noErr; }
+	return eventNotHandledErr;
+}
+
+void shell_hotkey_unregister(int l_id)
+{
+	for (int i = 0; i < SHELL_HOTKEYS; i++)
+		if (s_hotkey[i].used && s_hotkey[i].id == l_id) { UnregisterEventHotKey(s_hotkey[i].ref); s_hotkey[i].used = 0; }
+}
+
+int shell_hotkey_register(int l_id, int l_mods, int l_vk)
+{
+	shell_app();
+	int l_code = shell_keycode_of_vk(l_vk), l_free = -1;
+	if (l_code < 0) return 0;
+	if (!s_hotkey_handler) {
+		EventTypeSpec l_spec = {kEventClassKeyboard, kEventHotKeyPressed};
+		if (InstallApplicationEventHandler(NewEventHandlerUPP(shell_hotkey_pressed), 1, &l_spec, NULL, NULL) != noErr) return 0;
+		s_hotkey_handler = 1;
+	}
+	shell_hotkey_unregister(l_id);
+	for (int i = 0; i < SHELL_HOTKEYS && l_free < 0; i++) if (!s_hotkey[i].used) l_free = i;
+	if (l_free < 0) return 0;
+	UInt32 m = ((l_mods & 1) ? optionKey : 0) | ((l_mods & 2) ? cmdKey : 0) | ((l_mods & 4) ? shiftKey : 0) | ((l_mods & 8) ? controlKey : 0);
+	EventHotKeyID k = {'SShk', (UInt32)l_id};
+	EventHotKeyRef r = NULL;
+	if (RegisterEventHotKey((UInt32)l_code, m, k, GetApplicationEventTarget(), 0, &r) != noErr) return 0;
+	s_hotkey[l_free].used = 1; s_hotkey[l_free].id = l_id; s_hotkey[l_free].vk = l_vk; s_hotkey[l_free].mods = l_mods; s_hotkey[l_free].ref = r;
+	return 1;
+}
+
+/* The test door: a hotkey press as if from the keyboard. */
+void shell_hotkey_simulate(int l_id, int l_mods, int l_vk) { shell_push(51, l_id, l_vk, l_mods); shell_nudge(); }
+
+/* ------------------------------------------------------------------ input synthesis */
+
+/* Clicks and typing posted to the system, as SendInput. macOS lets a process post input only
+   with the Accessibility permission (System Settings, Privacy & Security, Accessibility); without
+   it nothing is sent and the last error is 5, Windows' "access denied" for blocked input. */
+static int s_input_error = 0;
+static int shell_input_allowed(void)
+{
+	if (AXIsProcessTrusted()) return 1;
+	s_input_error = 5;
+	return 0;
+}
+int shell_input_last_error(void) { return s_input_error; }
+
+/* A pixel point of the virtual desktop as a global display point (points, from the main
+   screen's top-left). */
+static CGPoint shell_display_point(int x, int y)
+{
+	NSScreen *l_main = [[NSScreen screens] count] ? [NSScreen screens][0] : nil;
+	double k = l_main ? [l_main backingScaleFactor] : 1.0;
+	return CGPointMake(x / k, y / k);
+}
+
+int shell_input_pointer(int *x, int *y)
+{
+	*x = 0; *y = 0;
+	CGEventRef e = CGEventCreate(NULL);
+	if (!e) return 0;
+	CGPoint p = CGEventGetLocation(e);
+	CFRelease(e);
+	NSScreen *l_main = [[NSScreen screens] count] ? [NSScreen screens][0] : nil;
+	double k = l_main ? [l_main backingScaleFactor] : 1.0;
+	*x = (int)lround(p.x * k); *y = (int)lround(p.y * k);
+	return 1;
+}
+
+int shell_input_on_desktop(int x, int y)
+{
+	return x >= shell_screen_x() && y >= shell_screen_y() && x < shell_screen_x() + shell_screen_w() && y < shell_screen_y() + shell_screen_h() ? 1 : 0;
+}
+
+int shell_input_click(int x, int y, int restore_cursor, int restore_focus)
+{
+	s_input_error = 0;
+	if (!shell_input_allowed()) return 0;
+	int l_bx, l_by;
+	shell_input_pointer(&l_bx, &l_by);
+	NSRunningApplication *l_front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+	CGPoint p = shell_display_point(x, y);
+	CGEventType l_types[3] = {kCGEventMouseMoved, kCGEventLeftMouseDown, kCGEventLeftMouseUp};
+	for (int i = 0; i < 3; i++) {
+		CGEventRef e = CGEventCreateMouseEvent(NULL, l_types[i], p, kCGMouseButtonLeft);
+		if (!e) { s_input_error = 8; return 0; }
+		CGEventPost(kCGHIDEventTap, e);
+		CFRelease(e);
+	}
+	if (restore_cursor) CGWarpMouseCursorPosition(shell_display_point(l_bx, l_by));
+	if (restore_focus && l_front) {
+		usleep(120000);   /* let the click's activation land first, as on Windows */
+		if (![[[NSWorkspace sharedWorkspace] frontmostApplication] isEqual:l_front]) [l_front activateWithOptions:0];
+	}
+	return 1;
+}
+
+/* The UTF-16 units `s' (UTF-8) types: what `shell_input_type' sends, two events per unit. */
+int shell_input_type_units(const void *s) { return s ? (int)[shell_text(s) length] : 0; }
+
+int shell_input_type(const void *s)
+{
+	s_input_error = 0;
+	if (!s || !shell_input_allowed()) return 0;
+	NSString *t = shell_text(s);
+	int l_sent = 0;
+	for (NSUInteger i = 0; i < [t length]; i++) {
+		UniChar u = [t characterAtIndex:i];
+		for (int l_down = 1; l_down >= 0; l_down--) {
+			CGEventRef e = CGEventCreateKeyboardEvent(NULL, 0, l_down != 0);
+			if (!e) { s_input_error = 8; return l_sent; }
+			CGEventKeyboardSetUnicodeString(e, 1, &u);
+			CGEventPost(kCGHIDEventTap, e);
+			CFRelease(e);
+			l_sent++;
+		}
+	}
+	return l_sent;
+}
+
+/* A chord: the modifiers down, the key down and up, the modifiers up; Ctrl as Command. */
+int shell_input_chord(int ctrl, int shift, int alt, int vk)
+{
+	s_input_error = 0;
+	int l_code = shell_keycode_of_vk(vk);
+	if (l_code < 0) { s_input_error = 87; return 0; }   /* ERROR_INVALID_PARAMETER */
+	if (!shell_input_allowed()) return 0;
+	int l_mod_codes[3], l_n = 0, l_sent = 0;
+	CGEventFlags f = 0;
+	if (ctrl) { l_mod_codes[l_n++] = 0x37; f |= kCGEventFlagMaskCommand; }
+	if (shift) { l_mod_codes[l_n++] = 0x38; f |= kCGEventFlagMaskShift; }
+	if (alt) { l_mod_codes[l_n++] = 0x3A; f |= kCGEventFlagMaskAlternate; }
+	for (int i = 0; i < l_n; i++) { CGEventRef e = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)l_mod_codes[i], true); CGEventPost(kCGHIDEventTap, e); CFRelease(e); l_sent++; }
+	for (int l_down = 1; l_down >= 0; l_down--) {
+		CGEventRef e = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)l_code, l_down != 0);
+		CGEventSetFlags(e, f);
+		CGEventPost(kCGHIDEventTap, e);
+		CFRelease(e);
+		l_sent++;
+	}
+	for (int i = l_n - 1; i >= 0; i--) { CGEventRef e = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)l_mod_codes[i], false); CGEventPost(kCGHIDEventTap, e); CFRelease(e); l_sent++; }
+	return l_sent;
+}
+
+/* ------------------------------------------------------------------ the screen grab */
+
+/* A region of the desktop, in pixels, into the caller's ARGB32 rows, opaque, as BitBlt from
+   the screen. macOS shows other applications' windows only with the Screen Recording
+   permission (System Settings, Privacy & Security, Screen & System Audio Recording); without
+   it this answers 0 at once, and never asks the user itself. */
+int shell_grab_screen(int x, int y, int w, int h, void *bits, int stride)
+{
+	if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
+	if (!CGPreflightScreenCaptureAccess()) return 0;
+	__block CGImageRef l_image = NULL;
+	dispatch_semaphore_t l_done = dispatch_semaphore_create(0);
+	CGPoint l_at = shell_display_point(x, y);
+	NSScreen *l_main = [[NSScreen screens] count] ? [NSScreen screens][0] : nil;
+	double k = l_main ? [l_main backingScaleFactor] : 1.0;
+	[SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *c, NSError *err) {
+		SCDisplay *d = nil;
+		for (SCDisplay *l_d in [c displays]) if ([l_d displayID] == CGMainDisplayID()) d = l_d;
+		if (err || !d) { dispatch_semaphore_signal(l_done); return; }
+		SCContentFilter *l_filter = [[SCContentFilter alloc] initWithDisplay:d excludingWindows:@[]];
+		SCStreamConfiguration *l_config = [[SCStreamConfiguration alloc] init];
+		[l_config setSourceRect:CGRectMake(l_at.x, l_at.y, w / k, h / k)];
+		[l_config setWidth:(size_t)w];
+		[l_config setHeight:(size_t)h];
+		[l_config setShowsCursor:NO];
+		[SCScreenshotManager captureImageWithFilter:l_filter configuration:l_config completionHandler:^(CGImageRef img, NSError *e2) {
+			if (!e2 && img) l_image = CGImageRetain(img);
+			dispatch_semaphore_signal(l_done);
+		}];
+	}];
+	if (dispatch_semaphore_wait(l_done, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0 || !l_image) return 0;
+	CGColorSpaceRef l_srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+	CGContextRef c = CGBitmapContextCreate(bits, (size_t)w, (size_t)h, 8, (size_t)stride, l_srgb, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+	CGColorSpaceRelease(l_srgb);
+	if (c) {
+		CGContextDrawImage(c, CGRectMake(0, 0, w, h), l_image);
+		CGContextRelease(c);
+		for (int row = 0; row < h; row++) {
+			uint32_t *px = (uint32_t *)((char *)bits + (size_t)row * stride);
+			for (int col = 0; col < w; col++) px[col] |= 0xFF000000u;
+		}
+	}
+	CGImageRelease(l_image);
+	return c ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ the desktop, the clock, small things */

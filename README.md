@@ -1,10 +1,10 @@
 # simple_shell
 
 ![tests](https://img.shields.io/badge/tests-62%2F62-brightgreen) ![freeze assault](https://img.shields.io/badge/freeze%20assault-4%2F4-brightgreen) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
-![Windows: 62 of 62](https://img.shields.io/badge/Windows-62%2F62-0078D6?logo=windows&logoColor=white) ![macOS: simple_widgets runs](https://img.shields.io/badge/macOS-simple__widgets%20runs-success?logo=apple) ![Linux: in progress](https://img.shields.io/badge/Linux-in%20progress-lightgray)
+![Windows: 62 of 62](https://img.shields.io/badge/Windows-62%2F62-0078D6?logo=windows&logoColor=white) ![macOS: simple_widgets runs](https://img.shields.io/badge/macOS-simple__widgets%20runs-success?logo=apple) ![Linux: simple_widgets runs](https://img.shields.io/badge/Linux-simple__widgets%20runs-success?logo=linux&logoColor=white)
 
 **The platform shell for the Simple Eiffel ecosystem**: Win32 on Windows, AppKit on
-macOS (see [macOS](#macos-131)), GTK on Linux next. Battle-tested C behind
+macOS (see [macOS](#macos-131)), GTK 4 on Linux (see [Linux](#linux-gtk-4)). Battle-tested C behind
 one set of entry points, a handful of Eiffel classes, no rendering opinion. This is the
 library that owns the native window, the message pump, the clipboard, the
 keyboard, the spell checker, the desktop — so that nothing above it ever
@@ -233,13 +233,13 @@ AppKit's real event dispatch, one step per heartbeat. simple_shell's own test su
 Windows-specific (desktop grab, UI Automation, the Alt door); on the Mac the evidence is
 simple_widgets' suite. The design record is `docs/SHELL_SEAM.md` in port-coordination (#25).
 
-## Linux (GTK 4, in progress)
+## Linux (GTK 4)
 
 On Linux the same classes run on a GTK 4 half in `Clib/linux/shell_gtk.c` (with the shared
 `shell_ax_table.c`), built to the same contract as the macOS half: Windows' event numbers,
 device pixels, Windows virtual keys and UTF-16 characters, and the window's backing cairo
 image in place of a device context. So simple_widgets runs unchanged: its suite passes
-684 of 695 on Ubuntu 24.04 under WSL (GTK 4.14).
+687 of 695 on Ubuntu 24.04 under WSL (GTK 4.14).
 
 ```bash
 make -C Clib     # Clib/simple_shell_gtk.o, which the ECF links (with GTK 4 and fontconfig) on Linux
@@ -248,18 +248,28 @@ make -C Clib     # Clib/simple_shell_gtk.o, which the ECF links (with GTK 4 and 
 Done on Linux: the window and its pump (on GLib's main context), the pointer, keys and
 characters, the cursor kinds, the heartbeat, fast and dwell timers, the wake from any
 thread, close as an event, appearance, the desktop and the clock; the accessibility table;
-private fonts (fontconfig); the clipboard's text and images; and panels (simple_widgets'
-floating and document windows), each a window of its own.
+private fonts (fontconfig); the clipboard's text and images; panels (simple_widgets'
+floating and document windows), each a window of its own; dropped files, on the window
+and on panels; the open dialog (GtkFileDialog, with the Windows filter string turned into
+GTK filters); monitors; and opening a file or address in its default program.
 
 What Wayland does not allow: placing a window or reading where it is (a window's place is
 its size; panel moves are not reported), the global pointer position, and the screen grab
-(it needs the desktop portal; not written yet). Not yet: file dialogs and drops, spelling,
-printing, monitors, the overlay and strip, the tray, hotkeys and input synthesis; serving
-the accessibility table to AT-SPI (checked with Orca) comes last, by Larry's order.
+(it needs the desktop portal; not written yet). Global hotkeys and input synthesis need
+portals too. Not yet: spelling, printing, the overlay and strip, the tray, and the panel
+extras (grips, opacity, click-through). `Clib/make_stubs.pl` keeps the rest honest: 61
+entry points answer "not available" on Linux. Serving the accessibility table to AT-SPI
+(checked with Orca) comes last, by Larry's order.
 
-Of simple_widgets' 11 failures on Linux: three are Windows drive-letter tests and one is the
-screen-reader test (as on the Mac), one is the screen grab, and six need fonts this WSL
-image lacks (Noto: `fonts-noto-core`, `fonts-noto-color-emoji`) - pointed Hebrew, emoji.
+Of simple_widgets' 8 failures on Linux: three are Windows drive-letter tests and one is the
+screen-reader test (as on the Mac), one is the screen grab, and three are text tests being
+looked at (two emoji tests and one highlight wash). Install the Noto fonts
+(`fonts-noto-core`, `fonts-noto-color-emoji`): without them, pointed Hebrew and emoji fail
+as well.
+
+At 200% (WSLg honors `GDK_SCALE=2` only through GTK's X11 backend, `GDK_BACKEND=x11`), the
+suite gives the same results as at 100%. The window presents at the display's rate (58 to
+60 frames a second at 1600x900, at 100% and 200%).
 
 ## Running on macOS and Linux
 

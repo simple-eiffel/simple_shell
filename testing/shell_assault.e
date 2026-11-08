@@ -711,6 +711,24 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			end
 		end
 
+	test_window_services_stay_exported
+			-- A client reaches `dispatch' and `on_shell_open', as descendants' tests do: a
+			-- feature clause added above them (1.28.0) made both secret and broke simple_widgets'
+			-- test build while this library's tests still passed (MACMINI's guard).
+		local
+			w: SHELL_TEST_WINDOW
+			l_seen: INTEGER
+		do
+			create w
+			l_seen := w.events_seen
+			w.dispatch (w.Event_tick, 0, 0)
+			assert_integers_equal ("dispatch reached from a client", l_seen + 1, w.events_seen)
+			if l_seen < 0 then
+					-- Never runs: it only has to compile, which needs the export.
+				w.on_shell_open
+			end
+		end
+
 	test_heartbeat_is_settable
 		local
 			w: SHELL_TEST_WINDOW

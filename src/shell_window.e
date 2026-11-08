@@ -154,6 +154,8 @@ feature {NONE} -- Dispatch
 			end
 		end
 
+feature -- Operation (dispatch stays exported: descendants' tests call it, as before 1.28.0)
+
 	dispatch (a_type, a_x, a_y: INTEGER)
 			-- One event from the native queue. Types: 2 press, 3 char,
 			-- 4 key, 6 expose, 7 tick, 8 double, 9 drag, 10 release,

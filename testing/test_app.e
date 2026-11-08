@@ -40,6 +40,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_wake_needs_a_pump_and_coalesces, "wake_needs_a_pump_and_coalesces")
 			run_test (agent t.test_document_window_is_not_a_tool_window, "document_window_is_not_a_tool_window")
 			run_test (agent t.test_panel_slots_are_freed_on_close, "panel_slots_are_freed_on_close")
+			run_test (agent t.test_window_services_stay_exported, "window_services_stay_exported")
 			run_test (agent t.test_heartbeat_is_settable, "heartbeat_is_settable")
 			run_test (agent t.test_dwell_fires_once_after_rest, "dwell_fires_once_after_rest")
 			run_test (agent t.test_appearance_reads_the_windows_setting, "appearance_reads_the_windows_setting")

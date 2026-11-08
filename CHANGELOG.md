@@ -2,6 +2,20 @@
 
 All notable changes to simple_shell.
 
+## 1.32.0 - 2026-11-08
+
+### Added
+
+- macOS: the small leftovers have Mac bodies (89 stubs down to 72):
+  - the virtual desktop's position and size (`shell_screen_x/y/w/h`), in pixels from the main screen's top-left;
+  - a steady millisecond clock and the local time of day;
+  - opening a file or URL as Windows' "open" does;
+  - the app's icon, and Shift held at query time;
+  - Windows' system colors by `COLOR_*` index, each mapped to the Mac color that plays its part. They follow light and dark, and translucent ones are blended over the window background as they appear on screen;
+  - the standard Cut/Copy/Paste/Select All menu at the pointer, waited for;
+  - `shell_pump_for` with or without a window.
+- macOS: Windows' message plumbing gets documented bodies. `system_colors_changed` pushes 56 as on Windows, `syschar_is_ours` keeps Windows' policy, and the setting, contrast and motion filters answer "not mine", because the Mac reports those changes itself.
+
 ## 1.31.1 - 2026-11-08
 
 ### Fixed

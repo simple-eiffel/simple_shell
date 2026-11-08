@@ -959,6 +959,147 @@ int shell_set_dark_title_bar(void *hwnd, int l_on)
 	return 1;
 }
 
+/* ------------------------------------------------------------------ the desktop, the clock, small things */
+
+/* The virtual desktop (every screen together), in pixels from the main screen's top-left,
+   as SM_XVIRTUALSCREEN and its kin answer it. */
+static NSRect shell_virtual_desktop(double *a_scale)
+{
+	NSArray<NSScreen *> *l_all = [NSScreen screens];
+	NSRect u = NSZeroRect;
+	for (NSScreen *c in l_all) u = NSIsEmptyRect(u) ? [c frame] : NSUnionRect(u, [c frame]);
+	NSScreen *l_main = [l_all count] ? l_all[0] : nil;
+	*a_scale = l_main ? [l_main backingScaleFactor] : 1.0;
+	double l_top = l_main ? NSMaxY([l_main frame]) : NSMaxY(u);
+	return NSMakeRect(u.origin.x, l_top - NSMaxY(u), u.size.width, u.size.height);
+}
+int shell_screen_x(void) { double k; NSRect r = shell_virtual_desktop(&k); return (int)lround(r.origin.x * k); }
+int shell_screen_y(void) { double k; NSRect r = shell_virtual_desktop(&k); return (int)lround(r.origin.y * k); }
+int shell_screen_w(void) { double k; NSRect r = shell_virtual_desktop(&k); return (int)lround(r.size.width * k); }
+int shell_screen_h(void) { double k; NSRect r = shell_virtual_desktop(&k); return (int)lround(r.size.height * k); }
+
+/* Milliseconds from a steady clock (for intervals), and the local time of day in minutes. */
+double shell_now_ms(void) { return (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1.0e6; }
+int shell_minutes_of_day(void)
+{
+	time_t t = time(NULL);
+	struct tm l_local;
+	localtime_r(&t, &l_local);
+	return l_local.tm_hour * 60 + l_local.tm_min;
+}
+
+int shell_shift_held(void) { return shell_shift_down(); }
+
+/* Open a file with its application, or a URL in the browser, as Windows' ShellExecute
+   "open" does either: 1 on success. */
+int shell_shell_open(const void *path)
+{
+	NSString *t = shell_text(path);
+	if ([t length] == 0) return 0;
+	NSURL *u = nil;
+	if ([t rangeOfString:@"://"].location != NSNotFound || [t hasPrefix:@"mailto:"]) u = [NSURL URLWithString:t];
+	if (!u) u = [NSURL fileURLWithPath:[t stringByExpandingTildeInPath]];
+	if ([u isFileURL] && ![[NSFileManager defaultManager] fileExistsAtPath:[u path]]) return 0;
+	return [[NSWorkspace sharedWorkspace] openURL:u] ? 1 : 0;
+}
+
+/* The application's icon (the Dock's), where Windows answers the main window's HICON. */
+void *shell_main_icon(void) { shell_app(); return (__bridge void *)[NSApp applicationIconImage]; }
+
+/* Windows' system colors by their COLOR_* index, as 0xRRGGBB in the app's current light or
+   dark appearance: each index takes the Mac color that plays its part. */
+unsigned int shell_system_color(int l_index)
+{
+	shell_app();
+	NSColor *c;
+	switch (l_index) {
+		case 5: c = [NSColor textBackgroundColor]; break;                          /* COLOR_WINDOW */
+		case 8: c = [NSColor textColor]; break;                                    /* COLOR_WINDOWTEXT */
+		case 13: c = [NSColor selectedContentBackgroundColor]; break;              /* COLOR_HIGHLIGHT */
+		case 14: c = [NSColor alternateSelectedControlTextColor]; break;           /* COLOR_HIGHLIGHTTEXT */
+		case 15: c = [NSColor controlColor]; break;                                /* COLOR_BTNFACE */
+		case 17: c = [NSColor disabledControlTextColor]; break;                    /* COLOR_GRAYTEXT */
+		case 18: c = [NSColor controlTextColor]; break;                            /* COLOR_BTNTEXT */
+		case 26: c = [NSColor linkColor]; break;                                   /* COLOR_HOTLIGHT */
+		case 1: case 2: case 3: case 4: case 10: case 11: case 12: case 16: case 20: case 21: case 22:
+			c = [NSColor windowBackgroundColor]; break;                          /* frames, faces, shadows */
+		default: c = [NSColor labelColor];
+	}
+	/* Several Mac colors are translucent (white at 25% in dark mode for a control's face);
+	   blend them over the window background, as they appear on screen. */
+	__block unsigned int l_rgb = 0;
+	[[NSApp effectiveAppearance] performAsCurrentDrawingAppearance:^{
+		NSColor *r = [c colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+		NSColor *g = [[NSColor windowBackgroundColor] colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+		if (!r) return;
+		double a = [r alphaComponent];
+		double l_c[3] = {[r redComponent], [r greenComponent], [r blueComponent]};
+		double l_g[3] = {g ? [g redComponent] : 1, g ? [g greenComponent] : 1, g ? [g blueComponent] : 1};
+		unsigned int v[3];
+		for (int i = 0; i < 3; i++) v[i] = (unsigned int)lround((l_c[i] * a + l_g[i] * (1 - a)) * 255);
+		l_rgb = (v[0] << 16) | (v[1] << 8) | v[2];
+	}];
+	return l_rgb;
+}
+
+/* The standard text menu at the pointer, waited for: 1 Cut, 2 Copy, 3 Paste, 4 Select All, or
+   0 when dismissed. */
+static int s_text_menu_choice = 0;
+@interface SSMenuChoice : NSObject
+@end
+@implementation SSMenuChoice
+- (void)choose:(NSMenuItem *)i { s_text_menu_choice = (int)[i tag]; }
+@end
+
+int shell_text_menu(int can_cut, int can_copy, int can_paste, int can_select)
+{
+	shell_app();
+	SSMenuChoice *l_target = [[SSMenuChoice alloc] init];
+	NSMenu *m = [[NSMenu alloc] initWithTitle:@""];
+	[m setAutoenablesItems:NO];
+	NSString *const l_titles[] = {@"Cut", @"Copy", @"Paste", @"Select All"};
+	NSString *const l_keys[] = {@"x", @"c", @"v", @"a"};
+	int l_on[] = {can_cut, can_copy, can_paste, can_select};
+	for (int i = 0; i < 4; i++) {
+		if (i == 3) [m addItem:[NSMenuItem separatorItem]];
+		NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:l_titles[i] action:@selector(choose:) keyEquivalent:l_keys[i]];
+		[it setTarget:l_target];
+		[it setTag:i + 1];
+		[it setEnabled:l_on[i] != 0];
+		[m addItem:it];
+	}
+	s_text_menu_choice = 0;
+	[m popUpMenuPositioningItem:nil atLocation:[NSEvent mouseLocation] inView:nil];
+	return s_text_menu_choice;
+}
+
+/* Handle events for `ms' milliseconds with or without a window (SHELL_DESKTOP.pump_for: a
+   loop that is not the main window's, as simple_gui's windowless wake uses). */
+void shell_pump_for(int ms)
+{
+	shell_app();
+	NSDate *l_end = [NSDate dateWithTimeIntervalSinceNow:ms / 1000.0];
+	while ([l_end timeIntervalSinceNow] > 0) {
+		@autoreleasepool {
+			NSEvent *e = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:l_end inMode:NSDefaultRunLoopMode dequeue:YES];
+			if (e) shell_send(e);
+		}
+	}
+}
+
+/* Windows message plumbing, kept for the code that calls it. The Mac reports these changes
+   from its own notifications (53, 56, 57), so the filters answer "not mine"; the Alt-door
+   character policy is Windows' own. */
+int shell_setting_changed(const void *l_area) { (void)l_area; return 0; }
+int shell_contrast_changed(unsigned int l_spi) { (void)l_spi; return 0; }
+int shell_motion_changed(unsigned int l_spi) { (void)l_spi; return 0; }
+void shell_system_colors_changed(void) { shell_push(56, shell_high_contrast_on(), 0, 0); shell_nudge(); }
+int shell_syschar_is_ours(int l_ch)
+{
+	return (l_ch >= 'A' && l_ch <= 'Z') || (l_ch >= 'a' && l_ch <= 'z') || (l_ch >= '0' && l_ch <= '9')
+		|| l_ch == '+' || l_ch == '-' || l_ch == '=';
+}
+
 /* ------------------------------------------------------------------ Windows names the Eiffel inline C uses */
 
 unsigned int GetTickCount(void) { return (unsigned int)(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000ULL); }

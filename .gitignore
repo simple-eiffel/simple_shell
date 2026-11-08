@@ -1,2 +1,5 @@
 EIFGENs/
 *.log
+Clib/*.o
+Clib/macos/*.o
+Clib/macos/shell_appkit_stubs.c

@@ -2,6 +2,16 @@
 
 All notable changes to simple_shell.
 
+## 1.31.0 - 2026-11-08
+
+### Added
+
+- **macOS: the AppKit half, step one (M1 on port-coordination #15).** On a Mac, `simple_shell.h` (and the accessibility and printing headers) declare the same entry points and `Clib/macos/` supplies them; `make -C Clib` builds `Clib/simple_shell_appkit.o`, which the ECF links on macintosh only. The Windows build is unchanged: each header gains only an `#ifdef __APPLE__` around its existing body.
+  - Real now: the window, the pump (`shell_pump`, `shell_pump_pending`, `shell_pump_until`) and the event queue with Windows' event numbers; the pointer (press, release, double and triple, drag, move, leave, wheel, middle, right and Control-click); keys as Windows virtual keys and UTF-16 characters, with Command as the primary modifier; the heartbeat, fast and dwell timers; the wake from any thread; close as an event; caption, start-hidden, show and hide, backdrop, cursor kinds, icon, private fonts; the clipboard's text; dark mode, contrast and reduced motion; the work area and DPI; and the accessibility table (begin, add, describe, commit, read back).
+  - Coordinates are device pixels, as for a DPI-aware Win32 process, and the "device context" is the window's backing cairo image (simple_cairo's off-Windows contract), so simple_widgets runs unchanged: its 7GUIs app counts, types (100 Celsius gives 212 Fahrenheit), runs its timer and closes on a Mac.
+  - Everything else answers "not available" through stubs that `Clib/macos/make_stubs.pl` generates for each entry point without a Mac body yet: panels, the overlay and strip, tray, hotkeys, monitors, input synthesis, spelling, printing, the clipboard's images, file dialogs, and serving the accessibility table to VoiceOver.
+  - `SHELL_APPKIT_SCRIPT` drives a running app through AppKit's own event dispatch (click, type, snapshot, close): a bring-up aid while the Mac half has no test suite of its own.
+
 ## 1.30.0 - 2026-11-08
 
 ### Added

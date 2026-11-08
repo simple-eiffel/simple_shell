@@ -68,6 +68,16 @@ static SSView *s_view = nil;                  /* the main window's view (slot -1
 static NSWindow *s_panel[SHELL_PANELS];       /* framed panels: windows of their own */
 static NSTimer *s_panel_settle[SHELL_PANELS]; /* a move's end, after the last move notice */
 static int s_panel_accepts[SHELL_PANELS];     /* does the panel take dropped files (event 50)? */
+/* Each panel's settings, as the Windows half keeps them. */
+static int s_panel_framed[SHELL_PANELS], s_panel_document[SHELL_PANELS], s_panel_alpha[SHELL_PANELS];
+static int s_panel_drag[SHELL_PANELS], s_panel_press_drag[SHELL_PANELS], s_panel_axis[SHELL_PANELS];
+static int s_panel_side_grip[SHELL_PANELS], s_panel_bottom_grip[SHELL_PANELS], s_panel_grip[SHELL_PANELS];
+static int s_panel_minw[SHELL_PANELS], s_panel_minh[SHELL_PANELS];
+/* Windows' hit-test codes, which the Eiffel reads back by number. */
+enum { Shell_ht_caption = 2, Shell_ht_left = 10, Shell_ht_right = 11, Shell_ht_top = 12, Shell_ht_topleft = 13,
+	Shell_ht_topright = 14, Shell_ht_bottom = 15, Shell_ht_bottomleft = 16, Shell_ht_bottomright = 17 };
+static void shell_panel_track(int a_slot, int a_code);
+static NSCursor *shell_panel_cursor(int a_slot, int a_x, int a_y);
 /* The last drop's paths, UTF-16 and one per line, as the Windows half keeps them for
    `shell_drop_paths'. */
 #define SHELL_DROPS_CAP 16384
@@ -325,6 +335,10 @@ static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
 	[[self window] makeFirstResponder:self];
 	NSPoint p = [self pixelsOf:e];
 	if ([e modifierFlags] & NSEventModifierFlagControl) { right_click_pending = 1; return; }
+	if (slot >= 0) {
+		int l_code = shell_panel_press_code(slot, (int)p.x, (int)p.y, ([e modifierFlags] & NSEventModifierFlagShift) ? 1 : 0);
+		if (l_code != 0) { shell_panel_track(slot, l_code); return; }
+	}
 	NSInteger n = [e clickCount];
 	shell_emit(self, n == 2 ? 8 : n >= 3 ? 12 : 2, (int)p.x, (int)p.y, 0, 0);
 }
@@ -347,7 +361,8 @@ static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
 {
 	NSPoint p = [self pixelsOf:e];
 	shell_emit(self, 13, (int)p.x, (int)p.y, 0, 1);
-	[self applyCursor];
+	NSCursor *l_grip = slot >= 0 ? shell_panel_cursor(slot, (int)p.x, (int)p.y) : nil;
+	if (l_grip) [l_grip set]; else [self applyCursor];
 }
 - (void)mouseExited:(NSEvent *)e { (void)e; shell_emit(self, 14, 0, 0, 0, 0); }
 /* The main window hears the right button on release (11); a panel on press (46), as on Windows. */
@@ -685,29 +700,57 @@ static SSView *shell_panel_view(int l_slot)
 	return l_slot >= 0 && l_slot < SHELL_PANELS && s_panel[l_slot] ? (SSView *)[s_panel[l_slot] contentView] : nil;
 }
 
-int shell_panel_open_framed_as(int l_x, int l_y, int l_w, int l_h, const void *l_title, int l_document)
+/* A panel's window and view in `l_slot', with the settings a new panel starts from. */
+static int shell_panel_adopt(NSWindow *w, int l_slot, int l_framed, int l_document)
 {
-	(void)l_document;   /* every Mac window has its own place in the Dock's window list and stacking */
-	int l_slot = -1;
-	for (int i = 0; i < SHELL_PANELS && l_slot < 0; i++) if (!s_panel[i]) l_slot = i;
-	if (l_slot < 0 || l_w <= 0 || l_h <= 0 || !pthread_main_np()) return -1;
-	shell_app();
-	NSUInteger l_style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-	NSRect f = shell_frame_of(l_x, l_y, l_w, l_h);
-	NSWindow *w = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:f styleMask:l_style]
-		styleMask:l_style backing:NSBackingStoreBuffered defer:NO];
 	[w setReleasedWhenClosed:NO];
-	[w setTitle:shell_text(l_title)];
 	[w setDelegate:s_target];
 	[w setAcceptsMouseMovedEvents:YES];
 	s_panel[l_slot] = w;
+	s_panel_framed[l_slot] = l_framed; s_panel_document[l_slot] = l_document; s_panel_alpha[l_slot] = 255;
+	s_panel_drag[l_slot] = s_panel_press_drag[l_slot] = s_panel_axis[l_slot] = 0;
+	s_panel_side_grip[l_slot] = s_panel_bottom_grip[l_slot] = s_panel_grip[l_slot] = 0;
+	s_panel_minw[l_slot] = s_panel_minh[l_slot] = 0;
+	s_panel_accepts[l_slot] = 0;
 	SSView *v = [[SSView alloc] initWithFrame:[[w contentView] frame] slot:l_slot];
 	[w setContentView:v];
 	[v registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
-	s_panel_accepts[l_slot] = 0;
 	[w makeFirstResponder:v];
 	[v rebuildBacking];
 	return l_slot;
+}
+static int shell_panel_free_slot(void)
+{
+	for (int i = 0; i < SHELL_PANELS; i++) if (!s_panel[i]) return i;
+	return -1;
+}
+
+/* A framed panel. A tool panel (`l_document' 0) is a utility panel: the small title bar, no
+   minimize, as Windows' tool window. A document window (1) is an ordinary window, as Windows'
+   unowned document window with its own taskbar button. */
+int shell_panel_open_framed_as(int l_x, int l_y, int l_w, int l_h, const void *l_title, int l_document)
+{
+	int l_slot = shell_panel_free_slot();
+	if (l_slot < 0 || l_w <= 0 || l_h <= 0 || !pthread_main_np()) return -1;
+	shell_app();
+	NSRect f = shell_frame_of(l_x, l_y, l_w, l_h);
+	NSWindow *w;
+	if (l_document) {
+		NSUInteger l_style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+		w = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:f styleMask:l_style] styleMask:l_style backing:NSBackingStoreBuffered defer:NO];
+	} else {
+		NSUInteger l_style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskUtilityWindow;
+		NSPanel *l_panel = [[NSPanel alloc] initWithContentRect:[NSPanel contentRectForFrameRect:f styleMask:l_style] styleMask:l_style backing:NSBackingStoreBuffered defer:NO];
+		[l_panel setHidesOnDeactivate:NO];   /* a floating window keeps its content in view, as on Windows */
+		[l_panel setBecomesKeyOnlyIfNeeded:NO];
+		/* A utility panel floats above every window by default; Windows' tool window is owned,
+		   not topmost, so this one stays at the normal level. */
+		[l_panel setFloatingPanel:NO];
+		[l_panel setLevel:NSNormalWindowLevel];
+		w = l_panel;
+	}
+	[w setTitle:shell_text(l_title)];
+	return shell_panel_adopt(w, l_slot, 1, l_document ? 1 : 0);
 }
 int shell_panel_open_framed(int l_x, int l_y, int l_w, int l_h, const void *l_title)
 {
@@ -767,7 +810,213 @@ void shell_panel_fill(int l_slot, int l_rgb)
 	}
 	[v setNeedsDisplay:YES];
 }
-int shell_panel_open(int l_x, int l_y, int l_w, int l_h) { (void)l_x; (void)l_y; (void)l_w; (void)l_h; return -1; }
+/* An unframed panel: borderless, above other windows, never made active (WS_EX_TOPMOST,
+   WS_EX_NOACTIVATE): a non-activating floating panel. */
+int shell_panel_open(int l_x, int l_y, int l_w, int l_h)
+{
+	int l_slot = shell_panel_free_slot();
+	if (l_slot < 0 || l_w <= 0 || l_h <= 0 || !pthread_main_np()) return -1;
+	shell_app();
+	NSUInteger l_style = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel;
+	NSPanel *w = [[NSPanel alloc] initWithContentRect:shell_frame_of(l_x, l_y, l_w, l_h) styleMask:l_style backing:NSBackingStoreBuffered defer:NO];
+	[w setLevel:NSFloatingWindowLevel];
+	[w setHidesOnDeactivate:NO];
+	[w setFloatingPanel:YES];
+	[w setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary];
+	return shell_panel_adopt(w, l_slot, 0, 0);
+}
+
+/* ---- the rest of a panel's settings and questions */
+static int shell_panel_ok(int l_slot) { return l_slot >= 0 && l_slot < SHELL_PANELS && s_panel[l_slot] ? 1 : 0; }
+int shell_panel_is_tool_window(int l_slot) { return shell_panel_ok(l_slot) && !s_panel_document[l_slot] ? 1 : 0; }
+int shell_panel_has_owner(int l_slot) { return shell_panel_ok(l_slot) && s_panel_framed[l_slot] && !s_panel_document[l_slot] ? 1 : 0; }
+int shell_panel_can_minimize(int l_slot) { return shell_panel_ok(l_slot) && ([s_panel[l_slot] styleMask] & NSWindowStyleMaskMiniaturizable) ? 1 : 0; }
+int shell_panel_is_topmost(int l_slot) { return shell_panel_ok(l_slot) && [s_panel[l_slot] level] > NSNormalWindowLevel ? 1 : 0; }
+/* A document window shows the application's icon, as the Windows half copies the main
+   window's; a tool panel has none. */
+void *shell_panel_icon(int l_slot) { return shell_panel_ok(l_slot) && s_panel_document[l_slot] ? shell_main_icon() : NULL; }
+
+void shell_panel_set_opacity(int l_slot, int l_alpha)
+{
+	if (!shell_panel_ok(l_slot) || l_alpha < 0 || l_alpha > 255) return;
+	[s_panel[l_slot] setAlphaValue:l_alpha / 255.0];
+	s_panel_alpha[l_slot] = l_alpha;
+}
+int shell_panel_opacity(int l_slot) { return shell_panel_ok(l_slot) ? s_panel_alpha[l_slot] : 0; }
+void shell_panel_set_click_through(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) [s_panel[l_slot] setIgnoresMouseEvents:l_on != 0]; }
+int shell_panel_is_click_through(int l_slot) { return shell_panel_ok(l_slot) && [s_panel[l_slot] ignoresMouseEvents] ? 1 : 0; }
+
+/* Kept out of screen captures and recordings: Windows' WDA_EXCLUDEFROMCAPTURE (0x11) is a
+   window that shares nothing. */
+void shell_panel_set_capture_excluded(int l_slot, int l_on)
+{
+	if (shell_panel_ok(l_slot)) [s_panel[l_slot] setSharingType:l_on ? NSWindowSharingNone : NSWindowSharingReadOnly];
+}
+int shell_panel_capture_affinity(int l_slot)
+{
+	return shell_panel_ok(l_slot) && [s_panel[l_slot] sharingType] == NSWindowSharingNone ? 0x11 : 0;
+}
+
+void shell_panel_set_draggable(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel_drag[l_slot] = l_on ? 1 : 0; }
+void shell_panel_set_press_drag(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel_press_drag[l_slot] = l_on ? 1 : 0; }
+void shell_panel_set_axis(int l_slot, int l_axis) { if (shell_panel_ok(l_slot)) s_panel_axis[l_slot] = (l_axis >= 0 && l_axis <= 2) ? l_axis : 0; }
+void shell_panel_set_side_grip(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel_side_grip[l_slot] = l_on ? 1 : 0; }
+void shell_panel_set_bottom_grip(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel_bottom_grip[l_slot] = l_on ? 1 : 0; }
+void shell_panel_set_resizable(int l_slot, int l_grip, int l_min_w, int l_min_h)
+{
+	if (!shell_panel_ok(l_slot)) return;
+	s_panel_grip[l_slot] = l_grip > 0 ? l_grip : 0;
+	s_panel_minw[l_slot] = l_min_w > 0 ? l_min_w : 0;
+	s_panel_minh[l_slot] = l_min_h > 0 ? l_min_h : 0;
+	double k = [s_panel[l_slot] backingScaleFactor];
+	if (s_panel_minw[l_slot] || s_panel_minh[l_slot]) [s_panel[l_slot] setContentMinSize:NSMakeSize(s_panel_minw[l_slot] / k, s_panel_minh[l_slot] / k)];
+}
+
+/* What a Shift+press at client point (x, y) does: a move (caption) or the resize grip there. */
+int shell_panel_grip_code(int l_slot, int l_x, int l_y)
+{
+	SSView *v = shell_panel_view(l_slot);
+	if (!v || s_panel_grip[l_slot] <= 0 || !v->backing) return Shell_ht_caption;
+	int g = s_panel_grip[l_slot], w = cairo_image_surface_get_width(v->backing), h = cairo_image_surface_get_height(v->backing);
+	int l_left = l_x < g, l_right = l_x >= w - g, l_top = l_y < g, l_bottom = l_y >= h - g;
+	if (l_top && l_left) return Shell_ht_topleft;
+	if (l_top && l_right) return Shell_ht_topright;
+	if (l_bottom && l_left) return Shell_ht_bottomleft;
+	if (l_bottom && l_right) return Shell_ht_bottomright;
+	if (l_left) return Shell_ht_left;
+	if (l_right) return Shell_ht_right;
+	if (l_top) return Shell_ht_top;
+	if (l_bottom) return Shell_ht_bottom;
+	return Shell_ht_caption;
+}
+
+/* What a press at client point (x, y) does, as Windows' shell_panel_press_code: 0 for the
+   program (event 41), or a move or resize the shell carries out. */
+int shell_panel_press_code(int l_slot, int l_x, int l_y, int l_shift)
+{
+	SSView *v = shell_panel_view(l_slot);
+	if (!v) return 0;
+	if (s_panel_drag[l_slot] && l_shift) return shell_panel_grip_code(l_slot, l_x, l_y);
+	if (s_panel_press_drag[l_slot]) return Shell_ht_caption;
+	int g = s_panel_grip[l_slot];
+	int w = v->backing ? cairo_image_surface_get_width(v->backing) : 0, h = v->backing ? cairo_image_surface_get_height(v->backing) : 0;
+	if (s_panel_side_grip[l_slot] && g > 0) {
+		if (l_x < g) return Shell_ht_left;
+		if (l_x >= w - g) return Shell_ht_right;
+	}
+	if (s_panel_bottom_grip[l_slot] && g > 0 && l_y >= h - g) return Shell_ht_bottom;
+	return 0;
+}
+
+/* The cursor a press would act with, as Windows' WM_SETCURSOR answers for the panel; nil
+   for the program's own cursor. */
+static NSCursor *shell_panel_cursor(int a_slot, int a_x, int a_y)
+{
+	int l_shift = shell_shift_down();
+	int c = l_shift && s_panel_drag[a_slot] ? shell_panel_grip_code(a_slot, a_x, a_y) : shell_panel_press_code(a_slot, a_x, a_y, 0);
+	switch (c) {
+		case Shell_ht_caption:
+			if (!l_shift && !s_panel_press_drag[a_slot]) return nil;
+			return s_panel_axis[a_slot] == 1 ? [NSCursor resizeLeftRightCursor] : s_panel_axis[a_slot] == 2 ? [NSCursor resizeUpDownCursor] : [NSCursor openHandCursor];
+		case Shell_ht_left: case Shell_ht_right: return [NSCursor resizeLeftRightCursor];
+		case Shell_ht_top: case Shell_ht_bottom: return [NSCursor resizeUpDownCursor];
+		case Shell_ht_topleft: case Shell_ht_topright: case Shell_ht_bottomleft: case Shell_ht_bottomright: return [NSCursor crosshairCursor];
+	}
+	return nil;
+}
+
+/* Carry out a move or resize from a press, until the button is released, as Windows' modal
+   size-move loop does: a move keeps to the panel's axis (1 sideways only, 2 up and down only);
+   a resize keeps the minimum size. The window's own notices report it (49 while moving, 47
+   when still, 48 for the new size). */
+static void shell_panel_track(int a_slot, int a_code)
+{
+	NSWindow *w = s_panel[a_slot];
+	NSRect l_start = [w frame];
+	NSPoint l_from = [NSEvent mouseLocation];
+	double k = [w backingScaleFactor];
+	double l_min_w = s_panel_minw[a_slot] / k, l_min_h = s_panel_minh[a_slot] / k;
+	if (l_min_w < 24) l_min_w = 24;
+	if (l_min_h < 16) l_min_h = 16;
+	for (;;) {
+		NSEvent *e = [NSApp nextEventMatchingMask:NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
+			untilDate:[NSDate distantFuture] inMode:NSEventTrackingRunLoopMode dequeue:YES];
+		if (!e || [e type] == NSEventTypeLeftMouseUp) break;
+		NSPoint l_now = [NSEvent mouseLocation];
+		double dx = l_now.x - l_from.x, dy = l_now.y - l_from.y;
+		NSRect f = l_start;
+		switch (a_code) {
+			case Shell_ht_caption:
+				if (s_panel_axis[a_slot] == 1) dy = 0;
+				if (s_panel_axis[a_slot] == 2) dx = 0;
+				f.origin.x += dx; f.origin.y += dy;
+				[w setFrameOrigin:f.origin];
+				continue;
+			case Shell_ht_left: case Shell_ht_topleft: case Shell_ht_bottomleft:
+				f.size.width = fmax(l_min_w, l_start.size.width - dx); f.origin.x = NSMaxX(l_start) - f.size.width; break;
+			case Shell_ht_right: case Shell_ht_topright: case Shell_ht_bottomright:
+				f.size.width = fmax(l_min_w, l_start.size.width + dx); break;
+			default: break;
+		}
+		switch (a_code) {
+			case Shell_ht_top: case Shell_ht_topleft: case Shell_ht_topright:
+				f.size.height = fmax(l_min_h, l_start.size.height + dy); break;
+			case Shell_ht_bottom: case Shell_ht_bottomleft: case Shell_ht_bottomright:
+				f.size.height = fmax(l_min_h, l_start.size.height - dy); f.origin.y = NSMaxY(l_start) - f.size.height; break;
+			default: break;
+		}
+		[w setFrame:f display:YES];
+	}
+}
+
+/* The test door to events 60 - 65: a Windows message, as the panel's window procedure would
+   turn it into an event (the message numbers are Windows'). Answers 0, as the procedure does. */
+int shell_panel_send(int l_slot, int l_msg, int l_w, int l_l)
+{
+	if (!shell_panel_ok(l_slot)) return 0;
+	int x = (short)(l_l & 0xFFFF), y = (short)((l_l >> 16) & 0xFFFF);
+	switch (l_msg) {
+		case 0x0100: if (shell_keydown_is_ours(l_w, shell_control_down(), shell_alt_down())) shell_push(60, l_w, 0, l_slot); break; /* WM_KEYDOWN */
+		case 0x0104: if (shell_syskey_is_ours(l_w)) shell_push(60, l_w, 0, l_slot); break;   /* WM_SYSKEYDOWN */
+		case 0x0102: shell_push(61, l_w, 0, l_slot); break;                                  /* WM_CHAR */
+		case 0x0010: shell_push(62, 0, 0, l_slot); break;                                    /* WM_CLOSE */
+		case 0x0006: shell_push(63, (l_w & 0xFFFF) ? 1 : 0, 0, l_slot); break;               /* WM_ACTIVATE */
+		case 0x0203: shell_push(64, x, y, l_slot); break;                                    /* WM_LBUTTONDBLCLK */
+		case 0x02A3: shell_push(65, 0, 0, l_slot); break;                                    /* WM_MOUSELEAVE */
+		case 0x0201: shell_push(41, x, y, l_slot); break;                                    /* WM_LBUTTONDOWN */
+		case 0x0202: shell_push(42, x, y, l_slot); break;                                    /* WM_LBUTTONUP */
+		case 0x0200: shell_push(43, x, y, l_slot); break;                                    /* WM_MOUSEMOVE */
+		case 0x0204: shell_push(46, x, y, l_slot); break;                                    /* WM_RBUTTONDOWN */
+		case 0x020A: shell_push(45, (short)((l_w >> 16) & 0xFFFF), 0, l_slot); break;        /* WM_MOUSEWHEEL */
+		default: return 0;
+	}
+	shell_nudge();
+	return 0;
+}
+
+/* A drag delivered as if by the pointer (the test door): a move of (dx, dy) pixels from where
+   the panel is, kept to its axis and reported as event 49, without moving the window, as
+   Windows' WM_MOVING alone does. */
+void shell_panel_try_move(int l_slot, int l_dx, int l_dy, int *l_x, int *l_y)
+{
+	(void)l_x; (void)l_y;
+	RECT r;
+	if (!shell_panel_ok(l_slot) || !GetWindowRect((__bridge HWND)s_panel[l_slot], &r)) return;
+	if (s_panel_axis[l_slot] == 1) l_dy = 0;
+	if (s_panel_axis[l_slot] == 2) l_dx = 0;
+	int l_left = r.left + l_dx, l_top = r.top + l_dy;
+	if (!shell_coalesce_slot(49, l_left, l_top, l_slot)) shell_push(49, l_left, l_top, l_slot);
+	shell_nudge();
+}
+
+/* The panel's window destroyed as its owner's destruction would, without the books being
+   kept (the test door to a panel that died elsewhere). */
+void shell_panel_destroy_behind(int l_slot)
+{
+	if (!shell_panel_ok(l_slot)) return;
+	[s_panel[l_slot] setDelegate:nil];
+	[s_panel[l_slot] close];
+}
 void shell_set_cursor_kind(int k) { s_cursor = k; [s_view applyCursor]; }
 
 /* A .ico (or any image macOS reads) as the Dock icon. */

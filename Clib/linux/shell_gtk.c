@@ -1169,3 +1169,79 @@ int shell_open_file_dialog(const void *l_title, const void *l_filter, const void
 	g_free(l_path);
 	return 1;
 }
+
+/* ------------------------------------------------------------------ monitors */
+
+/* Each monitor as Windows' GetMonitorInfo answers it, in pixels: the monitor (0-3: left, top,
+   right, bottom), its work area (4-7; GTK 4 has no work-area query, so the monitor again),
+   and whether it is the primary one (8: the first GDK lists). */
+#define SHELL_MONITOR_CAP 16
+static int s_mon[SHELL_MONITOR_CAP][9];
+static gunichar2 s_mon_name[SHELL_MONITOR_CAP][32];
+static int s_mon_count = 0;
+
+int shell_monitors_refresh(void)
+{
+	GdkDisplay *l_display;
+	GListModel *l_all;
+	guint i, n;
+	shell_app();
+	l_display = gdk_display_get_default();
+	l_all = l_display ? gdk_display_get_monitors(l_display) : NULL;
+	n = l_all ? g_list_model_get_n_items(l_all) : 0;
+	s_mon_count = 0;
+	for (i = 0; i < n && s_mon_count < SHELL_MONITOR_CAP; i++) {
+		GdkMonitor *c = g_list_model_get_item(l_all, i);
+		GdkRectangle g;
+		int k = gdk_monitor_get_scale_factor(c), *m = s_mon[s_mon_count];
+		const char *l_name = gdk_monitor_get_description(c);
+		gunichar2 *u;
+		glong l_len = 0;
+		gdk_monitor_get_geometry(c, &g);
+		m[0] = g.x * k; m[1] = g.y * k; m[2] = (g.x + g.width) * k; m[3] = (g.y + g.height) * k;
+		m[4] = m[0]; m[5] = m[1]; m[6] = m[2]; m[7] = m[3];
+		m[8] = i == 0 ? 1 : 0;
+		if (!l_name) l_name = gdk_monitor_get_connector(c);
+		u = g_utf8_to_utf16(l_name ? l_name : "", -1, NULL, &l_len, NULL);
+		if (l_len > 31) l_len = 31;
+		if (u) memcpy(s_mon_name[s_mon_count], u, (size_t)l_len * sizeof(gunichar2));
+		s_mon_name[s_mon_count][u ? l_len : 0] = 0;
+		g_free(u);
+		g_object_unref(c);
+		s_mon_count++;
+	}
+	return s_mon_count;
+}
+int shell_monitor_field(int l_i, int l_f) { return (l_i >= 0 && l_i < s_mon_count && l_f >= 0 && l_f <= 8) ? s_mon[l_i][l_f] : 0; }
+/* The monitor's name, UTF-16 into `l_buf' (the caller reads 16-bit units). */
+int shell_monitor_name(int l_i, void *l_buf, int l_cap)
+{
+	int n = 0;
+	gunichar2 *b = (gunichar2 *)l_buf;
+	if (l_i < 0 || l_i >= s_mon_count || l_cap <= 0) return 0;
+	while (n < l_cap - 1 && n < 31 && s_mon_name[l_i][n]) { b[n] = s_mon_name[l_i][n]; n++; }
+	b[n] = 0;
+	return n;
+}
+
+/* ------------------------------------------------------------------ small things */
+
+/* Open a file with its application, or a URL in the browser, as Windows' ShellExecute
+   "open" does: 1 when it was handed over. */
+int shell_shell_open(const void *path)
+{
+	const char *t = (const char *)path;
+	char *l_uri;
+	gboolean ok;
+	if (!t || !*t) return 0;
+	shell_app();
+	if (strstr(t, "://") || g_str_has_prefix(t, "mailto:")) l_uri = g_strdup(t);
+	else {
+		if (!g_file_test(t, G_FILE_TEST_EXISTS)) return 0;
+		l_uri = g_filename_to_uri(t, NULL, NULL);
+		if (!l_uri) return 0;
+	}
+	ok = g_app_info_launch_default_for_uri(l_uri, NULL, NULL);
+	g_free(l_uri);
+	return ok ? 1 : 0;
+}

@@ -2,6 +2,19 @@
 
 All notable changes to simple_shell.
 
+## 1.38.0 - 2026-11-08
+
+### Added
+
+- macOS: printing (`Clib/macos/shell_appkit_print.m`; 11 stubs left).
+  - The printer "DC" is a cairo PDF surface for the document. simple_cairo's off-Windows `make_for_printer_dc` references it (simple_cairo #6), so each page's surface draws into it and its show_page adds a page.
+  - At the end, the PDF goes to the named printer through CUPS, or to the output file when one is given.
+  - Printers and the default come from CUPS, in UTF-16.
+  - Paper: Windows' DMPAPER 1 Letter, 5 Legal, 9 A4; 0 is the region's own. Landscape swaps.
+  - `caps` answers 72 dots per inch and the page in points, with no unprintable margin.
+  - One document at a time, claimed atomically. An unknown printer is refused, as on Windows.
+  - The ECF links `-lcups` on macOS.
+
 ## 1.37.0 - 2026-11-08
 
 ### Added

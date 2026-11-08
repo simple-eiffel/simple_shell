@@ -17,6 +17,11 @@
 #ifndef SIMPLE_SHELL_PRINT_H
 #define SIMPLE_SHELL_PRINT_H
 
+#ifdef __APPLE__
+/* macOS: the printing entry points are declared by the AppKit half. */
+#include "macos/shell_appkit.h"
+#else
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <wchar.h>
@@ -172,5 +177,7 @@ static void* shell_print_dc(void) {
 static int shell_print_in_page(void) {
     return s_shell_print_in_page;
 }
+
+#endif /* __APPLE__ */
 
 #endif

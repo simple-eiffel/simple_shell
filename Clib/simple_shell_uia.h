@@ -26,6 +26,11 @@
 #ifndef SIMPLE_SHELL_UIA_H
 #define SIMPLE_SHELL_UIA_H
 
+#ifdef __APPLE__
+/* macOS: the accessibility entry points are declared by the AppKit half. */
+#include "macos/shell_appkit.h"
+#else
+
 #ifndef COBJMACROS
 #define COBJMACROS
 #endif
@@ -710,5 +715,7 @@ static int shell_uia_row_count(void) {
     shell_uia_lock_leave();
     return l_n;
 }
+
+#endif /* __APPLE__ */
 
 #endif

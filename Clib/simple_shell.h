@@ -10,6 +10,11 @@
 #ifndef SIMPLE_SHELL_H
 #define SIMPLE_SHELL_H
 
+#ifdef __APPLE__
+/* macOS: the AppKit half declares the same entry points; Clib/macos/shell_appkit.m has the bodies. */
+#include "macos/shell_appkit.h"
+#else
+
 #include <windows.h>
 #include <shellapi.h>
 #pragma comment(lib, "shell32.lib")
@@ -2491,5 +2496,7 @@ static int shell_tray_remove(HWND h) {
     DestroyWindow(h);
     return ok;
 }
+
+#endif /* __APPLE__ */
 
 #endif

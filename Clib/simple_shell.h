@@ -369,6 +369,12 @@ static void shell_wake_arrived(void) {
     shell_push(54, 0, 0, 0);
 }
 
+/* Is the calling thread the pump's, or has no thread claimed the pump yet (GTK's rule in
+   simple_gui: before the loop exists, any thread may build the interface)? */
+static int shell_is_pump_thread(void) {
+    return s_shell_pump_thread == 0 || GetCurrentThreadId() == s_shell_pump_thread;
+}
+
 static void shell_claim_pump_thread(int l_on) {
     s_shell_pump_thread = l_on ? GetCurrentThreadId() : 0;
     InterlockedExchange(&s_shell_wake_pending, 0);

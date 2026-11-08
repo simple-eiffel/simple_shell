@@ -81,6 +81,8 @@ feature {NONE} -- Initialization
 				"a windowless pump never stops another processor's allocator")
 			run_test (agent test_a_worker_wakes_the_pump_at_once,
 				"a worker on another processor wakes the pump at once (GW-26)")
+			run_test (agent test_only_the_pump_thread_is_the_gui_thread,
+				"only the pump's thread is the GUI thread (W11)")
 
 			print ("%N========================%N")
 			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")
@@ -224,6 +226,38 @@ feature {NONE} -- Tests: the wake (1.18.0, GW-26)
 			assert ("not before the worker woke", l_seen_at >= l_woke_at)
 			assert ("within 50 ms of the post (" + (l_seen_at - l_woke_at).out + " ms)",
 				l_seen_at - l_woke_at <= 50)
+		end
+
+	test_only_the_pump_thread_is_the_gui_thread
+			-- Once this thread claims the pump, it is the GUI thread and a worker's is not;
+			-- with no pump claimed, any thread may build the interface.
+		local
+			l_wake: SHELL_WAKE
+			l_probe: separate PUMP_THREAD_PROBE
+		do
+			create l_wake
+			l_wake.claim_pump_thread
+			assert ("the claiming thread", l_wake.is_pump_thread)
+			create l_probe
+			ask_probe (l_probe)
+			assert ("a worker's thread is not", probe_asked (l_probe) and then not probe_answer (l_probe))
+			l_wake.release_pump_thread
+			assert ("no pump claimed: any thread", l_wake.is_pump_thread)
+		end
+
+	ask_probe (a_probe: separate PUMP_THREAD_PROBE)
+		do
+			a_probe.ask
+		end
+
+	probe_asked (a_probe: separate PUMP_THREAD_PROBE): BOOLEAN
+		do
+			Result := a_probe.asked
+		end
+
+	probe_answer (a_probe: separate PUMP_THREAD_PROBE): BOOLEAN
+		do
+			Result := a_probe.answer
 		end
 
 	launch_wake (a_worker: separate WAKE_WORKER; a_ms: INTEGER)

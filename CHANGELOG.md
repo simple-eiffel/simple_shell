@@ -2,6 +2,16 @@
 
 All notable changes to simple_shell.
 
+## 1.34.0 - 2026-11-08
+
+### Added
+
+- macOS: spelling through NSSpellChecker in American English, as the Windows half's ISpellChecker ("en-US"), with 63 stubs left.
+  - `shell_spell_check` answers (start, length) pairs in UTF-16 units, the units Windows uses.
+  - `shell_spell_suggest` gives up to five suggestions, one per line.
+  - `shell_spell_ignore` holds for the run.
+  - `shell_spell_add` learns the word into the user's dictionary, as ISpellChecker::Add does.
+
 ## 1.33.0 - 2026-11-08
 
 ### Added

@@ -1073,6 +1073,80 @@ int shell_open_file_dialog(const void *l_title, const void *l_filter, const void
 	return 1;
 }
 
+/* ------------------------------------------------------------------ spelling */
+
+/* NSSpellChecker in American English, as the Windows half's ISpellChecker ("en-US"). Ranges
+   and text are in UTF-16 units on both. Words ignored hold for this run (one document tag);
+   a word added is learned into the user's dictionary, as ISpellChecker::Add does. */
+static NSInteger s_spell_tag = 0;
+static NSSpellChecker *shell_speller(void)
+{
+	shell_app();
+	NSSpellChecker *c = [NSSpellChecker sharedSpellChecker];
+	if (!s_spell_tag) s_spell_tag = [NSSpellChecker uniqueSpellDocumentTag];
+	return c;
+}
+static NSString *const Shell_spell_language = @"en_US";
+
+/* Misspellings in `text': (start, length) pairs into `out', at most `cap_pairs'; answers how many. */
+int shell_spell_check(const void *text, int *out, int cap_pairs)
+{
+	NSString *t = shell_text(text);
+	NSSpellChecker *c = shell_speller();
+	int n = 0;
+	NSUInteger l_at = 0;
+	while (n < cap_pairs && l_at < [t length]) {
+		NSRange r = [c checkSpellingOfString:t startingAt:(NSInteger)l_at language:Shell_spell_language wrap:NO
+			inSpellDocumentWithTag:s_spell_tag wordCount:NULL];
+		if (r.location == NSNotFound || r.length == 0) break;
+		out[n * 2] = (int)r.location;
+		out[n * 2 + 1] = (int)r.length;
+		n++;
+		l_at = NSMaxRange(r);
+	}
+	return n;
+}
+
+/* Up to five suggestions for `word', UTF-16 and one per line, into `buf'; answers how many. */
+int shell_spell_suggest(const void *word, void *buf, int cap)
+{
+	unichar *b = (unichar *)buf;
+	if (cap < 1) return 0;
+	b[0] = 0;
+	NSString *w = shell_text(word);
+	if ([w length] == 0) return 0;
+	NSArray<NSString *> *l_guesses = [shell_speller() guessesForWordRange:NSMakeRange(0, [w length]) inString:w
+		language:Shell_spell_language inSpellDocumentWithTag:s_spell_tag];
+	int n = 0, pos = 0;
+	for (NSString *g in l_guesses) {
+		if (n == 5) break;
+		int L = (int)[g length];
+		if (pos + L + 2 >= cap) break;
+		if (n) b[pos++] = '\n';
+		[g getCharacters:b + pos range:NSMakeRange(0, (NSUInteger)L)];
+		pos += L;
+		n++;
+	}
+	b[pos] = 0;
+	return n;
+}
+
+int shell_spell_add(const void *word)
+{
+	NSString *w = shell_text(word);
+	if ([w length] == 0) return 0;
+	[shell_speller() learnWord:w];
+	return 1;
+}
+
+int shell_spell_ignore(const void *word)
+{
+	NSString *w = shell_text(word);
+	if ([w length] == 0) return 0;
+	[shell_speller() ignoreWord:w inSpellDocumentWithTag:s_spell_tag];
+	return 1;
+}
+
 /* ------------------------------------------------------------------ the desktop, the clock, small things */
 
 /* The virtual desktop (every screen together), in pixels from the main screen's top-left,

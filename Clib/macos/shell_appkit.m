@@ -39,6 +39,15 @@ static int shell_coalesce(int t, int a, int b, int c, int a_sum)
 	return 1;
 }
 
+/* As `shell_coalesce', for a panel's event: only the same panel's (`c' is the slot). */
+static int shell_coalesce_slot(int t, int a, int b, int a_slot)
+{
+	int last = (s_qtail + SHELL_QCAP - 1) % SHELL_QCAP;
+	if (s_qtail == s_qhead || s_q[last][0] != t || s_q[last][3] != a_slot) return 0;
+	s_q[last][1] = a; s_q[last][2] = b;
+	return 1;
+}
+
 int shell_next_event(int *out4)
 {
 	if (s_qhead == s_qtail) return 0;
@@ -53,8 +62,10 @@ int s_shell_heartbeat_ms = 250;
 
 @class SSView;
 static NSWindow *s_window = nil;
-static SSView *s_view = nil;
-static cairo_surface_t *s_backing = NULL;     /* the window's image, device pixels */
+static SSView *s_view = nil;                  /* the main window's view (slot -1) */
+#define SHELL_PANELS 8
+static NSWindow *s_panel[SHELL_PANELS];       /* framed panels: windows of their own */
+static NSTimer *s_panel_settle[SHELL_PANELS]; /* a move's end, after the last move notice */
 static int s_quit = 0;                        /* the window is gone: the pump answers 0 */
 static int s_start_hidden = 0, s_close_requests = 0, s_cursor = 0;
 static int s_backdrop = 0x12141B;             /* Windows' default: RGB(18, 20, 27) */
@@ -149,12 +160,50 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
 
 @interface SSView : NSView {
 @public
+	int slot;                  /* -1: the main window; 0..7: a framed panel */
+	cairo_surface_t *backing;  /* the window's image, device pixels: the "DC" */
+	int fill;                  /* painted where there is no image yet (RGB) */
 	int right_click_pending;   /* a Control-click, reported as the right button on release */
 	double wheel_rest;         /* a trackpad's fractional notches, carried to the next turn */
 }
 @end
 
+/* An event from view `v': the main window's numbers as they are; a panel's as Windows
+   numbers them for panels (simple_shell.h, shell_panel_proc), with the slot in `c'. `a_mode'
+   0 adds, 1 replaces the same queued event, 2 adds a wheel turn to it. */
+static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
+{
+	if (v->slot < 0) {
+		if (a_mode == 0 || !shell_coalesce(t, a, b, c, a_mode == 2)) shell_push(t, a, b, c);
+	} else {
+		int l_slot = v->slot, pt = 0;
+		switch (t) {
+			case 2: case 12: pt = 41; break;
+			case 8: pt = 64; break;
+			case 10: pt = 42; break;
+			case 9: case 13: pt = 43; break;
+			case 14: pt = 65; break;
+			case 3: pt = 61; break;
+			case 4: pt = 60; break;
+			case 6: pt = 44; break;
+			case 16: pt = 48; break;
+			case 46: pt = 46; break;
+			case 15: shell_push(45, c, 0, l_slot); break;   /* a panel's wheel: the delta alone */
+		}
+		if (pt && !((pt == 43 || pt == 48) && shell_coalesce_slot(pt, a, b, l_slot))) shell_push(pt, a, b, l_slot);
+	}
+	shell_nudge();
+}
+
 @implementation SSView
+- (instancetype)initWithFrame:(NSRect)r slot:(int)a_slot
+{
+	self = [super initWithFrame:r];
+	if (self) { slot = a_slot; fill = s_backdrop; }
+	return self;
+}
+- (void)dealloc { if (backing) cairo_surface_destroy(backing); }
+- (double)scale { NSWindow *w = [self window]; return w ? [w backingScaleFactor] : shell_scale(); }
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { (void)e; return YES; }
@@ -163,19 +212,20 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
 - (void)drawRect:(NSRect)a_rect
 {
 	(void)a_rect;
-	[[NSColor colorWithSRGBRed:((s_backdrop >> 16) & 0xFF) / 255.0 green:((s_backdrop >> 8) & 0xFF) / 255.0
-		blue:(s_backdrop & 0xFF) / 255.0 alpha:1.0] setFill];
+	int l_fill = slot < 0 ? s_backdrop : fill;
+	[[NSColor colorWithSRGBRed:((l_fill >> 16) & 0xFF) / 255.0 green:((l_fill >> 8) & 0xFF) / 255.0
+		blue:(l_fill & 0xFF) / 255.0 alpha:1.0] setFill];
 	NSRectFill([self bounds]);
-	if (!s_backing) return;
-	cairo_surface_flush(s_backing);
-	int w = cairo_image_surface_get_width(s_backing), h = cairo_image_surface_get_height(s_backing);
-	int l_stride = cairo_image_surface_get_stride(s_backing);
+	if (!backing) return;
+	cairo_surface_flush(backing);
+	int w = cairo_image_surface_get_width(backing), h = cairo_image_surface_get_height(backing);
+	int l_stride = cairo_image_surface_get_stride(backing);
 	CGColorSpaceRef l_srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-	CGDataProviderRef l_provider = CGDataProviderCreateWithData(NULL, cairo_image_surface_get_data(s_backing), (size_t)l_stride * h, NULL);
+	CGDataProviderRef l_provider = CGDataProviderCreateWithData(NULL, cairo_image_surface_get_data(backing), (size_t)l_stride * h, NULL);
 	CGImageRef l_image = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)l_stride, l_srgb,
 		kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little, l_provider, NULL, false, kCGRenderingIntentDefault);
 	CGContextRef l_cg = [[NSGraphicsContext currentContext] CGContext];
-	double l_scale = shell_scale();
+	double l_scale = [self scale];
 	/* At its natural size, anchored top-left: during a live resize the program cannot draw
 	   (AppKit holds the loop), and a stretched picture would be worse than a margin. */
 	CGRect l_at = CGRectMake(0, 0, w / l_scale, h / l_scale);
@@ -203,24 +253,23 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
 }
 - (void)rebuildBacking
 {
-	double l_scale = shell_scale();
+	double l_scale = [self scale];
 	NSSize l_size = [self bounds].size;
 	int w = (int)lround(l_size.width * l_scale), h = (int)lround(l_size.height * l_scale);
 	if (w < 1 || h < 1) return;
-	if (s_backing && cairo_image_surface_get_width(s_backing) == w && cairo_image_surface_get_height(s_backing) == h) return;
+	if (backing && cairo_image_surface_get_width(backing) == w && cairo_image_surface_get_height(backing) == h) return;
 	cairo_surface_t *l_new = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-	if (s_backing) {
+	if (backing) {
 		/* Keep the old picture until the program draws a new one. */
 		cairo_t *cr = cairo_create(l_new);
-		cairo_set_source_surface(cr, s_backing, 0, 0);
+		cairo_set_source_surface(cr, backing, 0, 0);
 		cairo_paint(cr);
 		cairo_destroy(cr);
-		cairo_surface_destroy(s_backing);
+		cairo_surface_destroy(backing);
 	}
-	s_backing = l_new;
-	if (!shell_coalesce(16, w, h, 0, 0)) shell_push(16, w, h, 0);
-	shell_push(6, 0, 0, 0);
-	shell_nudge();
+	backing = l_new;
+	shell_emit(self, 16, w, h, 0, 1);
+	shell_emit(self, 6, 0, 0, 0, 0);
 }
 
 - (void)updateTrackingAreas
@@ -235,7 +284,7 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
 - (NSPoint)pixelsOf:(NSEvent *)e
 {
 	NSPoint p = [self convertPoint:[e locationInWindow] fromView:nil];
-	double l_scale = shell_scale();
+	double l_scale = [self scale];
 	return NSMakePoint(floor(p.x * l_scale), floor(p.y * l_scale));
 }
 
@@ -260,43 +309,47 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
 	NSPoint p = [self pixelsOf:e];
 	if ([e modifierFlags] & NSEventModifierFlagControl) { right_click_pending = 1; return; }
 	NSInteger n = [e clickCount];
-	shell_push(n == 2 ? 8 : n >= 3 ? 12 : 2, (int)p.x, (int)p.y, 0);
-	shell_nudge();
+	shell_emit(self, n == 2 ? 8 : n >= 3 ? 12 : 2, (int)p.x, (int)p.y, 0, 0);
 }
 - (void)mouseUp:(NSEvent *)e
 {
 	NSPoint p = [self pixelsOf:e];
-	if (right_click_pending) { right_click_pending = 0; shell_push(11, (int)p.x, (int)p.y, 0); }
-	else shell_push(10, (int)p.x, (int)p.y, 0);
-	shell_nudge();
+	if (right_click_pending) {
+		right_click_pending = 0;
+		if (slot < 0) shell_emit(self, 11, (int)p.x, (int)p.y, 0, 0);
+		else shell_emit(self, 46, (int)p.x, (int)p.y, 0, 0);
+	} else shell_emit(self, 10, (int)p.x, (int)p.y, 0, 0);
 }
 - (void)mouseDragged:(NSEvent *)e
 {
 	if (right_click_pending) return;
 	NSPoint p = [self pixelsOf:e];
-	shell_push(9, (int)p.x, (int)p.y, 0);
-	shell_nudge();
+	shell_emit(self, 9, (int)p.x, (int)p.y, 0, 0);
 }
 - (void)mouseMoved:(NSEvent *)e
 {
 	NSPoint p = [self pixelsOf:e];
-	if (!shell_coalesce(13, (int)p.x, (int)p.y, 0, 0)) shell_push(13, (int)p.x, (int)p.y, 0);
+	shell_emit(self, 13, (int)p.x, (int)p.y, 0, 1);
 	[self applyCursor];
-	shell_nudge();
 }
-- (void)mouseExited:(NSEvent *)e { (void)e; shell_push(14, 0, 0, 0); shell_nudge(); }
-- (void)rightMouseDown:(NSEvent *)e { (void)e; [[self window] makeFirstResponder:self]; }
+- (void)mouseExited:(NSEvent *)e { (void)e; shell_emit(self, 14, 0, 0, 0, 0); }
+/* The main window hears the right button on release (11); a panel on press (46), as on Windows. */
+- (void)rightMouseDown:(NSEvent *)e
+{
+	[[self window] makeFirstResponder:self];
+	if (slot >= 0) { NSPoint p = [self pixelsOf:e]; shell_emit(self, 46, (int)p.x, (int)p.y, 0, 0); }
+}
 - (void)rightMouseUp:(NSEvent *)e
 {
+	if (slot >= 0) return;
 	NSPoint p = [self pixelsOf:e];
-	shell_push(11, (int)p.x, (int)p.y, 0);
-	shell_nudge();
+	shell_emit(self, 11, (int)p.x, (int)p.y, 0, 0);
 }
 - (void)otherMouseDown:(NSEvent *)e
 {
+	if (slot >= 0) return;
 	NSPoint p = [self pixelsOf:e];
-	shell_push(17, (int)p.x, (int)p.y, 0);
-	shell_nudge();
+	shell_emit(self, 17, (int)p.x, (int)p.y, 0, 0);
 }
 /* Windows counts 120 per notch, positive away from the user. A wheel's line is one notch;
    a trackpad's points are carried until they make whole units. */
@@ -307,8 +360,7 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
 	wheel_rest = [e hasPreciseScrollingDeltas] ? d - l_delta : 0.0;
 	if (l_delta == 0) return;
 	NSPoint p = [self pixelsOf:e];
-	if (!shell_coalesce(15, (int)p.x, (int)p.y, l_delta, 1)) shell_push(15, (int)p.x, (int)p.y, l_delta);
-	shell_nudge();
+	shell_emit(self, 15, (int)p.x, (int)p.y, l_delta, 2);
 }
 
 /* A key as Windows delivers it: the key-down the shell claims (4), then the character (3).
@@ -321,14 +373,14 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
 	int l_alt = (f & NSEventModifierFlagOption) ? 1 : 0;
 	int vk = shell_vk(e);
 	if (vk && (shell_keydown_is_ours(vk, l_ctrl, l_alt) || (l_alt && (vk == 0x25 || vk == 0x27))))
-		shell_push(4, vk, 0, 0);
+		shell_emit(self, 4, vk, 0, 0, 0);
 	switch (vk) {
 		case 0x08: case 0x0D: case 0x09: case 0x1B:
-			shell_push(3, vk, 0, 0);
+			shell_emit(self, 3, vk, 0, 0, 0);
 			break;
 		default:
 			if (l_ctrl) {
-				if (vk >= 'A' && vk <= 'Z') shell_push(3, vk - 'A' + 1, 0, 0);
+				if (vk >= 'A' && vk <= 'Z') shell_emit(self, 3, vk - 'A' + 1, 0, 0, 0);
 			} else {
 				NSString *s = [e characters];
 				unichar u = [s length] ? [s characterAtIndex:0] : 0;
@@ -340,7 +392,7 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
 - (void)insertText:(id)a_text
 {
 	NSString *s = [a_text isKindOfClass:[NSAttributedString class]] ? [a_text string] : a_text;
-	for (NSUInteger i = 0; i < [s length]; i++) shell_push(3, [s characterAtIndex:i], 0, 0);
+	for (NSUInteger i = 0; i < [s length]; i++) shell_emit(self, 3, [s characterAtIndex:i], 0, 0, 0);
 }
 - (void)doCommandBySelector:(SEL)a_selector { (void)a_selector; }
 @end
@@ -406,16 +458,58 @@ static void shell_bringup_step(void)
 @interface SSTarget : NSObject <NSWindowDelegate>
 @end
 
+static int shell_panel_slot_of(NSWindow *w)
+{
+	for (int i = 0; i < SHELL_PANELS; i++) if (w && s_panel[i] == w) return i;
+	return -1;
+}
+
 @implementation SSTarget
+/* The main window closes unless close requests are events (66); a framed panel's close is
+   always a request (62), as on Windows: the program decides. */
 - (BOOL)windowShouldClose:(NSWindow *)w
 {
-	(void)w;
+	int l_slot = shell_panel_slot_of(w);
+	if (l_slot >= 0) { shell_push(62, 0, 0, l_slot); shell_nudge(); return NO; }
 	if (s_close_requests) { shell_push(66, 0, 0, 0); shell_nudge(); return NO; }
 	return YES;
 }
+- (void)windowDidBecomeKey:(NSNotification *)n
+{
+	int l_slot = shell_panel_slot_of([n object]);
+	if (l_slot >= 0) { shell_push(63, 1, 0, l_slot); shell_nudge(); }
+}
+- (void)windowDidResignKey:(NSNotification *)n
+{
+	int l_slot = shell_panel_slot_of([n object]);
+	if (l_slot >= 0) { shell_push(63, 0, 0, l_slot); shell_nudge(); }
+}
+/* A panel being moved: where it is now (49, coalesced), and once it has been still for a
+   moment, where it ended (47): AppKit has no end-of-move notice. */
+- (void)windowDidMove:(NSNotification *)n
+{
+	int l_slot = shell_panel_slot_of([n object]);
+	if (l_slot < 0) return;
+	RECT r;
+	GetWindowRect((__bridge HWND)s_panel[l_slot], &r);
+	if (!shell_coalesce_slot(49, r.left, r.top, l_slot)) shell_push(49, r.left, r.top, l_slot);
+	[s_panel_settle[l_slot] invalidate];
+	s_panel_settle[l_slot] = [NSTimer scheduledTimerWithTimeInterval:0.15 target:self selector:@selector(panelSettled:) userInfo:@(l_slot) repeats:NO];
+	shell_nudge();
+}
+- (void)panelSettled:(NSTimer *)t
+{
+	int l_slot = [[t userInfo] intValue];
+	s_panel_settle[l_slot] = nil;
+	if (!s_panel[l_slot]) return;
+	RECT r;
+	GetWindowRect((__bridge HWND)s_panel[l_slot], &r);
+	shell_push(47, r.left, r.top, l_slot);
+	shell_nudge();
+}
 - (void)windowWillClose:(NSNotification *)n
 {
-	(void)n;
+	if ([n object] != s_window) return;   /* a panel: shell_panel_close keeps the books */
 	[s_heartbeat invalidate]; s_heartbeat = nil;
 	[s_fast invalidate]; s_fast = nil;
 	s_close_requests = 0;
@@ -439,6 +533,17 @@ static void shell_bringup_step(void)
 {
 	(void)k; (void)o; (void)c; (void)x;
 	shell_push(53, shell_system_prefers_dark(), 0, 0);
+	shell_nudge();
+}
+/* Increase Contrast (56) and Reduce Motion (57), each when it actually changed. */
+- (void)displayOptionsChanged:(NSNotification *)n
+{
+	static int l_contrast = -1, l_motion = -1;
+	(void)n;
+	int c = shell_high_contrast_on(), m = shell_reduces_motion();
+	if (l_contrast >= 0 && c != l_contrast) shell_push(56, c, 0, 0);
+	if (l_motion >= 0 && m != l_motion) shell_push(57, m, 0, 0);
+	l_contrast = c; l_motion = m;
 	shell_nudge();
 }
 @end
@@ -470,6 +575,9 @@ static void shell_app(void)
 	[l_bar addItem:l_top];
 	[NSApp setMainMenu:l_bar];
 	[NSApp addObserver:s_target forKeyPath:@"effectiveAppearance" options:0 context:NULL];
+	[[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:s_target selector:@selector(displayOptionsChanged:)
+		name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil];
+	[s_target displayOptionsChanged:nil];   /* the starting values */
 	[NSApp finishLaunching];
 }
 
@@ -496,7 +604,7 @@ void *shell_create_window(const void *title, int px, int py, int cw, int ch)
 		[w setFrameTopLeftPoint:NSMakePoint(f.origin.x + px / l_scale, NSMaxY(f) - py / l_scale)];
 	} else [w center];
 	s_window = w;
-	s_view = [[SSView alloc] initWithFrame:l_content];
+	s_view = [[SSView alloc] initWithFrame:l_content slot:-1];
 	[w setContentView:s_view];
 	[w makeFirstResponder:s_view];
 	[s_view rebuildBacking];
@@ -518,6 +626,105 @@ void shell_show_main(int l_on)
 	else [s_window orderOut:nil];
 }
 void shell_set_backdrop(void *hwnd, int rgb) { (void)hwnd; s_backdrop = rgb & 0xFFFFFF; [s_view setNeedsDisplay:YES]; }
+
+/* ------------------------------------------------------------------ framed panels */
+
+/* A framed panel is a window of its own (simple_widgets' floating windows). Rectangles are
+   the window's frame in pixels from the main screen's top-left, as on Windows; the client
+   size is the content's. Unframed panels (borderless, always on top, never active) are not
+   written yet: `shell_panel_open' answers -1. */
+static NSScreen *shell_first_screen(void) { return [[NSScreen screens] count] ? [NSScreen screens][0] : [NSScreen mainScreen]; }
+static NSRect shell_frame_of(int x, int y, int w, int h)
+{
+	NSScreen *l_screen = shell_first_screen();
+	double l_scale = l_screen ? [l_screen backingScaleFactor] : 1.0, l_top = l_screen ? NSMaxY([l_screen frame]) : 0;
+	return NSMakeRect(x / l_scale, l_top - (y + h) / l_scale, w / l_scale, h / l_scale);
+}
+static SSView *shell_panel_view(int l_slot)
+{
+	return l_slot >= 0 && l_slot < SHELL_PANELS && s_panel[l_slot] ? (SSView *)[s_panel[l_slot] contentView] : nil;
+}
+
+int shell_panel_open_framed_as(int l_x, int l_y, int l_w, int l_h, const void *l_title, int l_document)
+{
+	(void)l_document;   /* every Mac window has its own place in the Dock's window list and stacking */
+	int l_slot = -1;
+	for (int i = 0; i < SHELL_PANELS && l_slot < 0; i++) if (!s_panel[i]) l_slot = i;
+	if (l_slot < 0 || l_w <= 0 || l_h <= 0 || !pthread_main_np()) return -1;
+	shell_app();
+	NSUInteger l_style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+	NSRect f = shell_frame_of(l_x, l_y, l_w, l_h);
+	NSWindow *w = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:f styleMask:l_style]
+		styleMask:l_style backing:NSBackingStoreBuffered defer:NO];
+	[w setReleasedWhenClosed:NO];
+	[w setTitle:shell_text(l_title)];
+	[w setDelegate:s_target];
+	[w setAcceptsMouseMovedEvents:YES];
+	s_panel[l_slot] = w;
+	SSView *v = [[SSView alloc] initWithFrame:[[w contentView] frame] slot:l_slot];
+	[w setContentView:v];
+	[w makeFirstResponder:v];
+	[v rebuildBacking];
+	return l_slot;
+}
+int shell_panel_open_framed(int l_x, int l_y, int l_w, int l_h, const void *l_title)
+{
+	return shell_panel_open_framed_as(l_x, l_y, l_w, l_h, l_title, 0);
+}
+HWND shell_panel_hwnd(int l_slot) { return (l_slot >= 0 && l_slot < SHELL_PANELS) ? (__bridge HWND)s_panel[l_slot] : NULL; }
+void shell_panel_place(int l_slot, int l_x, int l_y, int l_w, int l_h)
+{
+	if (shell_panel_view(l_slot) && l_w > 0 && l_h > 0) [s_panel[l_slot] setFrame:shell_frame_of(l_x, l_y, l_w, l_h) display:YES];
+}
+void shell_panel_show(int l_slot, int l_x, int l_y, int l_w, int l_h)
+{
+	if (!shell_panel_view(l_slot)) return;
+	shell_panel_place(l_slot, l_x, l_y, l_w, l_h);
+	[s_panel[l_slot] orderFront:nil];   /* shown, not made active (SWP_NOACTIVATE) */
+}
+void shell_panel_hide(int l_slot) { if (shell_panel_view(l_slot)) [s_panel[l_slot] orderOut:nil]; }
+int shell_panel_is_visible(int l_slot) { return shell_panel_view(l_slot) && [s_panel[l_slot] isVisible] ? 1 : 0; }
+void shell_panel_close(int l_slot)
+{
+	if (!shell_panel_view(l_slot)) return;
+	NSWindow *w = s_panel[l_slot];
+	s_panel[l_slot] = nil;
+	[s_panel_settle[l_slot] invalidate]; s_panel_settle[l_slot] = nil;
+	[w setDelegate:nil];
+	[w close];
+}
+void shell_panel_set_title(int l_slot, const void *l_title) { if (shell_panel_view(l_slot)) [s_panel[l_slot] setTitle:shell_text(l_title)]; }
+void shell_panel_invalidate(int l_slot) { [shell_panel_view(l_slot) setNeedsDisplay:YES]; }
+void *shell_panel_dc(int l_slot) { SSView *v = shell_panel_view(l_slot); return v ? (void *)v->backing : NULL; }
+void shell_panel_release_dc(int l_slot, void *l_dc) { if (l_dc) [shell_panel_view(l_slot) setNeedsDisplay:YES]; }
+void shell_panel_client_size(int l_slot, int *l_w, int *l_h)
+{
+	SSView *v = shell_panel_view(l_slot);
+	if (!v || !v->backing) return;
+	*l_w = cairo_image_surface_get_width(v->backing);
+	*l_h = cairo_image_surface_get_height(v->backing);
+}
+void shell_panel_rect(int l_slot, int *l_x, int *l_y, int *l_w, int *l_h)
+{
+	RECT r;
+	if (!shell_panel_view(l_slot) || !GetWindowRect((__bridge HWND)s_panel[l_slot], &r)) return;
+	*l_x = r.left; *l_y = r.top; *l_w = r.right - r.left; *l_h = r.bottom - r.top;
+}
+/* The panel's ground, and its image painted over with it (the Windows body fills the DC). */
+void shell_panel_fill(int l_slot, int l_rgb)
+{
+	SSView *v = shell_panel_view(l_slot);
+	if (!v) return;
+	v->fill = l_rgb & 0xFFFFFF;
+	if (v->backing) {
+		cairo_t *cr = cairo_create(v->backing);
+		cairo_set_source_rgb(cr, ((l_rgb >> 16) & 0xFF) / 255.0, ((l_rgb >> 8) & 0xFF) / 255.0, (l_rgb & 0xFF) / 255.0);
+		cairo_paint(cr);
+		cairo_destroy(cr);
+	}
+	[v setNeedsDisplay:YES];
+}
+int shell_panel_open(int l_x, int l_y, int l_w, int l_h) { (void)l_x; (void)l_y; (void)l_w; (void)l_h; return -1; }
 void shell_set_cursor_kind(int k) { s_cursor = k; [s_view applyCursor]; }
 
 /* A .ico (or any image macOS reads) as the Dock icon. */
@@ -559,7 +766,7 @@ int shell_dwell_is_armed(void) { return s_dwell ? 1 : 0; }
 
 /* No device context on a Mac: the "DC" is the window's backing image, which simple_cairo's
    off-Windows surface-for-DC references; releasing it shows it. */
-void *shell_get_dc(void) { return s_window ? (void *)s_backing : NULL; }
+void *shell_get_dc(void) { return s_window && s_view ? (void *)s_view->backing : NULL; }
 void shell_release_dc(void *dc) { if (dc && s_view) [s_view setNeedsDisplay:YES]; }
 
 /* ------------------------------------------------------------------ the pump */
@@ -653,6 +860,79 @@ int shell_clip_get(void *buf, int cap)
 int shell_clip_has_text(void)
 {
 	return [[NSPasteboard generalPasteboard] availableTypeFromArray:@[NSPasteboardTypeString]] ? 1 : 0;
+}
+
+/* Images: 32-bit pixels as cairo keeps them (0xAARRGGBB, top row first), always opaque, as
+   the Windows half reads and writes them. On the pasteboard as PNG and TIFF. */
+static NSBitmapImageRep *shell_clip_rep(void)
+{
+	NSPasteboard *p = [NSPasteboard generalPasteboard];
+	NSImage *i = [[NSImage alloc] initWithPasteboard:p];
+	if (!i) return nil;
+	for (NSImageRep *r in [i representations]) if ([r isKindOfClass:[NSBitmapImageRep class]]) return (NSBitmapImageRep *)r;
+	CGImageRef c = [i CGImageForProposedRect:NULL context:nil hints:nil];
+	return c ? [[NSBitmapImageRep alloc] initWithCGImage:c] : nil;
+}
+
+int shell_clip_set_image(const void *bits, int w, int h, int stride)
+{
+	if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
+	NSBitmapImageRep *r = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:w pixelsHigh:h
+		bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+		bitmapFormat:0 bytesPerRow:w * 4 bitsPerPixel:32];
+	if (!r) return 0;
+	unsigned char *dst = [r bitmapData];
+	for (int row = 0; row < h; row++) {
+		const uint32_t *src = (const uint32_t *)((const char *)bits + (size_t)row * stride);
+		unsigned char *out = dst + (size_t)row * w * 4;
+		for (int col = 0; col < w; col++) {
+			uint32_t v = src[col];
+			out[col * 4] = (v >> 16) & 0xFF; out[col * 4 + 1] = (v >> 8) & 0xFF; out[col * 4 + 2] = v & 0xFF; out[col * 4 + 3] = 0xFF;
+		}
+	}
+	NSData *l_png = [r representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+	NSPasteboard *p = [NSPasteboard generalPasteboard];
+	[p clearContents];
+	BOOL ok = l_png && [p setData:l_png forType:NSPasteboardTypePNG];
+	NSData *l_tiff = [r TIFFRepresentation];
+	if (l_tiff) ok = [p setData:l_tiff forType:NSPasteboardTypeTIFF] || ok;
+	return ok ? 1 : 0;
+}
+
+int shell_clip_has_image(void)
+{
+	return [[NSPasteboard generalPasteboard] availableTypeFromArray:@[NSPasteboardTypePNG, NSPasteboardTypeTIFF]] ? 1 : 0;
+}
+
+int shell_clip_image_size(int *w, int *h)
+{
+	*w = 0; *h = 0;
+	NSBitmapImageRep *r = shell_clip_rep();
+	if (!r) return 0;
+	*w = (int)[r pixelsWide]; *h = (int)[r pixelsHigh];
+	return 1;
+}
+
+/* Only when the image is exactly `w' x `h' pixels, as on Windows. */
+int shell_clip_get_image(void *bits, int w, int h, int stride)
+{
+	if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
+	NSBitmapImageRep *r = shell_clip_rep();
+	if (!r || [r pixelsWide] != w || [r pixelsHigh] != h) return 0;
+	CGColorSpaceRef l_srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+	CGContextRef c = CGBitmapContextCreate(bits, (size_t)w, (size_t)h, 8, (size_t)stride, l_srgb,
+		kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+	CGColorSpaceRelease(l_srgb);
+	if (!c) return 0;
+	CGContextSetRGBFillColor(c, 1, 1, 1, 1);
+	CGContextFillRect(c, CGRectMake(0, 0, w, h));
+	CGContextDrawImage(c, CGRectMake(0, 0, w, h), [r CGImage]);
+	CGContextRelease(c);
+	for (int row = 0; row < h; row++) {
+		uint32_t *px = (uint32_t *)((char *)bits + (size_t)row * stride);
+		for (int col = 0; col < w; col++) px[col] |= 0xFF000000u;
+	}
+	return 1;
 }
 
 /* ------------------------------------------------------------------ appearance */

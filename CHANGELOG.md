@@ -2,6 +2,17 @@
 
 All notable changes to simple_shell.
 
+## 1.39.0 - 2026-11-08
+
+### Added
+
+- macOS: global hotkeys, input synthesis and the screen grab. **No stubs are left**: every entry point has a Mac body.
+  - **Hotkeys:** Carbon's system-wide hotkeys, which need no permission. Windows' modifiers (1 Alt, 2 Ctrl, 4 Shift, 8 Win) become Option, Command, Shift and Control, and a press reports 51 (id, virtual key, modifiers). There is a `simulate` door.
+  - **Input synthesis:** `click` (with the cursor and focus put back when asked), `type` (UTF-16 units, two events each), `chord`, `pointer` and `on_desktop`. macOS lets a process post input only with the **Accessibility** permission. Without it nothing is sent, and the last error is 5, Windows' "access denied".
+  - **Screen grab:** ScreenCaptureKit, into the caller's ARGB32 rows, opaque. It needs the **Screen Recording** permission; without it the grab answers 0 at once and never asks the user itself.
+  - A table from Windows virtual keys to Mac key codes.
+  - The ECF links Carbon and ScreenCaptureKit on macOS.
+
 ## 1.38.0 - 2026-11-08
 
 ### Added

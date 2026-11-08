@@ -2063,7 +2063,13 @@ static int shell_spell_init(void) {
     if (s_shell_spell) return 1;
     if (s_shell_spell_tried) return 0;
     s_shell_spell_tried = 1;
-    CoInitializeEx(0, COINIT_APARTMENTTHREADED);
+    /* Hold a COM reference of our own for the life of the process, so that another
+       component's CoUninitialize can never tear COM down under the checker. If the thread
+       is already multithreaded (RPC_E_CHANGED_MODE adds no reference), join that apartment
+       instead: S_FALSE still counts. */
+    hr = CoInitializeEx(0, COINIT_APARTMENTTHREADED);
+    if (hr == RPC_E_CHANGED_MODE) hr = CoInitializeEx(0, COINIT_MULTITHREADED);
+    if (FAILED(hr)) return 0;
     hr = CoCreateInstance(&s_shell_clsid_scf, 0, CLSCTX_INPROC_SERVER,
         &s_shell_iid_iscf, (void**)&f);
     if (FAILED(hr) || !f) return 0;

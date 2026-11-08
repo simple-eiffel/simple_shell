@@ -77,6 +77,11 @@ static int s_panel_minw[SHELL_PANELS], s_panel_minh[SHELL_PANELS];
 enum { Shell_ht_caption = 2, Shell_ht_left = 10, Shell_ht_right = 11, Shell_ht_top = 12, Shell_ht_topleft = 13,
 	Shell_ht_topright = 14, Shell_ht_bottom = 15, Shell_ht_bottomleft = 16, Shell_ht_bottomright = 17 };
 static void shell_panel_track(int a_slot, int a_code);
+/* View slots that are not the main window (-1) or a panel (0..7). */
+enum { Shell_slot_overlay = -2, Shell_slot_strip = -3 };
+static void shell_overlay_dismiss(void);
+static void shell_strip_drag(void);
+static NSRect shell_virtual_desktop(double *a_scale);
 static NSCursor *shell_panel_cursor(int a_slot, int a_x, int a_y);
 /* The last drop's paths, UTF-16 and one per line, as the Windows half keeps them for
    `shell_drop_paths'. */
@@ -200,6 +205,24 @@ int shell_shift_down(void) { return (shell_flags() & NSEventModifierFlagShift) ?
    0 adds, 1 replaces the same queued event, 2 adds a wheel turn to it. */
 static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
 {
+	if (v->slot == Shell_slot_overlay) {
+		/* the overlay: 31 move, 32 press, 33 release, 35 expose (keys in keyDown) */
+		switch (t) {
+			case 13: case 9: shell_push(31, a, b, 0); break;
+			case 2: case 8: case 12: shell_push(32, a, b, 0); break;
+			case 10: shell_push(33, a, b, 0); break;
+			case 6: shell_push(35, 0, 0, 0); break;
+		}
+		shell_nudge();
+		return;
+	}
+	if (v->slot == Shell_slot_strip) {
+		/* the strip: 21 press, 23 expose (22 when a drag ends) */
+		if (t == 2 || t == 8 || t == 12) shell_push(21, a, b, 0);
+		else if (t == 6) shell_push(23, 0, 0, 0);
+		shell_nudge();
+		return;
+	}
 	if (v->slot < 0) {
 		if (a_mode == 0 || !shell_coalesce(t, a, b, c, a_mode == 2)) shell_push(t, a, b, c);
 	} else {
@@ -335,6 +358,14 @@ static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
 	[[self window] makeFirstResponder:self];
 	NSPoint p = [self pixelsOf:e];
 	if ([e modifierFlags] & NSEventModifierFlagControl) { right_click_pending = 1; return; }
+	if (slot == Shell_slot_strip) {
+		/* A press reports 21 and drags the strip, except on its own buttons (the top right,
+		   90 by 26 pixels), whose presses stay clicks, as on Windows. */
+		shell_emit(self, 2, (int)p.x, (int)p.y, 0, 0);
+		int l_w = backing ? cairo_image_surface_get_width(backing) : 0;
+		if (!(p.y < 26 && p.x >= l_w - 90)) shell_strip_drag();
+		return;
+	}
 	if (slot >= 0) {
 		int l_code = shell_panel_press_code(slot, (int)p.x, (int)p.y, ([e modifierFlags] & NSEventModifierFlagShift) ? 1 : 0);
 		if (l_code != 0) { shell_panel_track(slot, l_code); return; }
@@ -368,6 +399,7 @@ static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
 /* The main window hears the right button on release (11); a panel on press (46), as on Windows. */
 - (void)rightMouseDown:(NSEvent *)e
 {
+	if (slot == Shell_slot_overlay) { shell_overlay_dismiss(); return; }   /* a right press cancels the pick */
 	[[self window] makeFirstResponder:self];
 	if (slot >= 0) { NSPoint p = [self pixelsOf:e]; shell_emit(self, 46, (int)p.x, (int)p.y, 0, 0); }
 }
@@ -400,6 +432,15 @@ static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
    its character, as Mac users expect. */
 - (void)keyDown:(NSEvent *)e
 {
+	if (slot == Shell_slot_overlay) {
+		/* Escape frees the screen in C first, then reports 34; Return accepts (36); the
+		   arrows adjust (37, the virtual key). */
+		int l_vk = shell_vk(e);
+		if (l_vk == 0x1B) shell_overlay_dismiss();
+		else if (l_vk == 0x0D) { shell_push(36, 0, 0, 0); shell_nudge(); }
+		else if (l_vk >= 0x25 && l_vk <= 0x28) { shell_push(37, l_vk, 0, 0); shell_nudge(); }
+		return;
+	}
 	NSEventModifierFlags f = [e modifierFlags];
 	int l_ctrl = (f & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) ? 1 : 0;
 	int l_alt = (f & NSEventModifierFlagOption) ? 1 : 0;
@@ -1395,6 +1436,226 @@ int shell_spell_ignore(const void *word)
 	[shell_speller() ignoreWord:w inSpellDocumentWithTag:s_spell_tag];
 	return 1;
 }
+
+/* ------------------------------------------------------------------ monitors */
+
+/* Each screen as Windows' GetMonitorInfo answers it, in pixels from the main screen's
+   top-left: the monitor (0-3: left, top, right, bottom), its work area without the menu bar
+   and Dock (4-7), and whether it is the primary one (8, the screen with the menu bar). */
+#define SHELL_MONITOR_CAP 16
+static int s_mon[SHELL_MONITOR_CAP][9];
+static unichar s_mon_name[SHELL_MONITOR_CAP][32];
+static int s_mon_count = 0;
+
+int shell_monitors_refresh(void)
+{
+	NSArray<NSScreen *> *l_all = [NSScreen screens];
+	NSScreen *l_main = [l_all count] ? l_all[0] : nil;
+	double k = l_main ? [l_main backingScaleFactor] : 1.0, l_top = l_main ? NSMaxY([l_main frame]) : 0;
+	s_mon_count = 0;
+	for (NSScreen *c in l_all) {
+		if (s_mon_count == SHELL_MONITOR_CAP) break;
+		int *m = s_mon[s_mon_count];
+		NSRect f = [c frame], v = [c visibleFrame];
+		m[0] = (int)lround(f.origin.x * k); m[1] = (int)lround((l_top - NSMaxY(f)) * k);
+		m[2] = (int)lround(NSMaxX(f) * k); m[3] = (int)lround((l_top - f.origin.y) * k);
+		m[4] = (int)lround(v.origin.x * k); m[5] = (int)lround((l_top - NSMaxY(v)) * k);
+		m[6] = (int)lround(NSMaxX(v) * k); m[7] = (int)lround((l_top - v.origin.y) * k);
+		m[8] = c == l_main ? 1 : 0;
+		NSString *n = [c localizedName] ?: @"";
+		NSUInteger l_len = MIN([n length], (NSUInteger)31);
+		[n getCharacters:s_mon_name[s_mon_count] range:NSMakeRange(0, l_len)];
+		s_mon_name[s_mon_count][l_len] = 0;
+		s_mon_count++;
+	}
+	return s_mon_count;
+}
+int shell_monitor_field(int l_i, int l_f) { return (l_i >= 0 && l_i < s_mon_count && l_f >= 0 && l_f <= 8) ? s_mon[l_i][l_f] : 0; }
+
+/* The screen's name, UTF-16 into `l_buf' (the caller reads 16-bit units). */
+int shell_monitor_name(int l_i, void *l_buf, int l_cap)
+{
+	int n = 0;
+	if (l_i < 0 || l_i >= s_mon_count || l_cap <= 0) return 0;
+	unichar *b = (unichar *)l_buf;
+	while (n < l_cap - 1 && n < 31 && s_mon_name[l_i][n]) { b[n] = s_mon_name[l_i][n]; n++; }
+	b[n] = 0;
+	return n;
+}
+
+/* ------------------------------------------------------------------ the overlay, the strip, outlines */
+
+/* A borderless window that can still take the keyboard (the overlay's Escape and arrows). */
+@interface SSKeyWindow : NSWindow
+@end
+@implementation SSKeyWindow
+- (BOOL)canBecomeKeyWindow { return YES; }
+@end
+
+/* The overlay: the whole desktop under one borderless window above everything (WS_EX_TOPMOST
+   over the virtual screen), for picking a region; the program draws on it through its DC.
+   With "Displays have separate Spaces", a window shows on one display only. */
+static SSKeyWindow *s_overlay = nil;
+static SSView *s_overlay_view = nil;
+static NSThread *s_watchdog = nil;
+
+static void shell_overlay_dismiss(void)
+{
+	if (s_overlay) [s_overlay orderOut:nil];
+	shell_push(34, 0, 0, 0);
+	shell_nudge();
+}
+
+/* The safety net, as on Windows: Escape held 2 seconds while the overlay shows cancels it even
+   if the program's loop is stuck; held 5 seconds, the process ends. */
+static atomic_int s_overlay_shown = 0;
+@interface SSWatchdog : NSObject
+@end
+@implementation SSWatchdog
+- (void)watch:(id)unused
+{
+	(void)unused;
+	int l_held = 0;
+	for (;;) {
+		[NSThread sleepForTimeInterval:0.1];
+		if (atomic_load(&s_overlay_shown) && CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 53 /* Escape */)) {
+			l_held++;
+			if (l_held == 20) dispatch_async(dispatch_get_main_queue(), ^{ shell_overlay_dismiss(); atomic_store(&s_overlay_shown, 0); });
+			if (l_held >= 50) _exit(1);
+		} else l_held = 0;
+	}
+}
+@end
+
+void *shell_show_overlay(void)
+{
+	shell_app();
+	double k; NSRect r = shell_virtual_desktop(&k);
+	NSRect f = shell_frame_of((int)lround(r.origin.x * k), (int)lround(r.origin.y * k), (int)lround(r.size.width * k), (int)lround(r.size.height * k));
+	if (!s_watchdog) {
+		s_watchdog = [[NSThread alloc] initWithTarget:[[SSWatchdog alloc] init] selector:@selector(watch:) object:nil];
+		[s_watchdog start];
+	}
+	if (!s_overlay) {
+		s_overlay = [[SSKeyWindow alloc] initWithContentRect:f styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+		[s_overlay setReleasedWhenClosed:NO];
+		[s_overlay setLevel:NSStatusWindowLevel + 1];   /* above the menu bar */
+		[s_overlay setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary];
+		[s_overlay setAcceptsMouseMovedEvents:YES];
+		s_overlay_view = [[SSView alloc] initWithFrame:NSMakeRect(0, 0, f.size.width, f.size.height) slot:Shell_slot_overlay];
+		[s_overlay setContentView:s_overlay_view];
+	}
+	[s_overlay setFrame:f display:NO];
+	[s_overlay_view rebuildBacking];
+	[NSApp activate];
+	[s_overlay makeKeyAndOrderFront:nil];
+	[s_overlay makeFirstResponder:s_overlay_view];
+	[[NSCursor crosshairCursor] set];
+	atomic_store(&s_overlay_shown, 1);
+	return (__bridge void *)s_overlay;
+}
+void shell_hide_overlay(void) { if (s_overlay) [s_overlay orderOut:nil]; atomic_store(&s_overlay_shown, 0); }
+void *shell_overlay_dc(void) { return s_overlay && s_overlay_view ? (void *)s_overlay_view->backing : NULL; }
+void shell_overlay_release(void *dc) { if (dc) [s_overlay_view setNeedsDisplay:YES]; }
+
+/* The strip: a small borderless window above others that never takes the focus, dragged by a
+   press (21 at the press, 22 with its new top-left when the drag ends, 23 to draw). */
+static NSPanel *s_strip = nil;
+static SSView *s_strip_view = nil;
+
+static void shell_strip_drag(void)
+{
+	NSRect l_start = [s_strip frame];
+	NSPoint l_from = [NSEvent mouseLocation];
+	BOOL l_moved = NO;
+	for (;;) {
+		NSEvent *e = [NSApp nextEventMatchingMask:NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
+			untilDate:[NSDate distantFuture] inMode:NSEventTrackingRunLoopMode dequeue:YES];
+		if (!e || [e type] == NSEventTypeLeftMouseUp) break;
+		NSPoint l_now = [NSEvent mouseLocation];
+		[s_strip setFrameOrigin:NSMakePoint(l_start.origin.x + l_now.x - l_from.x, l_start.origin.y + l_now.y - l_from.y)];
+		l_moved = YES;
+	}
+	if (l_moved) {
+		RECT r;
+		GetWindowRect((__bridge HWND)s_strip, &r);
+		shell_push(22, r.left, r.top, 0);
+		shell_nudge();
+	}
+}
+
+void *shell_show_strip(int x, int y, int w, int h)
+{
+	if (w <= 0 || h <= 0) return NULL;
+	shell_app();
+	NSRect f = shell_frame_of(x, y, w, h);
+	if (!s_strip) {
+		s_strip = [[NSPanel alloc] initWithContentRect:f styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+			backing:NSBackingStoreBuffered defer:NO];
+		[s_strip setReleasedWhenClosed:NO];
+		[s_strip setLevel:NSFloatingWindowLevel];
+		[s_strip setHidesOnDeactivate:NO];
+		[s_strip setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary];
+		s_strip_view = [[SSView alloc] initWithFrame:NSMakeRect(0, 0, f.size.width, f.size.height) slot:Shell_slot_strip];
+		[s_strip setContentView:s_strip_view];
+	}
+	[s_strip setFrame:f display:NO];
+	[s_strip_view rebuildBacking];
+	[s_strip orderFront:nil];
+	return (__bridge void *)s_strip;
+}
+void shell_hide_strip(void) { if (s_strip) [s_strip orderOut:nil]; }
+void *shell_strip_dc(void) { return s_strip && s_strip_view ? (void *)s_strip_view->backing : NULL; }
+void shell_strip_release(void *dc) { if (dc) [s_strip_view setNeedsDisplay:YES]; }
+
+/* Outlines: up to four rectangles drawn as a frame `thick' pixels wide around (x, y, w, h),
+   above everything, letting the pointer through (WS_EX_TRANSPARENT with a ring region). */
+@interface SSOutlineView : NSView {
+@public
+	NSColor *color;
+	double thick;
+}
+@end
+@implementation SSOutlineView
+- (BOOL)isOpaque { return NO; }
+- (void)drawRect:(NSRect)a_rect
+{
+	(void)a_rect;
+	[color setFill];
+	NSRect b = [self bounds];
+	NSBezierPath *l_ring = [NSBezierPath bezierPathWithRect:b];
+	[l_ring appendBezierPathWithRect:NSInsetRect(b, thick, thick)];
+	[l_ring setWindingRule:NSWindingRuleEvenOdd];
+	[l_ring fill];
+}
+@end
+static NSWindow *s_outline[4];
+
+void shell_outline_show(int slot, int x, int y, int w, int h, int thick, int rgb)
+{
+	if (slot < 0 || slot > 3 || w <= 0 || h <= 0 || thick <= 0) return;
+	shell_app();
+	NSRect f = shell_frame_of(x, y, w, h);
+	if (!s_outline[slot]) {
+		NSWindow *o = [[NSWindow alloc] initWithContentRect:f styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+		[o setReleasedWhenClosed:NO];
+		[o setOpaque:NO];
+		[o setBackgroundColor:[NSColor clearColor]];
+		[o setIgnoresMouseEvents:YES];
+		[o setLevel:NSStatusWindowLevel];
+		[o setHasShadow:NO];
+		[o setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary];
+		[o setContentView:[[SSOutlineView alloc] initWithFrame:NSMakeRect(0, 0, f.size.width, f.size.height)]];
+		s_outline[slot] = o;
+	}
+	SSOutlineView *v = (SSOutlineView *)[s_outline[slot] contentView];
+	v->color = [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0 green:((rgb >> 8) & 0xFF) / 255.0 blue:(rgb & 0xFF) / 255.0 alpha:1.0];
+	v->thick = thick / [s_outline[slot] backingScaleFactor];
+	[s_outline[slot] setFrame:f display:NO];
+	[v setNeedsDisplay:YES];
+	[s_outline[slot] orderFront:nil];
+}
+void shell_outline_hide(int slot) { if (slot >= 0 && slot < 4 && s_outline[slot]) [s_outline[slot] orderOut:nil]; }
 
 /* ------------------------------------------------------------------ the desktop, the clock, small things */
 

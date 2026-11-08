@@ -72,6 +72,20 @@ feature -- Publishing
 			one_more: rows_added = old rows_added + 1
 		end
 
+	describe_last_node (a_description: READABLE_STRING_GENERAL)
+			-- Give the node added last a description: UI Automation's HelpText, what a
+			-- screen reader says after the name (simple_gui's accessible description).
+		require
+			building: is_building
+			has_a_node: rows_added >= 1
+		local
+			l_text: NATIVE_STRING
+		do
+			create l_text.make (a_description)
+			if c_describe_last (l_text.item) = 0 then
+			end
+		end
+
 	commit (a_hwnd: POINTER)
 			-- Serve the new table for window `a_hwnd' (a window not yet open,
 			-- `default_pointer', keeps the table for the readers below and
@@ -191,6 +205,35 @@ feature -- Reading the served table (tests and tools)
 			in_range: a_row >= 1 and a_row <= served_rows
 		do
 			Result := row_text (a_row, 0)
+		end
+
+	served_description (a_row: INTEGER): STRING_32
+			-- Row `a_row''s description (empty when none).
+		require
+			in_range: a_row >= 1 and a_row <= served_rows
+		do
+			Result := row_text (a_row, 2)
+		end
+
+	served_depth (a_row: INTEGER): INTEGER
+			-- How many ancestors row `a_row' has: 0 for the root, 1 for its children...
+			-- (a parent missing from the table ends the count).
+		require
+			in_range: a_row >= 1 and a_row <= served_rows
+		local
+			l_row, l_guard: INTEGER
+		do
+			from
+				l_row := a_row
+			until
+				l_row = 0 or else (served_id (l_row) = 0 or l_guard > served_rows)
+			loop
+				l_row := served_row_of (served_parent (l_row))
+				Result := Result + 1
+				l_guard := l_guard + 1
+			end
+		ensure
+			non_negative: Result >= 0
 		end
 
 	served_value (a_row: INTEGER): STRING_32
@@ -315,6 +358,13 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell_uia.h%""
 		alias
 			"return shell_uia_add((int)$a_id, (int)$a_parent, (int)$a_role, (int)$a_focusable, (int)$a_enabled, (double)$a_x, (double)$a_y, (double)$a_w, (double)$a_h, (const wchar_t*)$a_name, (const wchar_t*)$a_value);"
+		end
+
+	c_describe_last (a_text: POINTER): INTEGER
+		external
+			"C inline use %"simple_shell_uia.h%""
+		alias
+			"return shell_uia_describe_last((const wchar_t*)$a_text);"
 		end
 
 	c_commit (a_hwnd: POINTER)

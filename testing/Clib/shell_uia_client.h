@@ -66,6 +66,13 @@ static DWORD WINAPI shell_uia_client_main(LPVOID l_arg) {
             }
             VariantClear(&l_v);
             VariantInit(&l_v);
+            if (SUCCEEDED(IUIAutomationElement_GetCurrentPropertyValue(l_e, SHELL_UIA_PROP_HELP_TEXT, &l_v))
+                && l_v.vt == VT_BSTR && l_v.bstrVal && l_v.bstrVal[0]) {
+                shell_uia_put(l_job, L"?");
+                shell_uia_put(l_job, l_v.bstrVal);
+            }
+            VariantClear(&l_v);
+            VariantInit(&l_v);
             if (SUCCEEDED(IUIAutomationElement_GetCurrentPropertyValue(l_e, SHELL_UIA_PROP_HAS_FOCUS, &l_v))
                 && l_v.vt == VT_BOOL && l_v.boolVal == VARIANT_TRUE)
                 shell_uia_put(l_job, L"*");

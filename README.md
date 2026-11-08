@@ -1,7 +1,7 @@
 # simple_shell
 
 ![tests](https://img.shields.io/badge/tests-42%2F42-brightgreen) ![freeze assault](https://img.shields.io/badge/freeze%20assault-4%2F4-brightgreen) ![language](https://img.shields.io/badge/Eiffel-25.02-purple)
-![Windows: tests pass](https://img.shields.io/badge/Windows-tests%20pass-0078D6?logo=windows&logoColor=white) ![macOS: window core](https://img.shields.io/badge/macOS-window%20core-lightgrey?logo=apple) ![Linux: in progress](https://img.shields.io/badge/Linux-in%20progress-lightgrey)
+![Windows: tests pass](https://img.shields.io/badge/Windows-tests%20pass-0078D6?logo=windows&logoColor=white) ![macOS: window core](https://img.shields.io/badge/macOS-window%20core-lightgray?logo=apple) ![Linux: in progress](https://img.shields.io/badge/Linux-in%20progress-lightgray)
 
 **The Win32 platform shell for the Simple Eiffel ecosystem.** One header of
 battle-tested C, nine Eiffel classes, no rendering opinion. This is the

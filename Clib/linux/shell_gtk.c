@@ -1,7 +1,9 @@
-/* shell_gtk.c - the Linux (GTK 4) half of simple_shell. Step 1 (item 2 of GUI_PLAN.md):
-   the shared state and the Windows names the Eiffel inline C calls directly. The window,
-   its pump, events and drawing come next; until then make_stubs.pl answers "not available"
-   for them (see shell_gtk.h). */
+/* shell_gtk.c - the Linux (GTK 4) half of simple_shell (item 2 of GUI_PLAN.md), built to
+   port-coordination docs/SHELL_SEAM.md and following the macOS half section by section:
+   the shared state, the Windows names the Eiffel inline C calls directly, then the queue,
+   keys, the view, the window and its timers, drawing, the pump, the wake, appearance and
+   the desktop. Panels and the rest come next; until then make_stubs.pl answers "not
+   available" for them (see shell_gtk.h). */
 
 #include <gtk/gtk.h>
 #include "shell_gtk.h"
@@ -63,4 +65,537 @@ int SystemParametersInfoW(unsigned int a_action, unsigned int a_param, void *a_o
 	r->right = (g.x + g.width) * l_scale;
 	r->bottom = (g.y + g.height) * l_scale;
 	return 1;
+}
+
+/* ------------------------------------------------------------------ the queue */
+
+/* [type, a, b, c] per slot, as on Windows. Pushed on the GTK thread only (a worker's wake
+   reaches it through g_idle_add). */
+#define SHELL_QCAP 1024
+static int s_q[SHELL_QCAP][4];
+static int s_qhead = 0, s_qtail = 0;
+
+void shell_push(int t, int a, int b, int c)
+{
+	int next = (s_qtail + 1) % SHELL_QCAP;
+	if (next == s_qhead) return;
+	s_q[s_qtail][0] = t; s_q[s_qtail][1] = a; s_q[s_qtail][2] = b; s_q[s_qtail][3] = c;
+	s_qtail = next;
+}
+
+/* Replace the last queued event of type `t' instead of adding one (moves, resizes), or,
+   with `a_sum', add to its third field (wheel turns). Answers whether it did. */
+static int shell_coalesce(int t, int a, int b, int c, int a_sum)
+{
+	int last = (s_qtail + SHELL_QCAP - 1) % SHELL_QCAP;
+	if (s_qtail == s_qhead || s_q[last][0] != t) return 0;
+	s_q[last][1] = a; s_q[last][2] = b;
+	if (a_sum) s_q[last][3] += c; else s_q[last][3] = c;
+	return 1;
+}
+
+int shell_next_event(int *out4)
+{
+	int i;
+	if (s_qhead == s_qtail) return 0;
+	for (i = 0; i < 4; i++) out4[i] = s_q[s_qhead][i];
+	s_qhead = (s_qhead + 1) % SHELL_QCAP;
+	return out4[0];
+}
+
+/* ------------------------------------------------------------------ state */
+
+static GtkWidget *s_window = NULL;            /* the main window */
+static GtkWidget *s_area = NULL;              /* its drawing area */
+static cairo_surface_t *s_backing = NULL;     /* the window's image, device pixels: the "DC" */
+static int s_quit = 0;                        /* the window is gone: the pump answers 0 */
+static int s_start_hidden = 0, s_close_requests = 0, s_cursor = 0;
+static int s_backdrop = 0x12141B;             /* Windows' default: RGB(18, 20, 27) */
+static guint s_heartbeat = 0, s_fast = 0, s_dwell = 0;
+static gint s_wake_pending = 0;
+static GThread *s_pump_thread = NULL;
+static double s_pointer_x = 0, s_pointer_y = 0; /* the last pointer position, pixels */
+static int s_primary_down = 0;                /* the primary button is held: a move is a drag */
+
+static void shell_app(void)
+{
+	static int l_done = 0;
+	if (l_done) return;
+	l_done = 1;
+	gtk_init();
+	s_pump_thread = g_thread_self();
+}
+
+/* Device pixels per logical pixel of the main window (of the first monitor before it opens). */
+static int shell_scale(void)
+{
+	GdkMonitor *l_monitor;
+	if (s_window) return gtk_widget_get_scale_factor(s_window);
+	l_monitor = shell_first_monitor();
+	return l_monitor ? gdk_monitor_get_scale_factor(l_monitor) : 1;
+}
+
+/* ------------------------------------------------------------------ keys */
+
+/* Windows virtual-key codes, from a GDK key value: letters and digits by the character
+   (so the layout decides, as on Windows), the rest by the key. 0 when the key has no
+   Windows equivalent the shell reports. */
+static int shell_vk(guint a_keyval)
+{
+	guint u;
+	switch (a_keyval) {
+		case GDK_KEY_Left: case GDK_KEY_KP_Left: return 0x25;
+		case GDK_KEY_Up: case GDK_KEY_KP_Up: return 0x26;
+		case GDK_KEY_Right: case GDK_KEY_KP_Right: return 0x27;
+		case GDK_KEY_Down: case GDK_KEY_KP_Down: return 0x28;
+		case GDK_KEY_Home: case GDK_KEY_KP_Home: return 0x24;
+		case GDK_KEY_End: case GDK_KEY_KP_End: return 0x23;
+		case GDK_KEY_Page_Up: case GDK_KEY_KP_Page_Up: return 0x21;
+		case GDK_KEY_Page_Down: case GDK_KEY_KP_Page_Down: return 0x22;
+		case GDK_KEY_Delete: case GDK_KEY_KP_Delete: return 0x2E;
+		case GDK_KEY_BackSpace: return 0x08;
+		case GDK_KEY_Return: case GDK_KEY_KP_Enter: return 0x0D;
+		case GDK_KEY_Tab: case GDK_KEY_ISO_Left_Tab: return 0x09;
+		case GDK_KEY_Escape: return 0x1B;
+		case GDK_KEY_space: return 0x20;
+		case GDK_KEY_plus: case GDK_KEY_equal: return 0xBB;
+		case GDK_KEY_minus: case GDK_KEY_underscore: return 0xBD;
+		case GDK_KEY_KP_Add: return 0x6B;
+		case GDK_KEY_KP_Subtract: return 0x6D;
+		case GDK_KEY_semicolon: case GDK_KEY_colon: return 0xBA;
+		case GDK_KEY_slash: case GDK_KEY_question: return 0xBF;
+		case GDK_KEY_grave: case GDK_KEY_asciitilde: return 0xC0;
+		case GDK_KEY_bracketleft: case GDK_KEY_braceleft: return 0xDB;
+		case GDK_KEY_backslash: case GDK_KEY_bar: return 0xDC;
+		case GDK_KEY_bracketright: case GDK_KEY_braceright: return 0xDD;
+		case GDK_KEY_apostrophe: case GDK_KEY_quotedbl: return 0xDE;
+		case GDK_KEY_comma: case GDK_KEY_less: return 0xBC;
+		case GDK_KEY_period: case GDK_KEY_greater: return 0xBE;
+	}
+	if (a_keyval >= GDK_KEY_F1 && a_keyval <= GDK_KEY_F12) return 0x70 + (int)(a_keyval - GDK_KEY_F1);
+	if (a_keyval >= GDK_KEY_KP_0 && a_keyval <= GDK_KEY_KP_9) return 0x60 + (int)(a_keyval - GDK_KEY_KP_0);
+	u = gdk_keyval_to_unicode(gdk_keyval_to_upper(a_keyval));
+	if ((u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9')) return (int)u;
+	return 0;
+}
+
+/* Windows' policy (simple_shell.h): which key-downs the window hears as event 4. */
+int shell_keydown_is_ours(int l_vk, int l_ctrl, int l_alt)
+{
+	if (l_vk == 0x25 || l_vk == 0x27 || l_vk == 0x24 || l_vk == 0x23 || l_vk == 0x2E || l_vk == 0x26 ||
+		l_vk == 0x28 || l_vk == 0x21 || l_vk == 0x22 || l_vk == 0xBB || l_vk == 0xBD || l_vk == 0x6B || l_vk == 0x6D)
+		return 1;
+	if (l_vk >= 0x70 && l_vk <= 0x7B) return 1;
+	if (l_ctrl && !l_alt)
+		return (l_vk >= '0' && l_vk <= '9') || (l_vk >= 0x60 && l_vk <= 0x69)
+			|| (l_vk >= 0xBA && l_vk <= 0xC0) || (l_vk >= 0xDB && l_vk <= 0xDE);
+	return 0;
+}
+
+/* Windows' Alt-door policy, kept for the code that asks it. */
+int shell_syskey_is_ours(int l_vk)
+{
+	return (l_vk >= 'A' && l_vk <= 'Z') || (l_vk >= '0' && l_vk <= '9') || l_vk == 0xBB || l_vk == 0xBD
+		|| l_vk == 0x6B || l_vk == 0x6D || l_vk == 0x79 || l_vk == 0x25 || l_vk == 0x27;
+}
+int shell_syschar_is_ours(int l_ch)
+{
+	return (l_ch >= 'A' && l_ch <= 'Z') || (l_ch >= 'a' && l_ch <= 'z') || (l_ch >= '0' && l_ch <= '9')
+		|| l_ch == '+' || l_ch == '-' || l_ch == '=';
+}
+
+/* The keyboard's modifiers now (GDK keeps them per seat). */
+static GdkModifierType shell_modifiers(void)
+{
+	GdkDisplay *l_display = gdk_display_get_default();
+	GdkSeat *l_seat = l_display ? gdk_display_get_default_seat(l_display) : NULL;
+	GdkDevice *l_keyboard = l_seat ? gdk_seat_get_keyboard(l_seat) : NULL;
+	return l_keyboard ? gdk_device_get_modifier_state(l_keyboard) : 0;
+}
+int shell_control_down(void) { return (shell_modifiers() & GDK_CONTROL_MASK) ? 1 : 0; }
+int shell_alt_down(void) { return (shell_modifiers() & GDK_ALT_MASK) ? 1 : 0; }
+int shell_shift_down(void) { return (shell_modifiers() & GDK_SHIFT_MASK) ? 1 : 0; }
+int shell_shift_held(void) { return shell_shift_down(); }
+
+/* A character as Windows delivers it: one event 3 per UTF-16 code unit. */
+static void shell_emit_char(guint32 a_code)
+{
+	if (a_code >= 0x10000) {
+		guint32 v = a_code - 0x10000;
+		shell_push(3, (int)(0xD800 + (v >> 10)), 0, 0);
+		shell_push(3, (int)(0xDC00 + (v & 0x3FF)), 0, 0);
+	} else if (a_code > 0) shell_push(3, (int)a_code, 0, 0);
+}
+
+static gboolean shell_on_key(GtkEventControllerKey *k, guint a_keyval, guint a_code, GdkModifierType a_state, gpointer d)
+{
+	int l_ctrl = (a_state & GDK_CONTROL_MASK) ? 1 : 0, l_alt = (a_state & GDK_ALT_MASK) ? 1 : 0;
+	int vk = shell_vk(a_keyval);
+	(void)k; (void)a_code; (void)d;
+	if (vk && (shell_keydown_is_ours(vk, l_ctrl, l_alt) || (l_alt && (vk == 0x25 || vk == 0x27))))
+		shell_push(4, vk, 0, 0);
+	switch (vk) {
+		case 0x08: case 0x0D: case 0x09: case 0x1B:
+			shell_push(3, vk, 0, 0);
+			break;
+		default:
+			if (l_ctrl) {
+				if (vk >= 'A' && vk <= 'Z') shell_push(3, vk - 'A' + 1, 0, 0);
+			} else shell_emit_char(gdk_keyval_to_unicode(a_keyval));
+	}
+	return TRUE;
+}
+
+/* ------------------------------------------------------------------ the view */
+
+/* The backing image follows the drawing area's size in device pixels; Eiffel hears the new
+   size (16) and is asked to draw (6), as Windows sends WM_SIZE then WM_PAINT. */
+static void shell_rebuild_backing(void)
+{
+	int l_scale = shell_scale();
+	int w = s_area ? gtk_widget_get_width(s_area) * l_scale : 0, h = s_area ? gtk_widget_get_height(s_area) * l_scale : 0;
+	cairo_surface_t *l_new;
+	if (w < 1 || h < 1) return;
+	if (s_backing && cairo_image_surface_get_width(s_backing) == w && cairo_image_surface_get_height(s_backing) == h) return;
+	l_new = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+	if (s_backing) {
+		/* keep the old picture until the program draws a new one */
+		cairo_t *cr = cairo_create(l_new);
+		cairo_set_source_surface(cr, s_backing, 0, 0);
+		cairo_paint(cr);
+		cairo_destroy(cr);
+		cairo_surface_destroy(s_backing);
+	}
+	s_backing = l_new;
+	if (!shell_coalesce(16, w, h, 0, 0)) shell_push(16, w, h, 0);
+	shell_push(6, 0, 0, 0);
+}
+static void shell_on_resize(GtkDrawingArea *a, int w, int h, gpointer d) { (void)a; (void)w; (void)h; (void)d; shell_rebuild_backing(); }
+static void shell_on_scale(GObject *o, GParamSpec *p, gpointer d) { (void)o; (void)p; (void)d; shell_rebuild_backing(); }
+
+/* Paint the backdrop, then the program's picture at its natural size, anchored top-left. */
+static void shell_draw(GtkDrawingArea *a, cairo_t *cr, int w, int h, gpointer d)
+{
+	int l_scale = shell_scale();
+	(void)a; (void)d;
+	cairo_set_source_rgb(cr, ((s_backdrop >> 16) & 0xFF) / 255.0, ((s_backdrop >> 8) & 0xFF) / 255.0, (s_backdrop & 0xFF) / 255.0);
+	cairo_rectangle(cr, 0, 0, w, h);
+	cairo_fill(cr);
+	if (!s_backing) return;
+	cairo_surface_flush(s_backing);
+	cairo_save(cr);
+	cairo_scale(cr, 1.0 / l_scale, 1.0 / l_scale);
+	cairo_set_source_surface(cr, s_backing, 0, 0);
+	cairo_paint(cr);
+	cairo_restore(cr);
+}
+
+/* Pointer positions in device pixels. */
+static int shell_px(double a_logical) { return (int)floor(a_logical * shell_scale()); }
+
+static void shell_on_press(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	guint b = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g));
+	(void)d;
+	s_pointer_x = x; s_pointer_y = y;
+	if (s_area) gtk_widget_grab_focus(s_area);
+	if (b == GDK_BUTTON_PRIMARY) {
+		s_primary_down = 1;
+		shell_push(n == 2 ? 8 : n >= 3 ? 12 : 2, shell_px(x), shell_px(y), 0);
+	} else if (b == GDK_BUTTON_MIDDLE) shell_push(17, shell_px(x), shell_px(y), 0);
+}
+/* The main window hears the right button on release (11), as on Windows. */
+static void shell_on_release(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	guint b = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g));
+	(void)n; (void)d;
+	if (b == GDK_BUTTON_PRIMARY) { s_primary_down = 0; shell_push(10, shell_px(x), shell_px(y), 0); }
+	else if (b == GDK_BUTTON_SECONDARY) shell_push(11, shell_px(x), shell_px(y), 0);
+}
+static void shell_on_motion(GtkEventControllerMotion *m, double x, double y, gpointer d)
+{
+	(void)m; (void)d;
+	s_pointer_x = x; s_pointer_y = y;
+	if (s_primary_down) shell_push(9, shell_px(x), shell_px(y), 0);
+	else if (!shell_coalesce(13, shell_px(x), shell_px(y), 0, 0)) shell_push(13, shell_px(x), shell_px(y), 0);
+}
+static void shell_on_leave(GtkEventControllerMotion *m, gpointer d) { (void)m; (void)d; shell_push(14, 0, 0, 0); }
+/* Windows counts 120 per notch, positive away from the user; GTK's dy is positive toward. */
+static gboolean shell_on_scroll(GtkEventControllerScroll *s, double dx, double dy, gpointer d)
+{
+	static double l_rest = 0;
+	double v = -dy * 120.0 + l_rest;
+	int l_delta = (int)v;
+	(void)s; (void)dx; (void)d;
+	l_rest = v - l_delta;
+	if (l_delta == 0) return TRUE;
+	if (!shell_coalesce(15, shell_px(s_pointer_x), shell_px(s_pointer_y), l_delta, 1))
+		shell_push(15, shell_px(s_pointer_x), shell_px(s_pointer_y), l_delta);
+	return TRUE;
+}
+
+/* ------------------------------------------------------------------ window, timers */
+
+static gboolean shell_on_close_request(GtkWindow *w, gpointer d)
+{
+	(void)w; (void)d;
+	if (s_close_requests) { shell_push(66, 0, 0, 0); return TRUE; }   /* the program decides */
+	return FALSE;
+}
+static void shell_on_destroy(GtkWidget *w, gpointer d)
+{
+	(void)w; (void)d;
+	if (s_heartbeat) { g_source_remove(s_heartbeat); s_heartbeat = 0; }
+	if (s_fast) { g_source_remove(s_fast); s_fast = 0; }
+	if (s_dwell) { g_source_remove(s_dwell); s_dwell = 0; }
+	s_close_requests = 0;
+	s_quit = 1;
+	s_window = NULL;
+	s_area = NULL;
+}
+static gboolean shell_heartbeat(gpointer d) { (void)d; g_atomic_int_set(&s_wake_pending, 0); shell_push(7, 0, 0, 0); return G_SOURCE_CONTINUE; }
+static gboolean shell_fast_tick(gpointer d) { (void)d; shell_push(25, 0, 0, 0); return G_SOURCE_CONTINUE; }
+static gboolean shell_dwell(gpointer d) { (void)d; s_dwell = 0; shell_push(55, 0, 0, 0); return G_SOURCE_REMOVE; }
+
+void *shell_create_window(const void *title, int px, int py, int cw, int ch)
+{
+	GtkEventController *k, *m, *s;
+	GtkGesture *g;
+	int l_scale;
+	shell_app();
+	if (g_thread_self() != s_pump_thread) return NULL;
+	(void)px; (void)py;   /* GTK 4 does not place windows: the compositor does */
+	s_quit = 0;
+	l_scale = shell_scale();
+	s_window = gtk_window_new();
+	gtk_window_set_title(GTK_WINDOW(s_window), title ? (const char *)title : "");
+	gtk_window_set_default_size(GTK_WINDOW(s_window), cw / l_scale, ch / l_scale);
+	s_area = gtk_drawing_area_new();
+	gtk_widget_set_focusable(s_area, TRUE);
+	gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(s_area), shell_draw, NULL, NULL);
+	g_signal_connect(s_area, "resize", G_CALLBACK(shell_on_resize), NULL);
+	g_signal_connect(s_window, "notify::scale-factor", G_CALLBACK(shell_on_scale), NULL);
+	g = gtk_gesture_click_new();
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(g), 0);   /* every button */
+	g_signal_connect(g, "pressed", G_CALLBACK(shell_on_press), NULL);
+	g_signal_connect(g, "released", G_CALLBACK(shell_on_release), NULL);
+	gtk_widget_add_controller(s_area, GTK_EVENT_CONTROLLER(g));
+	m = gtk_event_controller_motion_new();
+	g_signal_connect(m, "motion", G_CALLBACK(shell_on_motion), NULL);
+	g_signal_connect(m, "leave", G_CALLBACK(shell_on_leave), NULL);
+	gtk_widget_add_controller(s_area, m);
+	s = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+	g_signal_connect(s, "scroll", G_CALLBACK(shell_on_scroll), NULL);
+	gtk_widget_add_controller(s_area, s);
+	k = gtk_event_controller_key_new();
+	g_signal_connect(k, "key-pressed", G_CALLBACK(shell_on_key), NULL);
+	gtk_widget_add_controller(s_window, k);
+	gtk_window_set_child(GTK_WINDOW(s_window), s_area);
+	g_signal_connect(s_window, "close-request", G_CALLBACK(shell_on_close_request), NULL);
+	g_signal_connect(s_window, "destroy", G_CALLBACK(shell_on_destroy), NULL);
+	if (!s_start_hidden) gtk_window_present(GTK_WINDOW(s_window));
+	gtk_widget_grab_focus(s_area);
+	s_heartbeat = g_timeout_add(s_shell_heartbeat_ms, shell_heartbeat, NULL);
+	return s_window;
+}
+
+void shell_close_window(void) { if (s_window) gtk_window_destroy(GTK_WINDOW(s_window)); }
+void shell_request_close(void) { if (s_window) gtk_window_close(GTK_WINDOW(s_window)); }
+void shell_set_close_requests(int on) { s_close_requests = on ? 1 : 0; }
+void shell_set_start_hidden(int l_on) { s_start_hidden = l_on ? 1 : 0; }
+void shell_set_caption(const void *l_title) { if (s_window) gtk_window_set_title(GTK_WINDOW(s_window), l_title ? (const char *)l_title : ""); }
+int shell_main_is_shown(void) { return s_window && gtk_widget_get_visible(s_window) ? 1 : 0; }
+void shell_show_main(int l_on)
+{
+	if (!s_window) return;
+	if (l_on) gtk_window_present(GTK_WINDOW(s_window)); else gtk_widget_set_visible(s_window, FALSE);
+}
+void shell_set_backdrop(void *hwnd, int rgb) { (void)hwnd; s_backdrop = rgb & 0xFFFFFF; if (s_area) gtk_widget_queue_draw(s_area); }
+void shell_set_cursor_kind(int k)
+{
+	static const char *const l_names[] = {"default", "text", "pointer", "ew-resize", "ns-resize", "crosshair"};
+	s_cursor = k;
+	if (s_area) gtk_widget_set_cursor_from_name(s_area, l_names[(k >= 0 && k <= 5) ? k : 0]);
+}
+void shell_set_heartbeat(int l_ms)
+{
+	s_shell_heartbeat_ms = l_ms;
+	if (s_heartbeat) { g_source_remove(s_heartbeat); s_heartbeat = g_timeout_add(l_ms, shell_heartbeat, NULL); }
+}
+void shell_set_fast_timer(int ms)
+{
+	if (!s_window || ms <= 0) return;
+	if (s_fast) g_source_remove(s_fast);
+	s_fast = g_timeout_add(ms, shell_fast_tick, NULL);
+}
+void shell_kill_fast_timer(void) { if (s_fast) { g_source_remove(s_fast); s_fast = 0; } }
+void shell_arm_dwell_timer(int l_ms)
+{
+	if (l_ms <= 0) return;
+	if (s_dwell) g_source_remove(s_dwell);
+	s_dwell = g_timeout_add(l_ms, shell_dwell, NULL);
+}
+void shell_cancel_dwell_timer(void) { if (s_dwell) { g_source_remove(s_dwell); s_dwell = 0; } }
+int shell_dwell_is_armed(void) { return s_dwell ? 1 : 0; }
+
+/* ------------------------------------------------------------------ drawing */
+
+/* No device context on GTK: the "DC" is the window's backing image, which simple_cairo's
+   off-Windows surface-for-DC references; releasing it shows it. */
+void *shell_get_dc(void) { return s_window ? (void *)s_backing : NULL; }
+void shell_release_dc(void *dc) { if (dc && s_area) gtk_widget_queue_draw(s_area); }
+
+/* ------------------------------------------------------------------ the pump */
+
+/* Wait for one event and handle it: 0 once the window is gone (Windows' WM_QUIT). */
+int shell_pump(void)
+{
+	if (s_quit) return 0;
+	g_main_context_iteration(NULL, TRUE);
+	return s_quit ? 0 : 1;
+}
+/* Handle every event already waiting: 0 once the window is gone. */
+int shell_pump_pending(void)
+{
+	while (!s_quit && g_main_context_iteration(NULL, FALSE)) { }
+	return s_quit ? 0 : 1;
+}
+static gboolean shell_stop_waiting(gpointer d) { *(int *)d = 1; return G_SOURCE_REMOVE; }
+/* Handle events until one is queued for Eiffel or `ms' has passed: 0 once the window is gone. */
+int shell_pump_until(int ms)
+{
+	gint64 l_end = g_get_monotonic_time() + (gint64)ms * 1000;
+	for (;;) {
+		int l_timed_out = 0;
+		guint l_timer;
+		gint64 l_left;
+		if (!shell_pump_pending()) return 0;
+		if (s_qhead != s_qtail) return 1;
+		l_left = l_end - g_get_monotonic_time();
+		if (l_left <= 0) return 1;
+		l_timer = g_timeout_add((guint)((l_left + 999) / 1000), shell_stop_waiting, &l_timed_out);
+		g_main_context_iteration(NULL, TRUE);
+		if (!l_timed_out) g_source_remove(l_timer);
+		if (s_quit) return 0;
+	}
+}
+/* Handle events for `ms' milliseconds with or without a window (SHELL_DESKTOP.pump_for). */
+void shell_pump_for(int ms)
+{
+	gint64 l_end;
+	shell_app();
+	l_end = g_get_monotonic_time() + (gint64)ms * 1000;
+	for (;;) {
+		int l_timed_out = 0;
+		guint l_timer;
+		gint64 l_left = l_end - g_get_monotonic_time();
+		if (l_left <= 0) return;
+		l_timer = g_timeout_add((guint)((l_left + 999) / 1000), shell_stop_waiting, &l_timed_out);
+		g_main_context_iteration(NULL, TRUE);
+		if (!l_timed_out) g_source_remove(l_timer);
+	}
+}
+
+/* ------------------------------------------------------------------ the wake */
+
+static gboolean shell_deliver_wake(gpointer d) { (void)d; g_atomic_int_set(&s_wake_pending, 0); shell_push(54, 0, 0, 0); return G_SOURCE_REMOVE; }
+/* From any thread: make the pump return with event 54. 1 sent, 2 one already on its way. */
+int shell_wake(void)
+{
+	if (!g_atomic_int_compare_and_exchange(&s_wake_pending, 0, 1)) return 2;
+	g_idle_add(shell_deliver_wake, NULL);   /* GLib's main context is safe to reach from any thread */
+	g_main_context_wakeup(NULL);
+	return 1;
+}
+void shell_claim_pump_thread(int l_on) { if (l_on) s_pump_thread = g_thread_self(); g_atomic_int_set(&s_wake_pending, 0); }
+int shell_is_pump_thread(void) { return s_pump_thread == NULL || g_thread_self() == s_pump_thread; }
+
+/* ------------------------------------------------------------------ appearance */
+
+/* GTK 4 knows the app's own preference; a desktop's dark style shows in the theme's name. */
+int shell_system_prefers_dark(void)
+{
+	GtkSettings *l_settings;
+	gboolean l_dark = FALSE;
+	char *l_theme = NULL;
+	int l_result;
+	shell_app();
+	l_settings = gtk_settings_get_default();
+	if (!l_settings) return 0;
+	g_object_get(l_settings, "gtk-application-prefer-dark-theme", &l_dark, "gtk-theme-name", &l_theme, NULL);
+	l_result = l_dark || (l_theme && g_str_has_suffix(l_theme, "-dark")) ? 1 : 0;
+	g_free(l_theme);
+	return l_result;
+}
+int shell_high_contrast_on(void)
+{
+	GtkSettings *l_settings = gtk_settings_get_default();
+	char *l_theme = NULL;
+	int l_result;
+	if (!l_settings) return 0;
+	g_object_get(l_settings, "gtk-theme-name", &l_theme, NULL);
+	l_result = l_theme && g_str_has_prefix(l_theme, "HighContrast") ? 1 : 0;
+	g_free(l_theme);
+	return l_result;
+}
+int shell_reduces_motion(void)
+{
+	GtkSettings *l_settings = gtk_settings_get_default();
+	gboolean l_animate = TRUE;
+	if (!l_settings) return 0;
+	g_object_get(l_settings, "gtk-enable-animations", &l_animate, NULL);
+	return l_animate ? 0 : 1;
+}
+int shell_set_dark_title_bar(void *hwnd, int l_on)
+{
+	GtkSettings *l_settings = gtk_settings_get_default();
+	(void)hwnd;
+	if (!l_settings) return 0;
+	g_object_set(l_settings, "gtk-application-prefer-dark-theme", l_on ? TRUE : FALSE, NULL);
+	return 1;
+}
+/* Windows message plumbing, kept for the code that calls it: GTK reports these changes
+   itself, so the filters answer "not mine". */
+int shell_setting_changed(const void *l_area) { (void)l_area; return 0; }
+int shell_contrast_changed(unsigned int l_spi) { (void)l_spi; return 0; }
+int shell_motion_changed(unsigned int l_spi) { (void)l_spi; return 0; }
+
+/* ------------------------------------------------------------------ the desktop, the clock */
+
+/* The virtual desktop (every monitor together), in pixels, as SM_XVIRTUALSCREEN and kin. */
+static void shell_virtual_desktop(int *x, int *y, int *w, int *h)
+{
+	GdkDisplay *l_display;
+	GListModel *l_all;
+	guint i, n;
+	int l_left = 0, l_top = 0, l_right = 0, l_bottom = 0, l_first = 1;
+	shell_app();
+	l_display = gdk_display_get_default();
+	l_all = l_display ? gdk_display_get_monitors(l_display) : NULL;
+	n = l_all ? g_list_model_get_n_items(l_all) : 0;
+	for (i = 0; i < n; i++) {
+		GdkMonitor *l_m = g_list_model_get_item(l_all, i);
+		GdkRectangle g;
+		int k = gdk_monitor_get_scale_factor(l_m);
+		gdk_monitor_get_geometry(l_m, &g);
+		g_object_unref(l_m);
+		if (l_first || g.x * k < l_left) l_left = g.x * k;
+		if (l_first || g.y * k < l_top) l_top = g.y * k;
+		if (l_first || (g.x + g.width) * k > l_right) l_right = (g.x + g.width) * k;
+		if (l_first || (g.y + g.height) * k > l_bottom) l_bottom = (g.y + g.height) * k;
+		l_first = 0;
+	}
+	*x = l_left; *y = l_top; *w = l_right - l_left; *h = l_bottom - l_top;
+}
+int shell_screen_x(void) { int x, y, w, h; shell_virtual_desktop(&x, &y, &w, &h); return x; }
+int shell_screen_y(void) { int x, y, w, h; shell_virtual_desktop(&x, &y, &w, &h); return y; }
+int shell_screen_w(void) { int x, y, w, h; shell_virtual_desktop(&x, &y, &w, &h); return w; }
+int shell_screen_h(void) { int x, y, w, h; shell_virtual_desktop(&x, &y, &w, &h); return h; }
+double shell_now_ms(void) { return (double)g_get_monotonic_time() / 1000.0; }
+int shell_minutes_of_day(void)
+{
+	GDateTime *l_now = g_date_time_new_now_local();
+	int l_minutes = g_date_time_get_hour(l_now) * 60 + g_date_time_get_minute(l_now);
+	g_date_time_unref(l_now);
+	return l_minutes;
 }

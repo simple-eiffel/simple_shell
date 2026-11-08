@@ -36,7 +36,7 @@ GTK_CFLAGS := $(shell pkg-config --cflags gtk4)
 CFLAGS ?= -O2 -g
 CFLAGS += -Wall -fPIC $(GTK_CFLAGS)
 
-SOURCES := linux/shell_gtk.c
+SOURCES := linux/shell_gtk.c shell_ax_table.c
 OBJECTS := $(SOURCES:.c=.o) linux/shell_gtk_stubs.o
 
 simple_shell_gtk.o: $(OBJECTS)
@@ -52,7 +52,7 @@ linux/shell_gtk_stubs.o: linux/shell_gtk_stubs.c shell_posix.h
 	$(CC) $(CFLAGS) -Wno-unused-parameter -c linux/shell_gtk_stubs.c -o linux/shell_gtk_stubs.o
 
 clean:
-	rm -f simple_shell_gtk.o linux/*.o linux/shell_gtk_stubs.c
+	rm -f simple_shell_gtk.o linux/*.o linux/shell_gtk_stubs.c shell_ax_table.o
 
 else
 

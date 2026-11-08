@@ -88,6 +88,9 @@ SHELL_SHARED int  s_shell_start_hidden = 0;
 SHELL_SHARED DWORD s_shell_pump_thread = 0;
 SHELL_SHARED volatile LONG s_shell_wake_pending = 0;
 SHELL_SHARED int  s_shell_heartbeat_ms = 250;
+/* 1.29.0 (W2, simple_gui): when set, the main window's WM_CLOSE (title-bar X, Alt+F4)
+   queues event 66 and the window stays; the program decides. Cleared when it is destroyed. */
+SHELL_SHARED int  s_shell_close_requests = 0;
 
 /* 0 arrow, 1 ibeam, 2 hand, 3 size-we, 4 size-ns, 5 cross, 6 wait */
 static void shell_set_cursor_kind(int k) {
@@ -566,9 +569,16 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 if (s_shell_getobject_hook(h, w, l, &l_answer)) return l_answer;
             }
             break;
+        case WM_CLOSE:
+            if (s_shell_close_requests) {
+                shell_push(66, 0, 0, 0);
+                return 0;
+            }
+            break;
         case WM_DESTROY:
             if (s_shell_destroy_hook) s_shell_destroy_hook(h);
             KillTimer(h, 1);
+            s_shell_close_requests = 0;
             PostQuitMessage(0);
             return 0;
     }
@@ -934,6 +944,10 @@ static int shell_pump_pending(void) {
     }
     return 1;
 }
+
+static void shell_set_close_requests(int on) { s_shell_close_requests = on ? 1 : 0; }
+/* What the title-bar X does: post WM_CLOSE to the main window. */
+static void shell_request_close(void) { if (s_shell_hwnd) PostMessageW(s_shell_hwnd, WM_CLOSE, 0, 0); }
 
 static int shell_next_event(int* out4) {
     if (s_shell_qhead == s_shell_qtail) return 0;

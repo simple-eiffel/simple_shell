@@ -50,6 +50,30 @@ feature -- Operation
 			end
 		end
 
+feature -- Closing (1.29.0)
+
+	close_requests_are_events: BOOLEAN
+			-- Does the user's close (title-bar X, Alt+F4) queue `Event_window_close_request'
+			-- instead of destroying the window? Off by default, so existing programs are unchanged.
+
+	set_close_requests_are_events (a_on: BOOLEAN)
+			-- Let the program decide on a close (simple_gui: close is an event).
+		do
+			close_requests_are_events := a_on
+			c_set_close_requests (a_on)
+		ensure
+			set: close_requests_are_events = a_on
+		end
+
+	request_close
+			-- Ask to close the main window as the title-bar X does: an event when
+			-- `close_requests_are_events', otherwise the window is destroyed.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_request_close();"
+		end
+
 feature -- Operation, step by step (1.28.0)
 
 	is_window_open: BOOLEAN
@@ -554,6 +578,13 @@ feature {NONE} -- Externals
 			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_pump_until($a_ms);"
+		end
+
+	c_set_close_requests (a_on: BOOLEAN)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_set_close_requests($a_on ? 1 : 0);"
 		end
 
 	shell_pump_pending: INTEGER

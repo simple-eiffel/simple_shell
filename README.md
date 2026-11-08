@@ -189,8 +189,8 @@ Windows backend (simple_gui over simple_widgets):
 ## macOS (1.31)
 
 On a Mac the same classes run on an AppKit half in `Clib/macos/`: the headers declare the
-same entry points, and `shell_appkit.m` and `shell_appkit_ax.m` supply them. It speaks the
-Windows contract: the same events and numbers, coordinates in device pixels (as for a
+same entry points, and `shell_appkit.m`, `shell_appkit_print.m` and the shared
+`shell_ax_table.c` supply them. It speaks the Windows contract: the same events and numbers, coordinates in device pixels (as for a
 DPI-aware Win32 process: the DPI is 96 times the backing scale), keys as Windows virtual
 keys with Command as the primary modifier, and the window's backing cairo image in place
 of a device context (simple_cairo's off-Windows contract). So simple_widgets runs

@@ -8,14 +8,20 @@ CAIRO_CFLAGS := $(shell pkg-config --cflags cairo 2>/dev/null || echo -I/opt/hom
 CFLAGS ?= -O2 -g
 CFLAGS += -Wall $(CAIRO_CFLAGS)
 
-SOURCES := macos/shell_appkit.m macos/shell_appkit_ax.m macos/shell_appkit_print.m
-OBJECTS := $(SOURCES:.m=.o) macos/shell_appkit_stubs.o
+# The accessibility table is shared with the Linux half (shell_ax_table.c, plain C); its
+# object goes in macos/ so the two halves' objects never meet.
+APPKIT_SOURCES := macos/shell_appkit.m macos/shell_appkit_print.m
+SOURCES := $(APPKIT_SOURCES) shell_ax_table.c
+OBJECTS := $(APPKIT_SOURCES:.m=.o) macos/shell_ax_table.o macos/shell_appkit_stubs.o
 
 simple_shell_appkit.o: $(OBJECTS)
 	ld -r $(OBJECTS) -o simple_shell_appkit.o
 
 macos/%.o: macos/%.m macos/shell_appkit.h shell_posix.h
 	$(CC) $(CFLAGS) -fobjc-arc -c $< -o $@
+
+macos/shell_ax_table.o: shell_ax_table.c shell_posix.h
+	$(CC) $(CFLAGS) -c shell_ax_table.c -o macos/shell_ax_table.o
 
 macos/shell_appkit_stubs.c: shell_posix.h $(SOURCES) make_stubs.pl
 	perl make_stubs.pl shell_posix.h $(SOURCES) > macos/shell_appkit_stubs.c

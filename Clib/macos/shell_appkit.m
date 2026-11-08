@@ -6,6 +6,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <CoreText/CoreText.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <cairo.h>
 #include <stdatomic.h>
 #include <pthread.h>
@@ -66,6 +67,12 @@ static SSView *s_view = nil;                  /* the main window's view (slot -1
 #define SHELL_PANELS 8
 static NSWindow *s_panel[SHELL_PANELS];       /* framed panels: windows of their own */
 static NSTimer *s_panel_settle[SHELL_PANELS]; /* a move's end, after the last move notice */
+static int s_panel_accepts[SHELL_PANELS];     /* does the panel take dropped files (event 50)? */
+/* The last drop's paths, UTF-16 and one per line, as the Windows half keeps them for
+   `shell_drop_paths'. */
+#define SHELL_DROPS_CAP 16384
+static unichar s_drops[SHELL_DROPS_CAP];
+static int s_drops_len = 0;
 static int s_quit = 0;                        /* the window is gone: the pump answers 0 */
 static int s_start_hidden = 0, s_close_requests = 0, s_cursor = 0;
 static int s_backdrop = 0x12141B;             /* Windows' default: RGB(18, 20, 27) */
@@ -97,6 +104,16 @@ static double shell_scale(void)
 static NSString *shell_text(const void *a_utf8)
 {
 	return a_utf8 ? [NSString stringWithUTF8String:(const char *)a_utf8] : @"";
+}
+
+/* Keep `a_paths' (one per line) for `shell_drop_paths'; answers how many paths. */
+static int shell_keep_drops(NSString *a_paths)
+{
+	NSUInteger n = MIN([a_paths length], (NSUInteger)SHELL_DROPS_CAP - 1);
+	[a_paths getCharacters:s_drops range:NSMakeRange(0, n)];
+	s_drops_len = (int)n;
+	s_drops[n] = 0;
+	return n == 0 ? 0 : (int)[[a_paths componentsSeparatedByString:@"\n"] count];
 }
 
 /* ------------------------------------------------------------------ keys */
@@ -395,6 +412,28 @@ static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
 	for (NSUInteger i = 0; i < [s length]; i++) shell_emit(self, 3, [s characterAtIndex:i], 0, 0, 0);
 }
 - (void)doCommandBySelector:(SEL)a_selector { (void)a_selector; }
+
+/* Files dropped from Finder: the main window always takes them (event 18: x, y, count), a
+   panel when it accepts files (event 50: x, y, slot). */
+- (BOOL)takesDrops { return slot < 0 || (slot < SHELL_PANELS && s_panel_accepts[slot]); }
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)a_info { (void)a_info; return [self takesDrops] ? NSDragOperationCopy : NSDragOperationNone; }
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)a_info { (void)a_info; return [self takesDrops] ? NSDragOperationCopy : NSDragOperationNone; }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)a_info
+{
+	if (![self takesDrops]) return NO;
+	NSArray<NSURL *> *l_urls = [[a_info draggingPasteboard] readObjectsForClasses:@[[NSURL class]]
+		options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+	if ([l_urls count] == 0) return NO;
+	NSMutableArray<NSString *> *l_paths = [NSMutableArray array];
+	for (NSURL *u in l_urls) [l_paths addObject:[u path]];
+	int n = shell_keep_drops([l_paths componentsJoinedByString:@"\n"]);
+	NSPoint p = [self convertPoint:[a_info draggingLocation] fromView:nil];
+	double l_scale = [self scale];
+	int x = (int)floor(p.x * l_scale), y = (int)floor(p.y * l_scale);
+	if (slot < 0) shell_push(18, x, y, n); else shell_push(50, x, y, slot);
+	shell_nudge();
+	return YES;
+}
 @end
 
 /* ------------------------------------------------------------------ bring-up driver */
@@ -606,6 +645,7 @@ void *shell_create_window(const void *title, int px, int py, int cw, int ch)
 	s_window = w;
 	s_view = [[SSView alloc] initWithFrame:l_content slot:-1];
 	[w setContentView:s_view];
+	[s_view registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
 	[w makeFirstResponder:s_view];
 	[s_view rebuildBacking];
 	if (!s_start_hidden) [w makeKeyAndOrderFront:nil];
@@ -663,6 +703,8 @@ int shell_panel_open_framed_as(int l_x, int l_y, int l_w, int l_h, const void *l
 	s_panel[l_slot] = w;
 	SSView *v = [[SSView alloc] initWithFrame:[[w contentView] frame] slot:l_slot];
 	[w setContentView:v];
+	[v registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+	s_panel_accepts[l_slot] = 0;
 	[w makeFirstResponder:v];
 	[v rebuildBacking];
 	return l_slot;
@@ -689,6 +731,7 @@ void shell_panel_close(int l_slot)
 	if (!shell_panel_view(l_slot)) return;
 	NSWindow *w = s_panel[l_slot];
 	s_panel[l_slot] = nil;
+	s_panel_accepts[l_slot] = 0;
 	[s_panel_settle[l_slot] invalidate]; s_panel_settle[l_slot] = nil;
 	[w setDelegate:nil];
 	[w close];
@@ -956,6 +999,77 @@ int shell_set_dark_title_bar(void *hwnd, int l_on)
 	NSWindow *w = (__bridge NSWindow *)hwnd;
 	if (!w) return 0;
 	[w setAppearance:[NSAppearance appearanceNamed:l_on ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua]];
+	return 1;
+}
+
+/* ------------------------------------------------------------------ files: the open dialog and drops */
+
+/* The paths of the last drop, UTF-16 and one per line, into `buf' (the caller reads 16-bit
+   units); taking them empties the store, as on Windows. */
+int shell_drop_paths(void *buf, int cap)
+{
+	int n = s_drops_len;
+	if (cap < 1) return 0;
+	if (n >= cap) n = cap - 1;
+	memcpy(buf, s_drops, (size_t)n * sizeof(unichar));
+	((unichar *)buf)[n] = 0;
+	s_drops_len = 0;
+	return n;
+}
+
+void shell_panel_set_accepts_files(int l_slot, int l_on) { if (l_slot >= 0 && l_slot < SHELL_PANELS && s_panel[l_slot]) s_panel_accepts[l_slot] = l_on ? 1 : 0; }
+int shell_panel_accepts_files(int l_slot) { return l_slot >= 0 && l_slot < SHELL_PANELS && s_panel[l_slot] && s_panel_accepts[l_slot] ? 1 : 0; }
+
+/* A drop delivered as if from Finder (the test door): `l_paths' one per line, UTF-8. */
+void shell_panel_try_drop(int l_slot, int l_x, int l_y, const void *l_paths)
+{
+	if (l_slot < 0 || l_slot >= SHELL_PANELS || !s_panel[l_slot] || !l_paths) return;
+	shell_keep_drops(shell_text(l_paths));
+	shell_push(50, l_x, l_y, l_slot);
+	shell_nudge();
+}
+
+/* The file types a Windows filter allows ("Text|*.txt;*.md|All|*.*": description, patterns,
+   ...), or nil for any file. */
+static NSArray<UTType *> *shell_filter_types(NSString *a_filter)
+{
+	NSArray<NSString *> *l_parts = [a_filter componentsSeparatedByString:@"|"];
+	NSMutableArray<UTType *> *l_types = [NSMutableArray array];
+	for (NSUInteger i = 1; i < [l_parts count]; i += 2) {
+		for (NSString *l_pattern in [l_parts[i] componentsSeparatedByString:@";"]) {
+			NSString *t = [l_pattern stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+			if ([t isEqualToString:@"*.*"] || [t isEqualToString:@"*"]) return nil;
+			if ([t hasPrefix:@"*."]) {
+				UTType *u = [UTType typeWithFilenameExtension:[t substringFromIndex:2]];
+				if (u) [l_types addObject:u];
+			}
+		}
+	}
+	return [l_types count] ? l_types : nil;
+}
+
+/* Choose one existing file: its path, UTF-8, into `l_out' (the caller reads NATIVE_STRING;
+   the buffer holds 2 * l_cap bytes). 1 when a file was chosen. */
+int shell_open_file_dialog(const void *l_title, const void *l_filter, const void *l_initial_dir, void *l_out, int l_cap)
+{
+	if (!l_out || l_cap <= 1) return 0;
+	((char *)l_out)[0] = 0;
+	shell_app();
+	NSOpenPanel *o = [NSOpenPanel openPanel];
+	[o setCanChooseFiles:YES];
+	[o setCanChooseDirectories:NO];
+	[o setAllowsMultipleSelection:NO];
+	NSString *t = shell_text(l_title);
+	if ([t length]) { [o setTitle:t]; [o setMessage:t]; }
+	NSArray<UTType *> *l_types = shell_filter_types(shell_text(l_filter));
+	if (l_types) [o setAllowedContentTypes:l_types];
+	NSString *d = shell_text(l_initial_dir);
+	if ([d length]) [o setDirectoryURL:[NSURL fileURLWithPath:[d stringByExpandingTildeInPath] isDirectory:YES]];
+	if ([o runModal] != NSModalResponseOK || ![o URL]) return 0;
+	const char *l_path = [[[o URL] path] fileSystemRepresentation];
+	size_t l_len = strlen(l_path), l_room = (size_t)l_cap * 2 - 1;
+	if (l_len > l_room) return 0;
+	memcpy(l_out, l_path, l_len + 1);
 	return 1;
 }
 

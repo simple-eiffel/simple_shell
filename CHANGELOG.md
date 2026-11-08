@@ -2,6 +2,16 @@
 
 All notable changes to simple_shell.
 
+## 1.33.0 - 2026-11-08
+
+### Added
+
+- macOS: the open dialog and file drops (67 stubs left).
+  - `shell_open_file_dialog` is an NSOpenPanel. It translates the Windows filter ("Text|*.txt;*.md|All|*.*") into allowed file types (`*.*` means any), starts in the given folder, and writes the chosen path as UTF-8.
+  - Files dropped from Finder: the main window always takes them (event 18: x, y, count), and a framed panel takes them when it accepts files (event 50: x, y, slot). `shell_drop_paths` hands over the paths, UTF-16 and one per line, and empties the store, as on Windows.
+  - `shell_panel_set_accepts_files`, `shell_panel_accepts_files`, and the test door `shell_panel_try_drop`.
+  - The ECF links UniformTypeIdentifiers on macOS.
+
 ## 1.32.0 - 2026-11-08
 
 ### Added

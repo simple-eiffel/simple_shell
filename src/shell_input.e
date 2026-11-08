@@ -15,7 +15,7 @@ note
 	design: "[
 		SendInput rather than mouse_event / keybd_event: those are
 		superseded, and SendInput's absolute coordinates are
-		normalised to 0..65535 over the WHOLE virtual desktop, so a
+		normalized to 0..65535 over the WHOLE virtual desktop, so a
 		second monitor is addressed correctly where SetCursorPos
 		plus mouse_event depends on the primary screen's origin.
 
@@ -120,7 +120,7 @@ feature -- Mouse
 			three_handed_over: last_expected = 3
 		end
 
-	click_centre_of (a_x, a_y, a_width, a_height: INTEGER)
+	click_center_of (a_x, a_y, a_width, a_height: INTEGER)
 			-- `click_at' the middle of a rectangle: the user drags a
 			-- box around a control, and the edges of that box are the
 			-- parts most likely to fall outside it.

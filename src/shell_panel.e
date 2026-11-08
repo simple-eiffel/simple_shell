@@ -684,10 +684,10 @@ feature -- Painting
 		end
 
 	fill (a_rgb: INTEGER)
-			-- Paint the whole panel one colour (0xRRGGBB): placeholders and tests.
+			-- Paint the whole panel one color (0xRRGGBB): placeholders and tests.
 		require
 			open: is_open
-			colour: a_rgb >= 0 and a_rgb <= 0xFFFFFF
+			color: a_rgb >= 0 and a_rgb <= 0xFFFFFF
 		do
 			c_fill (slot, a_rgb)
 		end

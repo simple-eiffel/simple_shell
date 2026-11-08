@@ -1,6 +1,6 @@
 note
 	description: "[
-		Up to four click-through coloured rectangle FRAMES on the
+		Up to four click-through colored rectangle FRAMES on the
 		desktop: topmost, toolwindow, never activated, and input-
 		transparent - a click lands on whatever is underneath. The
 		visible shape is a frame region (outer minus inner), so the

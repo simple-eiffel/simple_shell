@@ -636,7 +636,7 @@ static LRESULT CALLBACK shell_overlay_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
-/* ---- outline frames: up to four click-through coloured rectangle
+/* ---- outline frames: up to four click-through colored rectangle
    FRAMES on the desktop (topmost, no taskbar, no activation, no input -
    WS_EX_TRANSPARENT). One window per slot; the visible shape is a frame
    region (outer rect minus inner rect) so the middle is not even part
@@ -1149,7 +1149,7 @@ static void  shell_strip_release(void* dc) { if (s_shell_strip && dc) ReleaseDC(
    Up to SHELL_PANELS per process; none takes focus when clicked
    (WS_EX_NOACTIVATE + MA_NOACTIVATE), none has a taskbar button. Each is
    layered from birth, so whole-window opacity is one call, and the
-   click-through switch (WS_EX_TRANSPARENT, honoured only on layered
+   click-through switch (WS_EX_TRANSPARENT, honored only on layered
    windows) works at any time. Capture exclusion uses
    SetWindowDisplayAffinity, looked up at run time: ISE's generated C
    targets Windows 2000 (_WIN32_WINNT 0x0500), where the function is not
@@ -1838,7 +1838,7 @@ static void shell_panel_set_capture_excluded(int l_slot, int l_on) {
         l_set(l_hwnd, SHELL_WDA_MONITOR);
 }
 
-/* Fill a panel with one colour through GDI (tests and placeholders). */
+/* Fill a panel with one color through GDI (tests and placeholders). */
 static void shell_panel_fill(int l_slot, int l_rgb) {
     HWND l_hwnd = shell_panel_hwnd(l_slot);
     HDC l_dc;
@@ -1944,7 +1944,7 @@ static int shell_alt_down(void) {
    modal on the calling thread, owned by the main window when there is one.
    The filter is pairs separated by '|' - "Scripts|*.md;*.txt|All files|*.*" -
    turned here into the double-NUL list the API wants. Answers 1 and the full
-   path in l_out when a file was chosen, 0 when cancelled. ---- */
+   path in l_out when a file was chosen, 0 when canceled. ---- */
 #include <commdlg.h>
 #pragma comment(lib, "comdlg32.lib")
 
@@ -2101,7 +2101,7 @@ static int shell_spell_check(const wchar_t *text, int *out, int cap_pairs) {
 }
 
 /* teach the checker: Ignore is session-scoped, Add persists to the
-   user's Windows dictionary (the same one Edge and Office honour) */
+   user's Windows dictionary (the same one Edge and Office honor) */
 static int shell_spell_ignore(const wchar_t *word) {
     if (!shell_spell_init()) return 0;
     return SUCCEEDED(s_shell_spell->lpVtbl->Ignore(s_shell_spell, word)) ? 1 : 0;
@@ -2139,7 +2139,7 @@ static int shell_spell_suggest(const wchar_t *word, wchar_t *buf, int cap) {
    layout shell_grab_screen delivers and cairo ARGB32 surfaces expose, written
    out as the bottom-up 32bpp DIB the clipboard convention expects. Alpha is
    forced opaque: bitmap consumers ignore the channel, and a premultiplied
-   transparent pixel would otherwise show as its colour over black. ---- */
+   transparent pixel would otherwise show as its color over black. ---- */
 static int shell_clip_set_image (const void *bits, int w, int h, int stride) {
     HGLOBAL hg; BITMAPINFOHEADER *hdr; unsigned char *dst; int row, col; size_t bytes;
     if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
@@ -2243,7 +2243,7 @@ static int shell_clip_get_image (void *bits, int w, int h, int stride) {
 
 /* ---- input synthesis (SendInput). Lineage: OCR_CLICKER in
    simple_ocr_capture, returned home. Absolute mouse coordinates are
-   normalised to 0..65535 over the WHOLE virtual desktop, so a second
+   normalized to 0..65535 over the WHOLE virtual desktop, so a second
    monitor is addressed correctly where SetCursorPos + mouse_event depends
    on the primary screen's origin. Every routine returns the number of
    events Windows accepted, so a blocked injection (UIPI, secure desktop)

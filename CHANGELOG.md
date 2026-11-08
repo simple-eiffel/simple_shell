@@ -48,7 +48,7 @@ All notable changes to simple_shell.
 
 ### Fixed (design scan 20, since 1260e13; report in simple_widgets)
 
-- `SHELL_PRINTER`'s one document per process was modelled per instance:
+- `SHELL_PRINTER`'s one document per process was modeled per instance:
   any instance could end or abort another's document. Now
   `owns_document` says whether the open document is this printer's, and
   pages, `dc`, `end_document` and `abort_document` require it. The C side
@@ -111,7 +111,7 @@ All notable changes to simple_shell.
   slot 0 is never told about them.
 - Test door `simulate_message` (the panel's real window procedure). Test
   `gw22_framed_panel_is_a_floating_window`, with a plain panel beside it
-  keeping its old behaviour (topmost, never activated, no characters).
+  keeping its old behavior (topmost, never activated, no characters).
   53 pass.
 - Open: a framed panel shows the arrow cursor only (no per-panel cursor
   kind yet).
@@ -138,7 +138,7 @@ All notable changes to simple_shell.
 ## 1.22.1 - 2026-10-25
 
 ### Fixed (the design scan since 7443e02)
-Each with a test that failed with the old behaviour:
+Each with a test that failed with the old behavior:
 - **A client's focus request reaches the queue on the pump thread.** UI
   Automation calls SetFocus on its own thread, and the provider pushed
   event 58 straight onto the unsynchronized queue. It now posts a private
@@ -439,7 +439,7 @@ Each with a test that failed with the old behaviour:
   sees 96 and draws everything a third too small on a 4K screen.
 - **`SHELL_FILE_DIALOG`: the Windows Open dialog.** `choose_file (title,
   filter, initial_dir)` (filter pairs separated by '|') and `chosen_path`,
-  empty when cancelled. Modal, owned by the main window, and marked blocking so
+  empty when canceled. Modal, owned by the main window, and marked blocking so
   SCOOP processors keep running while it waits for the user.
 - **`SHELL_MONITORS`: the displays.** Bounds, work area, primary flag and device
   name per monitor (`EnumDisplayMonitors`), plus `index_at` and `primary_index`.
@@ -563,7 +563,7 @@ Each with a test that failed with the old behaviour:
 ### Tested by inspection only, said plainly
 - **That Windows delivers Alt+F to the window procedure as `WM_SYSKEYDOWN`
   at all.** That is the operating system's documented contract, not this
-  library's behaviour, and reaching it needs a visible window with the focus
+  library's behavior, and reaching it needs a visible window with the focus
   and a synthetic keystroke on a live desktop. Everything on this side of
   that line - which keys the procedure claims, which it refuses, which
   `WM_SYSCHAR` it eats, and that a claimed key comes back out of the pump's
@@ -733,7 +733,7 @@ final proof builds were clean compiles.
   simple_shell's own suite) never saw it, which is why 1.9.0 shipped green.
 
   Fix: the locals are `l_big` and `l_small`. No C ABI, no Eiffel external
-  signature and no behaviour changed. A full sweep of the header against the
+  signature and no behavior changed. A full sweep of the header against the
   Windows SDK's macro and typedef namespaces (250,501 `#define`s, 16,004
   typedefs, 10.0.26100.0) found `small` to be the ONLY declared identifier
   in collision - `hyper`, `byte`, `boolean`, `far`, `near`, `pascal`,
@@ -844,7 +844,7 @@ final proof builds were clean compiles.
 ### Added
 - SHELL_SPELLER teaching: ignore (session-scoped) and
   add_to_dictionary (persists to the user WINDOWS dictionary, the
-  same one Edge and Office honour). Ignore assaulted live on a
+  same one Edge and Office honor). Ignore assaulted live on a
   nonsense word; Add deliberately untested (it writes the real
   dictionary). 12/12.
 
@@ -865,7 +865,7 @@ final proof builds were clean compiles.
 ## 1.3.0 — 2026-08-23
 
 ### Added
-- SHELL_OUTLINES: up to four click-through coloured rectangle FRAMES
+- SHELL_OUTLINES: up to four click-through colored rectangle FRAMES
   on the desktop (topmost, toolwindow, never activated, input-
   transparent; the visible shape is a frame REGION, so the middle is
   not part of the window). Born for simple_ocr_capture's region

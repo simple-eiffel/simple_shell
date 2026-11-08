@@ -206,7 +206,7 @@ feature -- Window services
 			create d
 			t0 := d.now_ms
 			d.pump_for (60)
-			assert ("the deadline is honoured", d.now_ms - t0 >= 55.0)
+			assert ("the deadline is honored", d.now_ms - t0 >= 55.0)
 			assert ("and not wildly overshot", d.now_ms - t0 < 1000.0)
 		end
 
@@ -745,7 +745,7 @@ feature -- Dwell timer (1.19.0, GW-08)
 	test_dwell_fires_once_after_rest
 			-- Armed on every "move", the shot keeps being replaced and
 			-- nothing fires; once the arming stops, ONE event 55 comes out
-			-- and the timer is spent. A cancelled shot never fires.
+			-- and the timer is spent. A canceled shot never fires.
 		local
 			d: SHELL_DESKTOP
 			w: SHELL_TEST_WINDOW
@@ -772,9 +772,9 @@ feature -- Dwell timer (1.19.0, GW-08)
 			assert_false ("a spent shot never fires again", w.drain_event (w.Event_dwell, 0))
 			w.arm_dwell_timer (30)
 			w.cancel_dwell_timer
-			assert_false ("cancelled", w.is_dwell_timer_armed)
+			assert_false ("canceled", w.is_dwell_timer_armed)
 			d.pump_for (100)
-			assert_false ("a cancelled shot never fires", w.drain_event (w.Event_dwell, 0))
+			assert_false ("a canceled shot never fires", w.drain_event (w.Event_dwell, 0))
 		end
 
 feature -- Appearance (1.16.0, GW-27)
@@ -1493,7 +1493,7 @@ feature -- Framed panels (GW-22, 1.23.0)
 			p.simulate_message (0x0010, 0, 0).do_nothing
 			assert_true ("Alt+F4 asks (62)", w.drain_event (p.Event_close_request, 0) and w.last_extra = p.slot)
 			assert_true ("and the window stays", p.is_open and p.client_width > 0)
-				-- before/after: a plain panel keeps its old behaviour
+				-- before/after: a plain panel keeps its old behavior
 			q.open (-3000, -3000, 200, 100)
 			assert_true ("the plain panel is topmost", q.is_topmost and not q.is_framed)
 			assert_integers_equal ("a plain panel never takes the focus (MA_NOACTIVATE)", 3, q.simulate_message (0x0021, 0, 0))

@@ -107,7 +107,7 @@ feature -- Teaching
 	add_to_dictionary (a_word: READABLE_STRING_GENERAL): BOOLEAN
 			-- Teach `a_word' PERMANENTLY: it lands in the user's
 			-- Windows dictionary, the same one Edge and Office
-			-- honour. False when the checker is absent.
+			-- honor. False when the checker is absent.
 		require
 			something: not a_word.is_empty
 		local

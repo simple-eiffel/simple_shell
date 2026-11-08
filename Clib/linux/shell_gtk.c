@@ -746,3 +746,279 @@ int shell_clip_get_image(void *bits, int w, int h, int stride)
 	}
 	return 1;
 }
+
+/* ------------------------------------------------------------------ panels */
+
+/* A panel is a window of its own (simple_widgets' floating windows, a document window). Its
+   events use Windows' panel numbers with the slot in `c': 41 press, 64 double, 42 release,
+   43 move, 65 leave, 45 wheel (the delta alone), 46 right press, 44 expose, 48 resized,
+   60 key, 61 character, 62 close request (always: the program decides), 63 activated.
+   Wayland neither places windows nor tells where they are, so a panel's place is its size
+   alone, and moves (47, 49) are not reported. */
+#define SHELL_PANELS 8
+typedef struct {
+	GtkWidget *window, *area;
+	cairo_surface_t *backing;
+	int fill, framed, document, alpha, accepts, primary_down, click_through;
+	double px, py;
+} ShellPanel;
+static ShellPanel s_panel[SHELL_PANELS];
+
+static int shell_panel_ok(int l_slot) { return l_slot >= 0 && l_slot < SHELL_PANELS && s_panel[l_slot].window ? 1 : 0; }
+static int shell_coalesce_slot(int t, int a, int b, int a_slot)
+{
+	int last = (s_qtail + SHELL_QCAP - 1) % SHELL_QCAP;
+	if (s_qtail == s_qhead || s_q[last][0] != t || s_q[last][3] != a_slot) return 0;
+	s_q[last][1] = a; s_q[last][2] = b;
+	return 1;
+}
+static int shell_panel_scale(int l_slot) { return shell_panel_ok(l_slot) ? gtk_widget_get_scale_factor(s_panel[l_slot].window) : shell_scale(); }
+static int shell_panel_px(int l_slot, double a_logical) { return (int)floor(a_logical * shell_panel_scale(l_slot)); }
+
+static void shell_panel_rebuild(int l_slot)
+{
+	ShellPanel *p = &s_panel[l_slot];
+	int k = shell_panel_scale(l_slot);
+	int w = gtk_widget_get_width(p->area) * k, h = gtk_widget_get_height(p->area) * k;
+	cairo_surface_t *l_new;
+	if (w < 1 || h < 1) return;
+	if (p->backing && cairo_image_surface_get_width(p->backing) == w && cairo_image_surface_get_height(p->backing) == h) return;
+	l_new = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+	{
+		cairo_t *cr = cairo_create(l_new);
+		cairo_set_source_rgb(cr, ((p->fill >> 16) & 0xFF) / 255.0, ((p->fill >> 8) & 0xFF) / 255.0, (p->fill & 0xFF) / 255.0);
+		cairo_paint(cr);
+		if (p->backing) { cairo_set_source_surface(cr, p->backing, 0, 0); cairo_paint(cr); }
+		cairo_destroy(cr);
+	}
+	if (p->backing) cairo_surface_destroy(p->backing);
+	p->backing = l_new;
+	if (!shell_coalesce_slot(48, w, h, l_slot)) shell_push(48, w, h, l_slot);
+	shell_push(44, 0, 0, l_slot);
+}
+static int shell_slot_of(gpointer d) { return GPOINTER_TO_INT(d) - 1; }
+static void shell_panel_on_resize(GtkDrawingArea *a, int w, int h, gpointer d) { (void)a; (void)w; (void)h; shell_panel_rebuild(shell_slot_of(d)); }
+static void shell_panel_draw(GtkDrawingArea *a, cairo_t *cr, int w, int h, gpointer d)
+{
+	int l_slot = shell_slot_of(d), k;
+	ShellPanel *p;
+	(void)a;
+	if (!shell_panel_ok(l_slot)) return;
+	p = &s_panel[l_slot];
+	k = shell_panel_scale(l_slot);
+	cairo_set_source_rgb(cr, ((p->fill >> 16) & 0xFF) / 255.0, ((p->fill >> 8) & 0xFF) / 255.0, (p->fill & 0xFF) / 255.0);
+	cairo_rectangle(cr, 0, 0, w, h);
+	cairo_fill(cr);
+	if (!p->backing) return;
+	cairo_surface_flush(p->backing);
+	cairo_save(cr);
+	cairo_scale(cr, 1.0 / k, 1.0 / k);
+	cairo_set_source_surface(cr, p->backing, 0, 0);
+	cairo_paint(cr);
+	cairo_restore(cr);
+}
+static void shell_panel_on_press(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	int l_slot = shell_slot_of(d);
+	guint b = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g));
+	if (!shell_panel_ok(l_slot)) return;
+	s_panel[l_slot].px = x; s_panel[l_slot].py = y;
+	gtk_widget_grab_focus(s_panel[l_slot].area);
+	if (b == GDK_BUTTON_PRIMARY) {
+		s_panel[l_slot].primary_down = 1;
+		shell_push(n == 2 ? 64 : 41, shell_panel_px(l_slot, x), shell_panel_px(l_slot, y), l_slot);
+	} else if (b == GDK_BUTTON_SECONDARY) shell_push(46, shell_panel_px(l_slot, x), shell_panel_px(l_slot, y), l_slot);
+}
+static void shell_panel_on_release(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	int l_slot = shell_slot_of(d);
+	guint b = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g));
+	(void)n;
+	if (!shell_panel_ok(l_slot) || b != GDK_BUTTON_PRIMARY) return;
+	s_panel[l_slot].primary_down = 0;
+	shell_push(42, shell_panel_px(l_slot, x), shell_panel_px(l_slot, y), l_slot);
+}
+static void shell_panel_on_motion(GtkEventControllerMotion *m, double x, double y, gpointer d)
+{
+	int l_slot = shell_slot_of(d), px, py;
+	(void)m;
+	if (!shell_panel_ok(l_slot)) return;
+	s_panel[l_slot].px = x; s_panel[l_slot].py = y;
+	px = shell_panel_px(l_slot, x); py = shell_panel_px(l_slot, y);
+	if (!shell_coalesce_slot(43, px, py, l_slot)) shell_push(43, px, py, l_slot);
+}
+static void shell_panel_on_leave(GtkEventControllerMotion *m, gpointer d) { (void)m; shell_push(65, 0, 0, shell_slot_of(d)); }
+static gboolean shell_panel_on_scroll(GtkEventControllerScroll *s, double dx, double dy, gpointer d)
+{
+	int l_delta = (int)(-dy * 120.0);
+	(void)s; (void)dx;
+	if (l_delta != 0) shell_push(45, l_delta, 0, shell_slot_of(d));
+	return TRUE;
+}
+static gboolean shell_panel_on_key(GtkEventControllerKey *k, guint a_keyval, guint a_code, GdkModifierType a_state, gpointer d)
+{
+	int l_slot = shell_slot_of(d);
+	int l_ctrl = (a_state & GDK_CONTROL_MASK) ? 1 : 0, l_alt = (a_state & GDK_ALT_MASK) ? 1 : 0;
+	int vk = shell_vk(a_keyval);
+	guint32 u;
+	(void)k; (void)a_code;
+	if (vk && (shell_keydown_is_ours(vk, l_ctrl, l_alt) || (l_alt && (vk == 0x25 || vk == 0x27)))) shell_push(60, vk, 0, l_slot);
+	switch (vk) {
+		case 0x08: case 0x0D: case 0x09: case 0x1B: shell_push(61, vk, 0, l_slot); break;
+		default:
+			if (l_ctrl) {
+				if (vk >= 'A' && vk <= 'Z') shell_push(61, vk - 'A' + 1, 0, l_slot);
+			} else if ((u = gdk_keyval_to_unicode(a_keyval)) != 0) {
+				if (u >= 0x10000) {
+					guint32 v = u - 0x10000;
+					shell_push(61, (int)(0xD800 + (v >> 10)), 0, l_slot);
+					shell_push(61, (int)(0xDC00 + (v & 0x3FF)), 0, l_slot);
+				} else shell_push(61, (int)u, 0, l_slot);
+			}
+	}
+	return TRUE;
+}
+static gboolean shell_panel_on_close(GtkWindow *w, gpointer d) { (void)w; shell_push(62, 0, 0, shell_slot_of(d)); return TRUE; }
+static void shell_panel_on_active(GObject *o, GParamSpec *ps, gpointer d)
+{
+	(void)ps;
+	shell_push(63, gtk_window_is_active(GTK_WINDOW(o)) ? 1 : 0, 0, shell_slot_of(d));
+}
+
+static int shell_panel_make(int l_w, int l_h, const void *l_title, int l_framed, int l_document)
+{
+	int l_slot = -1, i, k;
+	ShellPanel *p;
+	GtkGesture *g;
+	GtkEventController *m, *s, *key;
+	gpointer d;
+	shell_app();
+	for (i = 0; i < SHELL_PANELS && l_slot < 0; i++) if (!s_panel[i].window) l_slot = i;
+	if (l_slot < 0 || l_w <= 0 || l_h <= 0 || g_thread_self() != s_pump_thread) return -1;
+	p = &s_panel[l_slot];
+	memset(p, 0, sizeof *p);
+	p->fill = 0xFFFFFF; p->framed = l_framed; p->document = l_document; p->alpha = 255;
+	d = GINT_TO_POINTER(l_slot + 1);
+	k = shell_scale();
+	p->window = gtk_window_new();
+	gtk_window_set_title(GTK_WINDOW(p->window), l_title ? (const char *)l_title : "");
+	gtk_window_set_default_size(GTK_WINDOW(p->window), l_w / k, l_h / k);
+	gtk_window_set_decorated(GTK_WINDOW(p->window), l_framed ? TRUE : FALSE);
+	if (l_framed && !l_document && s_window) gtk_window_set_transient_for(GTK_WINDOW(p->window), GTK_WINDOW(s_window));
+	p->area = gtk_drawing_area_new();
+	gtk_widget_set_focusable(p->area, TRUE);
+	gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(p->area), shell_panel_draw, d, NULL);
+	g_signal_connect(p->area, "resize", G_CALLBACK(shell_panel_on_resize), d);
+	g = gtk_gesture_click_new();
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(g), 0);
+	g_signal_connect(g, "pressed", G_CALLBACK(shell_panel_on_press), d);
+	g_signal_connect(g, "released", G_CALLBACK(shell_panel_on_release), d);
+	gtk_widget_add_controller(p->area, GTK_EVENT_CONTROLLER(g));
+	m = gtk_event_controller_motion_new();
+	g_signal_connect(m, "motion", G_CALLBACK(shell_panel_on_motion), d);
+	g_signal_connect(m, "leave", G_CALLBACK(shell_panel_on_leave), d);
+	gtk_widget_add_controller(p->area, m);
+	s = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+	g_signal_connect(s, "scroll", G_CALLBACK(shell_panel_on_scroll), d);
+	gtk_widget_add_controller(p->area, s);
+	key = gtk_event_controller_key_new();
+	g_signal_connect(key, "key-pressed", G_CALLBACK(shell_panel_on_key), d);
+	gtk_widget_add_controller(p->window, key);
+	gtk_window_set_child(GTK_WINDOW(p->window), p->area);
+	g_signal_connect(p->window, "close-request", G_CALLBACK(shell_panel_on_close), d);
+	g_signal_connect(p->window, "notify::is-active", G_CALLBACK(shell_panel_on_active), d);
+	/* a backing image from the start, at the asked size, so the program can draw before the
+	   compositor has shown the window */
+	p->backing = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, l_w, l_h);
+	return l_slot;
+}
+
+int shell_panel_open_framed_as(int l_x, int l_y, int l_w, int l_h, const void *l_title, int l_document)
+{
+	(void)l_x; (void)l_y;
+	return shell_panel_make(l_w, l_h, l_title, 1, l_document ? 1 : 0);
+}
+int shell_panel_open_framed(int l_x, int l_y, int l_w, int l_h, const void *l_title) { return shell_panel_open_framed_as(l_x, l_y, l_w, l_h, l_title, 0); }
+int shell_panel_open(int l_x, int l_y, int l_w, int l_h) { (void)l_x; (void)l_y; return shell_panel_make(l_w, l_h, NULL, 0, 0); }
+void shell_panel_place(int l_slot, int l_x, int l_y, int l_w, int l_h)
+{
+	int k;
+	(void)l_x; (void)l_y;
+	if (!shell_panel_ok(l_slot) || l_w <= 0 || l_h <= 0) return;
+	k = shell_panel_scale(l_slot);
+	gtk_window_set_default_size(GTK_WINDOW(s_panel[l_slot].window), l_w / k, l_h / k);
+}
+void shell_panel_show(int l_slot, int l_x, int l_y, int l_w, int l_h)
+{
+	if (!shell_panel_ok(l_slot)) return;
+	shell_panel_place(l_slot, l_x, l_y, l_w, l_h);
+	gtk_widget_set_visible(s_panel[l_slot].window, TRUE);   /* shown, not presented (SWP_NOACTIVATE) */
+}
+void shell_panel_hide(int l_slot) { if (shell_panel_ok(l_slot)) gtk_widget_set_visible(s_panel[l_slot].window, FALSE); }
+int shell_panel_is_visible(int l_slot) { return shell_panel_ok(l_slot) && gtk_widget_get_visible(s_panel[l_slot].window) ? 1 : 0; }
+void shell_panel_close(int l_slot)
+{
+	ShellPanel *p;
+	GtkWidget *w;
+	if (!shell_panel_ok(l_slot)) return;
+	p = &s_panel[l_slot];
+	w = p->window;
+	p->window = NULL; p->area = NULL;
+	if (p->backing) { cairo_surface_destroy(p->backing); p->backing = NULL; }
+	g_signal_handlers_disconnect_matched(w, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, GINT_TO_POINTER(l_slot + 1));
+	gtk_window_destroy(GTK_WINDOW(w));
+}
+void shell_panel_set_title(int l_slot, const void *l_title) { if (shell_panel_ok(l_slot)) gtk_window_set_title(GTK_WINDOW(s_panel[l_slot].window), l_title ? (const char *)l_title : ""); }
+void shell_panel_invalidate(int l_slot) { if (shell_panel_ok(l_slot)) gtk_widget_queue_draw(s_panel[l_slot].area); }
+void *shell_panel_dc(int l_slot) { return shell_panel_ok(l_slot) ? (void *)s_panel[l_slot].backing : NULL; }
+void shell_panel_release_dc(int l_slot, void *l_dc) { if (l_dc && shell_panel_ok(l_slot)) gtk_widget_queue_draw(s_panel[l_slot].area); }
+void shell_panel_client_size(int l_slot, int *l_w, int *l_h)
+{
+	if (!shell_panel_ok(l_slot) || !s_panel[l_slot].backing) return;
+	*l_w = cairo_image_surface_get_width(s_panel[l_slot].backing);
+	*l_h = cairo_image_surface_get_height(s_panel[l_slot].backing);
+}
+/* Wayland tells no window's place: the rectangle is the size at the origin. */
+void shell_panel_rect(int l_slot, int *l_x, int *l_y, int *l_w, int *l_h)
+{
+	if (!shell_panel_ok(l_slot) || !s_panel[l_slot].backing) return;
+	*l_x = 0; *l_y = 0;
+	*l_w = cairo_image_surface_get_width(s_panel[l_slot].backing);
+	*l_h = cairo_image_surface_get_height(s_panel[l_slot].backing);
+}
+/* The panel's ground, and its image painted over with it (the Windows body fills the DC). */
+void shell_panel_fill(int l_slot, int l_rgb)
+{
+	ShellPanel *p;
+	if (!shell_panel_ok(l_slot)) return;
+	p = &s_panel[l_slot];
+	p->fill = l_rgb & 0xFFFFFF;
+	if (p->backing) {
+		cairo_t *cr = cairo_create(p->backing);
+		cairo_set_source_rgb(cr, ((l_rgb >> 16) & 0xFF) / 255.0, ((l_rgb >> 8) & 0xFF) / 255.0, (l_rgb & 0xFF) / 255.0);
+		cairo_paint(cr);
+		cairo_destroy(cr);
+	}
+	gtk_widget_queue_draw(p->area);
+}
+int shell_panel_is_tool_window(int l_slot) { return shell_panel_ok(l_slot) && !s_panel[l_slot].document ? 1 : 0; }
+int shell_panel_has_owner(int l_slot) { return shell_panel_ok(l_slot) && s_panel[l_slot].framed && !s_panel[l_slot].document ? 1 : 0; }
+int shell_panel_can_minimize(int l_slot) { return shell_panel_ok(l_slot) && s_panel[l_slot].document ? 1 : 0; }
+int shell_panel_is_topmost(int l_slot) { return shell_panel_ok(l_slot) && !s_panel[l_slot].framed ? 1 : 0; }
+void shell_panel_set_opacity(int l_slot, int l_alpha)
+{
+	if (!shell_panel_ok(l_slot) || l_alpha < 0 || l_alpha > 255) return;
+	gtk_widget_set_opacity(s_panel[l_slot].window, l_alpha / 255.0);
+	s_panel[l_slot].alpha = l_alpha;
+}
+int shell_panel_opacity(int l_slot) { return shell_panel_ok(l_slot) ? s_panel[l_slot].alpha : 0; }
+void shell_panel_set_click_through(int l_slot, int l_on)
+{
+	if (!shell_panel_ok(l_slot)) return;
+	gtk_widget_set_can_target(s_panel[l_slot].area, l_on ? FALSE : TRUE);
+	s_panel[l_slot].click_through = l_on ? 1 : 0;
+}
+int shell_panel_is_click_through(int l_slot) { return shell_panel_ok(l_slot) && s_panel[l_slot].click_through ? 1 : 0; }
+void shell_panel_set_accepts_files(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel[l_slot].accepts = l_on ? 1 : 0; }
+int shell_panel_accepts_files(int l_slot) { return shell_panel_ok(l_slot) && s_panel[l_slot].accepts ? 1 : 0; }
+HWND shell_panel_hwnd(int l_slot) { return shell_panel_ok(l_slot) ? (HWND)s_panel[l_slot].window : NULL; }

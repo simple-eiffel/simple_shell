@@ -1997,9 +1997,22 @@ static int shell_drop_paths (wchar_t *buf, int cap) {
     return n;
 }
 
+/* The window the clipboard is opened for: the shell's own when it is up, else a hidden
+   message-only window made once. OpenClipboard(NULL) cannot write: EmptyClipboard then leaves
+   the clipboard without an owner, and SetClipboardData fails, so a program with no window
+   (a tool, a test) could read the clipboard but never put text on it. */
+static HWND shell_clip_owner (void) {
+    static HWND s_clip_hwnd = NULL;
+    /* the shell's window, while it is still a window (a closed one leaves its old handle) */
+    if (s_shell_hwnd && IsWindow(s_shell_hwnd)) return s_shell_hwnd;
+    if (!s_clip_hwnd)
+        s_clip_hwnd = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, GetModuleHandleW(NULL), NULL);
+    return s_clip_hwnd;
+}
+
 static int shell_clip_set (const wchar_t *s) {
     size_t n; HGLOBAL h; wchar_t *dst;
-    if (!OpenClipboard(s_shell_hwnd)) return 0;
+    if (!OpenClipboard(shell_clip_owner())) return 0;
     EmptyClipboard();
     n = wcslen(s);
     h = GlobalAlloc(GMEM_MOVEABLE, (n + 1) * sizeof(wchar_t));
@@ -2015,7 +2028,7 @@ static int shell_clip_set (const wchar_t *s) {
 
 static int shell_clip_get (wchar_t *buf, int cap) {
     HANDLE h; wchar_t *src; int n = 0;
-    if (!OpenClipboard(s_shell_hwnd)) return 0;
+    if (!OpenClipboard(shell_clip_owner())) return 0;
     h = GetClipboardData(CF_UNICODETEXT);
     if (h) {
         src = (wchar_t*)GlobalLock(h);
@@ -2158,7 +2171,7 @@ static int shell_clip_set_image (const void *bits, int w, int h, int stride) {
     HGLOBAL hg; BITMAPINFOHEADER *hdr; unsigned char *dst; int row, col; size_t bytes;
     if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
     bytes = sizeof(BITMAPINFOHEADER) + (size_t)w * 4 * (size_t)h;
-    if (!OpenClipboard(s_shell_hwnd)) return 0;
+    if (!OpenClipboard(shell_clip_owner())) return 0;
     EmptyClipboard();
     hg = GlobalAlloc(GMEM_MOVEABLE, bytes);
     if (hg) {
@@ -2195,7 +2208,7 @@ static int shell_clip_has_image (void) {
 static int shell_clip_image_size (int *w, int *h) {
     HANDLE hg; BITMAPINFOHEADER *hdr; int ok = 0;
     *w = 0; *h = 0;
-    if (!OpenClipboard(s_shell_hwnd)) return 0;
+    if (!OpenClipboard(shell_clip_owner())) return 0;
     hg = GetClipboardData(CF_DIB);
     if (hg) {
         hdr = (BITMAPINFOHEADER*)GlobalLock(hg);
@@ -2220,7 +2233,7 @@ static int shell_clip_get_image (void *bits, int w, int h, int stride) {
     HANDLE hg; BITMAPINFOHEADER *hdr; const unsigned char *px; int row, col, ok = 0;
     int src_w, src_h, bottom_up, bpp; size_t src_stride, offset;
     if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
-    if (!OpenClipboard(s_shell_hwnd)) return 0;
+    if (!OpenClipboard(shell_clip_owner())) return 0;
     hg = GetClipboardData(CF_DIB);
     if (hg) {
         hdr = (BITMAPINFOHEADER*)GlobalLock(hg);

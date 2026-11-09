@@ -371,6 +371,10 @@ void *shell_create_window(const void *title, int px, int py, int cw, int ch)
 	(void)px; (void)py;   /* GTK 4 does not place windows: the compositor does */
 	s_quit = 0;
 	l_scale = shell_scale();
+	/* A new window starts blank. The backing outlives a closed window (a resize keeps the old
+	   picture until the program draws), so without this a new window of the same size began
+	   with the last window's picture (seen as stray pixels in simple_widgets' tests). */
+	if (s_backing) { cairo_surface_destroy(s_backing); s_backing = NULL; }
 	s_window = gtk_window_new();
 	gtk_window_set_title(GTK_WINDOW(s_window), title ? (const char *)title : "");
 	gtk_window_set_default_size(GTK_WINDOW(s_window), cw / l_scale, ch / l_scale);

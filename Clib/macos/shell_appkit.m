@@ -134,6 +134,38 @@ static int shell_keep_drops(NSString *a_paths)
 	return n == 0 ? 0 : (int)[[a_paths componentsSeparatedByString:@"\n"] count];
 }
 
+/* 1.40.0, as the Windows half's OLE drop target: a panel (or the main window, slot -1) that
+   takes text gets text other programs drag in as event 67 (x, y, slot), 68 (x, y) on the
+   main window, the text waiting for `shell_dropped_text'. A drag carrying files is taken as
+   files only, when the window takes files (50 on a panel, 18 on the main window, which
+   always takes them). `shell_drag_out' drags data out and answers how it ended. */
+static int s_panel_text[8], s_main_text = 0;
+static unichar s_drop_text[32768];
+static int s_drop_text_len = 0;
+static int s_dragging_out = 0, s_drag_landed_inside = 0;
+static int shell_takes_text(int a_slot) { return a_slot < 0 ? s_main_text : (a_slot < 8 ? s_panel_text[a_slot] : 0); }
+static int shell_takes_files(int a_slot);
+/* What a drag offers window `a_slot': 1 files, 2 text, 0 nothing it takes. */
+static int shell_drag_kind(int a_slot, BOOL a_files, BOOL a_text)
+{
+	if (a_files) return shell_takes_files(a_slot) ? 1 : 0;
+	return a_text && shell_takes_text(a_slot) ? 2 : 0;
+}
+static void shell_deliver_drag(int a_slot, int x, int y, int a_kind, NSString *a_paths, NSString *a_text)
+{
+	if (a_kind == 1) {
+		int n = shell_keep_drops(a_paths);
+		if (a_slot < 0) shell_push(18, x, y, n); else shell_push(50, x, y, a_slot);
+	} else if (a_kind == 2) {
+		NSUInteger n = MIN([a_text length], (NSUInteger)32767);
+		[a_text getCharacters:s_drop_text range:NSMakeRange(0, n)];
+		s_drop_text_len = (int)n;
+		if (a_slot < 0) shell_push(68, x, y, 0); else shell_push(67, x, y, a_slot);
+	}
+	if (a_kind && s_dragging_out) s_drag_landed_inside = 1;
+	shell_nudge();
+}
+
 /* ------------------------------------------------------------------ keys */
 
 /* Windows virtual-key codes, from a Mac key event. Letters and digits by the character the
@@ -474,23 +506,26 @@ static void shell_emit(SSView *v, int t, int a, int b, int c, int a_mode)
 
 /* Files dropped from Finder: the main window always takes them (event 18: x, y, count), a
    panel when it accepts files (event 50: x, y, slot). */
-- (BOOL)takesDrops { return slot < 0 || (slot < SHELL_PANELS && s_panel_accepts[slot]); }
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)a_info { (void)a_info; return [self takesDrops] ? NSDragOperationCopy : NSDragOperationNone; }
-- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)a_info { (void)a_info; return [self takesDrops] ? NSDragOperationCopy : NSDragOperationNone; }
+- (NSArray<NSURL *> *)dragFiles:(id<NSDraggingInfo>)a_info
+{
+	return [[a_info draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}] ?: @[];
+}
+- (int)dragKind:(id<NSDraggingInfo>)a_info
+{
+	return shell_drag_kind(slot, [[self dragFiles:a_info] count] > 0, [[a_info draggingPasteboard] stringForType:NSPasteboardTypeString] != nil);
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)a_info { return [self dragKind:a_info] ? NSDragOperationCopy : NSDragOperationNone; }
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)a_info { return [self dragKind:a_info] ? NSDragOperationCopy : NSDragOperationNone; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)a_info
 {
-	if (![self takesDrops]) return NO;
-	NSArray<NSURL *> *l_urls = [[a_info draggingPasteboard] readObjectsForClasses:@[[NSURL class]]
-		options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
-	if ([l_urls count] == 0) return NO;
+	int l_kind = [self dragKind:a_info];
+	if (!l_kind) return NO;
 	NSMutableArray<NSString *> *l_paths = [NSMutableArray array];
-	for (NSURL *u in l_urls) [l_paths addObject:[u path]];
-	int n = shell_keep_drops([l_paths componentsJoinedByString:@"\n"]);
+	for (NSURL *u in [self dragFiles:a_info]) [l_paths addObject:[u path]];
 	NSPoint p = [self convertPoint:[a_info draggingLocation] fromView:nil];
 	double l_scale = [self scale];
-	int x = (int)floor(p.x * l_scale), y = (int)floor(p.y * l_scale);
-	if (slot < 0) shell_push(18, x, y, n); else shell_push(50, x, y, slot);
-	shell_nudge();
+	shell_deliver_drag(slot, (int)floor(p.x * l_scale), (int)floor(p.y * l_scale), l_kind,
+		[l_paths componentsJoinedByString:@"\n"], [[a_info draggingPasteboard] stringForType:NSPasteboardTypeString] ?: @"");
 	return YES;
 }
 @end
@@ -607,7 +642,18 @@ static int shell_panel_slot_of(NSWindow *w)
 }
 - (void)windowWillClose:(NSNotification *)n
 {
-	if ([n object] != s_window) return;   /* a panel: shell_panel_close keeps the books */
+	if ([n object] != s_window) {
+		/* A panel. shell_panel_close keeps the books itself (and clears the delegate first), so
+		   a panel's window reaching here went away behind its back: free its slot, as the
+		   Windows half does on WM_DESTROY (scan 19). */
+		for (int i = 0; i < SHELL_PANELS; i++) if (s_panel[i] == [n object]) {
+			s_panel[i] = nil;
+			s_panel_accepts[i] = 0;
+			s_panel_text[i] = 0;
+			[s_panel_settle[i] invalidate]; s_panel_settle[i] = nil;
+		}
+		return;
+	}
 	[s_heartbeat invalidate]; s_heartbeat = nil;
 	[s_fast invalidate]; s_fast = nil;
 	s_close_requests = 0;
@@ -704,7 +750,7 @@ void *shell_create_window(const void *title, int px, int py, int cw, int ch)
 	s_window = w;
 	s_view = [[SSView alloc] initWithFrame:l_content slot:-1];
 	[w setContentView:s_view];
-	[s_view registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+	[s_view registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSPasteboardTypeString]];
 	[w makeFirstResponder:s_view];
 	[s_view rebuildBacking];
 	if (!s_start_hidden) [w makeKeyAndOrderFront:nil];
@@ -758,7 +804,7 @@ static int shell_panel_adopt(NSWindow *w, int l_slot, int l_framed, int l_docume
 	s_panel_accepts[l_slot] = 0;
 	SSView *v = [[SSView alloc] initWithFrame:[[w contentView] frame] slot:l_slot];
 	[w setContentView:v];
-	[v registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+	[v registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSPasteboardTypeString]];
 	[w makeFirstResponder:v];
 	[v rebuildBacking];
 	return l_slot;
@@ -819,6 +865,7 @@ void shell_panel_close(int l_slot)
 	NSWindow *w = s_panel[l_slot];
 	s_panel[l_slot] = nil;
 	s_panel_accepts[l_slot] = 0;
+	s_panel_text[l_slot] = 0;
 	[s_panel_settle[l_slot] invalidate]; s_panel_settle[l_slot] = nil;
 	[w setDelegate:nil];
 	[w close];
@@ -1019,12 +1066,15 @@ int shell_panel_send(int l_slot, int l_msg, int l_w, int l_l)
 {
 	if (!shell_panel_ok(l_slot)) return 0;
 	int x = (short)(l_l & 0xFFFF), y = (short)((l_l >> 16) & 0xFFFF);
+	/* WM_MOUSEACTIVATE: does a click activate it? MA_ACTIVATE (1) for a window that can become
+	   key (a framed panel), MA_NOACTIVATE (3) for one that cannot (a plain panel). */
+	if (l_msg == 0x0021) return [s_panel[l_slot] canBecomeKeyWindow] ? 1 : 3;
 	switch (l_msg) {
-		case 0x0100: if (shell_keydown_is_ours(l_w, shell_control_down(), shell_alt_down())) shell_push(60, l_w, 0, l_slot); break; /* WM_KEYDOWN */
-		case 0x0104: if (shell_syskey_is_ours(l_w)) shell_push(60, l_w, 0, l_slot); break;   /* WM_SYSKEYDOWN */
-		case 0x0102: shell_push(61, l_w, 0, l_slot); break;                                  /* WM_CHAR */
-		case 0x0010: shell_push(62, 0, 0, l_slot); break;                                    /* WM_CLOSE */
-		case 0x0006: shell_push(63, (l_w & 0xFFFF) ? 1 : 0, 0, l_slot); break;               /* WM_ACTIVATE */
+		case 0x0100: if (s_panel_framed[l_slot] && shell_keydown_is_ours(l_w, shell_control_down(), shell_alt_down())) shell_push(60, l_w, 0, l_slot); break; /* WM_KEYDOWN */
+		case 0x0104: if (s_panel_framed[l_slot] && shell_syskey_is_ours(l_w)) shell_push(60, l_w, 0, l_slot); break;   /* WM_SYSKEYDOWN */
+		case 0x0102: if (s_panel_framed[l_slot]) shell_push(61, l_w, 0, l_slot); break;      /* WM_CHAR: framed only */
+		case 0x0010: if (s_panel_framed[l_slot]) shell_push(62, 0, 0, l_slot); break;        /* WM_CLOSE */
+		case 0x0006: if (s_panel_framed[l_slot]) shell_push(63, (l_w & 0xFFFF) ? 1 : 0, 0, l_slot); break;   /* WM_ACTIVATE */
 		case 0x0203: shell_push(64, x, y, l_slot); break;                                    /* WM_LBUTTONDBLCLK */
 		case 0x02A3: shell_push(65, 0, 0, l_slot); break;                                    /* WM_MOUSELEAVE */
 		case 0x0201: shell_push(41, x, y, l_slot); break;                                    /* WM_LBUTTONDOWN */
@@ -1043,12 +1093,13 @@ int shell_panel_send(int l_slot, int l_msg, int l_w, int l_l)
    Windows' WM_MOVING alone does. */
 void shell_panel_try_move(int l_slot, int l_dx, int l_dy, int *l_x, int *l_y)
 {
-	(void)l_x; (void)l_y;
 	RECT r;
 	if (!shell_panel_ok(l_slot) || !GetWindowRect((__bridge HWND)s_panel[l_slot], &r)) return;
 	if (s_panel_axis[l_slot] == 1) l_dy = 0;
 	if (s_panel_axis[l_slot] == 2) l_dx = 0;
 	int l_left = r.left + l_dx, l_top = r.top + l_dy;
+	if (l_x) *l_x = l_left;
+	if (l_y) *l_y = l_top;
 	if (!shell_coalesce_slot(49, l_left, l_top, l_slot)) shell_push(49, l_left, l_top, l_slot);
 	shell_nudge();
 }
@@ -1058,8 +1109,7 @@ void shell_panel_try_move(int l_slot, int l_dx, int l_dy, int *l_x, int *l_y)
 void shell_panel_destroy_behind(int l_slot)
 {
 	if (!shell_panel_ok(l_slot)) return;
-	[s_panel[l_slot] setDelegate:nil];
-	[s_panel[l_slot] close];
+	[s_panel[l_slot] close];   /* the delegate frees the slot, as for any window gone elsewhere */
 }
 void shell_set_cursor_kind(int k) { s_cursor = k; [s_view applyCursor]; }
 
@@ -1323,6 +1373,87 @@ void shell_panel_try_drop(int l_slot, int l_x, int l_y, const void *l_paths)
 	shell_keep_drops(shell_text(l_paths));
 	shell_push(50, l_x, l_y, l_slot);
 	shell_nudge();
+}
+
+static int shell_takes_files(int a_slot) { return a_slot < 0 ? (s_view != nil) : (a_slot < SHELL_PANELS && s_panel[a_slot] && s_panel_accepts[a_slot]); }
+static int shell_window_there(int a_slot) { return a_slot < 0 ? (s_view != nil) : (a_slot < SHELL_PANELS && s_panel[a_slot] != nil); }
+
+void shell_panel_set_accepts_text(int l_slot, int l_on)
+{
+	if (!shell_window_there(l_slot)) return;
+	if (l_slot < 0) s_main_text = l_on ? 1 : 0; else s_panel_text[l_slot] = l_on ? 1 : 0;
+}
+int shell_panel_accepts_text(int l_slot) { return shell_window_there(l_slot) && shell_takes_text(l_slot) ? 1 : 0; }
+
+/* The text dropped last, UTF-16 into `l_buf' (`l_cap' units); taking it empties the store. */
+int shell_dropped_text(void *l_buf, int l_cap)
+{
+	int n = s_drop_text_len;
+	if (l_cap < 1) return 0;
+	if (n >= l_cap) n = l_cap - 1;
+	memcpy(l_buf, s_drop_text, (size_t)n * sizeof(unichar));
+	((unichar *)l_buf)[n] = 0;
+	s_drop_text_len = 0;
+	return n;
+}
+
+/* Test door: what a drag of `l_text' and `l_paths' (UTF-8, paths one per line) from another
+   program would do dropped at client (x, y). A window that does not take text gets only the
+   files, when it takes files, as on Windows (WM_DROPFILES without an OLE target). */
+void shell_panel_try_drag_in(int l_slot, int l_x, int l_y, const void *l_text, const void *l_paths)
+{
+	NSString *l_t = shell_text(l_text), *l_p = shell_text(l_paths);
+	if (!shell_window_there(l_slot)) return;
+	shell_deliver_drag(l_slot, l_x, l_y, shell_drag_kind(l_slot, [l_p length] > 0, [l_t length] > 0), l_p, l_t);
+}
+
+/* Drag `l_text' and/or `l_paths' (UTF-8, newline-separated) out, from the press under way, and
+   wait for the end, as Windows' DoDragDrop does: 1 another program took a copy, 0 refused or
+   cancelled, -1 it landed on one of our own windows (which pushed its own 50 or 67). */
+@interface SSDragOut : NSObject <NSDraggingSource> { @public int ended; NSDragOperation op; }
+@end
+@implementation SSDragOut
+- (NSDragOperation)draggingSession:(NSDraggingSession *)a_session sourceOperationMaskForDraggingContext:(NSDraggingContext)a_context
+{
+	(void)a_session; (void)a_context;
+	return NSDragOperationCopy;
+}
+- (void)draggingSession:(NSDraggingSession *)a_session endedAtPoint:(NSPoint)p operation:(NSDragOperation)an_op
+{
+	(void)a_session; (void)p;
+	op = an_op;
+	ended = 1;
+}
+@end
+
+int shell_drag_out(const void *l_text, const void *l_paths)
+{
+	NSEvent *e = [NSApp currentEvent];
+	NSView *v = [[e window] contentView];
+	NSString *l_t = shell_text(l_text);
+	NSMutableArray<NSDraggingItem *> *l_items = [NSMutableArray array];
+	if (s_dragging_out || !v) return 0;
+	NSEventType t = [e type];
+	if (t != NSEventTypeLeftMouseDown && t != NSEventTypeLeftMouseDragged) return 0;
+	if ([l_t length]) [l_items addObject:[[NSDraggingItem alloc] initWithPasteboardWriter:l_t]];
+	for (NSString *l_path in [shell_text(l_paths) componentsSeparatedByString:@"\n"])
+		if ([l_path length]) [l_items addObject:[[NSDraggingItem alloc] initWithPasteboardWriter:[NSURL fileURLWithPath:l_path]]];
+	if (![l_items count]) return 0;
+	NSPoint p = [v convertPoint:[e locationInWindow] fromView:nil];
+	NSImage *l_image = [NSImage imageWithSystemSymbolName:[l_t length] ? @"text.quote" : @"doc" accessibilityDescription:nil];
+	for (NSDraggingItem *i in l_items) [i setDraggingFrame:NSMakeRect(p.x - 12, p.y - 12, 24, 24) contents:l_image];
+	SSDragOut *l_source = [[SSDragOut alloc] init];
+	s_dragging_out = 1;
+	s_drag_landed_inside = 0;
+	[v beginDraggingSessionWithItems:l_items event:e source:l_source];
+	NSDate *l_give_up = [NSDate dateWithTimeIntervalSinceNow:300];
+	while (!l_source->ended && [l_give_up timeIntervalSinceNow] > 0) {
+		NSEvent *n = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate dateWithTimeIntervalSinceNow:0.05] inMode:NSDefaultRunLoopMode dequeue:YES];
+		if (n) [NSApp sendEvent:n];
+	}
+	s_dragging_out = 0;
+	if (!l_source->ended || l_source->op == NSDragOperationNone) return 0;
+	return s_drag_landed_inside ? -1 : 1;
 }
 
 /* The file types a Windows filter allows ("Text|*.txt;*.md|All|*.*": description, patterns,
@@ -1691,6 +1822,8 @@ static void shell_tray_push(SSTray *t, int a_button) { shell_push(52, a_button, 
 	shell_tray_push(self, l_right ? 2 : [e clickCount] >= 2 ? 3 : 1);
 }
 - (void)closeBalloon:(id)sender { (void)sender; [balloon close]; balloon = nil; }
+/* A click on the balloon: NIN_BALLOONUSERCLICK's event (52, button 4), and it closes. */
+- (void)balloonClicked:(id)sender { (void)sender; shell_tray_push(self, 4); [balloon close]; balloon = nil; }
 @end
 
 static SSTray *shell_tray_of(HWND h)
@@ -1737,6 +1870,7 @@ int shell_tray_balloon(HWND h, const void *title, const void *body)
 	[l_stack setOrientation:NSUserInterfaceLayoutOrientationVertical];
 	[l_stack setAlignment:NSLayoutAttributeLeading];
 	[l_stack setEdgeInsets:NSEdgeInsetsMake(10, 12, 10, 12)];
+	[l_stack addGestureRecognizer:[[NSClickGestureRecognizer alloc] initWithTarget:t action:@selector(balloonClicked:)]];
 	NSViewController *c = [[NSViewController alloc] init];
 	[c setView:l_stack];
 	t->balloon = [[NSPopover alloc] init];
@@ -1796,6 +1930,7 @@ void shell_tray_try_click(HWND h, int l_msg)
 		case 0x0202: shell_tray_push(t, 1); break;
 		case 0x0205: shell_tray_push(t, 2); break;
 		case 0x0203: shell_tray_push(t, 3); break;
+		case 0x0405: shell_tray_push(t, 4); break;   /* NIN_BALLOONUSERCLICK */
 	}
 }
 
@@ -1812,12 +1947,17 @@ static int shell_keycode_of_vk(int a_vk)
 	if (a_vk >= 'A' && a_vk <= 'Z') return l_letters[a_vk - 'A'];
 	if (a_vk >= '0' && a_vk <= '9') return l_digits[a_vk - '0'];
 	if (a_vk >= 0x70 && a_vk <= 0x7B) return l_f[a_vk - 0x70];
+	if (a_vk >= 0x7C && a_vk <= 0x83) { static const int k[8] = {105, 107, 113, 106, 64, 79, 80, 90}; return k[a_vk - 0x7C]; }   /* F13 - F20; the Mac has no F21 - F24 */
 	if (a_vk >= 0x60 && a_vk <= 0x69) { static const int k[10] = {82, 83, 84, 85, 86, 87, 88, 89, 91, 92}; return k[a_vk - 0x60]; }
 	switch (a_vk) {
 		case 0x25: return 123; case 0x27: return 124; case 0x28: return 125; case 0x26: return 126;
 		case 0x24: return 115; case 0x23: return 119; case 0x21: return 116; case 0x22: return 121;
 		case 0x2E: return 117; case 0x08: return 51; case 0x0D: return 36; case 0x09: return 48;
 		case 0x1B: return 53; case 0x20: return 49;
+		case 0x10: case 0xA0: return 56; case 0xA1: return 60;   /* Shift, left and right */
+		case 0x11: case 0xA2: return 59; case 0xA3: return 62;   /* Control */
+		case 0x12: case 0xA4: return 58; case 0xA5: return 61;   /* Alt: Option */
+		case 0x5B: return 55; case 0x5C: return 54;              /* Windows: Command */
 		case 0xBB: return 24; case 0xBD: return 27; case 0x6B: return 69; case 0x6D: return 78;
 		case 0xBA: return 41; case 0xBF: return 44; case 0xC0: return 50; case 0xDB: return 33;
 		case 0xDC: return 42; case 0xDD: return 30; case 0xDE: return 39; case 0xBC: return 43; case 0xBE: return 47;

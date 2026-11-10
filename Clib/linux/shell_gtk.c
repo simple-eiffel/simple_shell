@@ -2011,3 +2011,274 @@ int shell_grab_screen(int x, int y, int w, int h, void *bits, int stride)
    and the affinity says none. */
 void shell_panel_set_capture_excluded(int l_slot, int l_on) { (void)l_slot; (void)l_on; }
 int shell_panel_capture_affinity(int l_slot) { (void)l_slot; return 0; }
+
+/* ------------------------------------------------------------------ appearance: the palette
+
+   GTK 4 offers no system palette to read. The colors are Adwaita's for the light or dark style
+   in force (GNOME's own, and GTK's default), and the high-contrast palette when that theme is
+   on: what a GTK program's windows actually show. Indices are Windows' COLOR_* numbers. */
+unsigned int shell_system_color(int l_index)
+{
+	int l_dark = shell_system_prefers_dark(), l_hc = shell_high_contrast_on();
+	if (l_hc) {
+		switch (l_index) {
+			case 5: case 15: return l_dark ? 0x000000 : 0xFFFFFF;
+			case 13: case 26: return l_dark ? 0x78AEED : 0x1C71D8;
+			case 17: return l_dark ? 0xC0C0C0 : 0x404040;
+			default: return l_dark ? 0xFFFFFF : 0x000000;
+		}
+	}
+	switch (l_index) {
+		case 5: return l_dark ? 0x1E1E1E : 0xFFFFFF;                 /* COLOR_WINDOW: a view */
+		case 8: case 18: return l_dark ? 0xFFFFFF : 0x000000;        /* text */
+		case 13: return 0x3584E4;                                    /* COLOR_HIGHLIGHT: the accent */
+		case 14: return 0xFFFFFF;                                    /* COLOR_HIGHLIGHTTEXT */
+		case 15: return l_dark ? 0x303030 : 0xFAFAFA;                /* COLOR_BTNFACE: window and headers */
+		case 17: return l_dark ? 0x9A9A9A : 0x7E7E7E;                /* COLOR_GRAYTEXT */
+		case 26: return l_dark ? 0x78AEED : 0x1C71D8;                /* COLOR_HOTLIGHT: links */
+		case 1: case 2: case 3: case 4: case 10: case 11: case 12: case 16: case 20: case 21: case 22:
+			return l_dark ? 0x242424 : 0xFAFAFA;                     /* frames, faces, shadows */
+	}
+	return l_dark ? 0xFFFFFF : 0x000000;
+}
+void shell_system_colors_changed(void) { shell_push(56, shell_high_contrast_on(), 0, 0); }
+
+/* ------------------------------------------------------------------ icons
+
+   GTK 4 names icons: the image's folder joins the icon theme's search path and its name (the
+   file name less its extension) becomes every window's icon. */
+static char *s_icon_name = NULL;
+void shell_set_window_icon(const void *path)
+{
+	char *l_dir, *l_base, *l_dot;
+	GtkIconTheme *l_theme;
+	if (!path || !*(const char *)path) return;
+	shell_app();
+	l_theme = gtk_icon_theme_get_for_display(gdk_display_get_default());
+	l_dir = g_path_get_dirname((const char *)path);
+	l_base = g_path_get_basename((const char *)path);
+	l_dot = strrchr(l_base, '.');
+	if (l_dot) *l_dot = 0;
+	gtk_icon_theme_add_search_path(l_theme, l_dir);
+	gtk_window_set_default_icon_name(l_base);
+	g_free(s_icon_name);
+	s_icon_name = l_base;
+	g_free(l_dir);
+}
+/* The application's icon, as a handle to compare (Void until one is set). */
+void *shell_main_icon(void) { return s_icon_name; }
+/* A document window shows the application's icon on its taskbar button, as on Windows. */
+void *shell_panel_icon(int l_slot) { return shell_panel_ok(l_slot) && s_panel[l_slot].document ? shell_main_icon() : NULL; }
+
+/* ------------------------------------------------------------------ the text menu
+
+   Cut, Copy, Paste and Select All at the pointer, waiting for the choice as TrackPopupMenu
+   does: 1 Cut, 2 Copy, 3 Paste, 4 Select All, 0 none. */
+static int s_text_menu_choice = 0, s_text_menu_open = 0;
+static void shell_text_menu_pick(GtkButton *b, gpointer d)
+{
+	s_text_menu_choice = GPOINTER_TO_INT(d);
+	gtk_popover_popdown(GTK_POPOVER(g_object_get_data(G_OBJECT(b), "sg-popover")));
+}
+static void shell_text_menu_closed(GtkPopover *p, gpointer d) { (void)p; (void)d; s_text_menu_open = 0; }
+int shell_text_menu(int can_cut, int can_copy, int can_paste, int can_select)
+{
+	static const char *l_titles[4] = {"Cut", "Copy", "Paste", "Select All"};
+	int l_on[4];
+	GtkWidget *l_parent = s_area, *l_pop, *l_box;
+	GdkRectangle r;
+	int i;
+	l_on[0] = can_cut; l_on[1] = can_copy; l_on[2] = can_paste; l_on[3] = can_select;
+	if (!l_parent) for (i = 0; i < SHELL_PANELS && !l_parent; i++) if (s_panel[i].window && gtk_window_is_active(GTK_WINDOW(s_panel[i].window))) l_parent = s_panel[i].area;
+	if (!l_parent || !gtk_widget_get_mapped(l_parent)) return 0;
+	l_pop = gtk_popover_new();
+	l_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	for (i = 0; i < 4; i++) {
+		GtkWidget *b = gtk_button_new_with_label(l_titles[i]);
+		gtk_button_set_has_frame(GTK_BUTTON(b), FALSE);
+		gtk_widget_set_sensitive(b, l_on[i] != 0);
+		g_object_set_data(G_OBJECT(b), "sg-popover", l_pop);
+		g_signal_connect(b, "clicked", G_CALLBACK(shell_text_menu_pick), GINT_TO_POINTER(i + 1));
+		if (i == 3) gtk_box_append(GTK_BOX(l_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+		gtk_box_append(GTK_BOX(l_box), b);
+	}
+	gtk_popover_set_child(GTK_POPOVER(l_pop), l_box);
+	gtk_widget_set_parent(l_pop, l_parent);
+	r.x = (int)s_pointer_x; r.y = (int)s_pointer_y; r.width = 1; r.height = 1;
+	gtk_popover_set_pointing_to(GTK_POPOVER(l_pop), &r);
+	gtk_popover_set_has_arrow(GTK_POPOVER(l_pop), FALSE);
+	g_signal_connect(l_pop, "closed", G_CALLBACK(shell_text_menu_closed), NULL);
+	s_text_menu_choice = 0;
+	s_text_menu_open = 1;
+	gtk_popover_popup(GTK_POPOVER(l_pop));
+	while (s_text_menu_open) g_main_context_iteration(NULL, TRUE);
+	gtk_widget_unparent(l_pop);
+	return s_text_menu_choice;
+}
+
+/* ------------------------------------------------------------------ the overlay
+
+   A full-screen window for picking a region (31 move, 32 press, 33 release, 34 cancel: Escape
+   or a right press, already hidden; 35 expose; 36 Enter; 37 an arrow key). Wayland gives it the
+   monitor it opens on; X11 the whole desktop. */
+static GtkWidget *s_overlay = NULL, *s_overlay_area = NULL;
+static cairo_surface_t *s_overlay_backing = NULL;
+static void shell_overlay_draw(GtkDrawingArea *a, cairo_t *cr, int w, int h, gpointer d)
+{
+	int k = gtk_widget_get_scale_factor(GTK_WIDGET(a));
+	(void)w; (void)h; (void)d;
+	if (!s_overlay_backing) return;
+	cairo_scale(cr, 1.0 / k, 1.0 / k);
+	cairo_set_source_surface(cr, s_overlay_backing, 0, 0);
+	cairo_paint(cr);
+}
+static int shell_overlay_px(double v) { return (int)floor(v * (s_overlay_area ? gtk_widget_get_scale_factor(s_overlay_area) : 1)); }
+static void shell_overlay_motion(GtkEventControllerMotion *m, double x, double y, gpointer d)
+{
+	int last = (s_qtail + SHELL_QCAP - 1) % SHELL_QCAP;
+	(void)m; (void)d;
+	if (s_qtail != s_qhead && s_q[last][0] == 31) { s_q[last][1] = shell_overlay_px(x); s_q[last][2] = shell_overlay_px(y); }
+	else shell_push(31, shell_overlay_px(x), shell_overlay_px(y), 0);
+}
+static void shell_overlay_press(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	(void)n; (void)d;
+	if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g)) == GDK_BUTTON_SECONDARY) { shell_hide_overlay(); shell_push(34, 0, 0, 0); }
+	else shell_push(32, shell_overlay_px(x), shell_overlay_px(y), 0);
+}
+static void shell_overlay_release_cb(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	(void)n; (void)d;
+	if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g)) == GDK_BUTTON_PRIMARY) shell_push(33, shell_overlay_px(x), shell_overlay_px(y), 0);
+}
+static gboolean shell_overlay_key(GtkEventControllerKey *k, guint a_keyval, guint a_code, GdkModifierType a_state, gpointer d)
+{
+	(void)k; (void)a_code; (void)a_state; (void)d;
+	switch (a_keyval) {
+		case GDK_KEY_Escape: shell_hide_overlay(); shell_push(34, 0, 0, 0); return TRUE;
+		case GDK_KEY_Return: case GDK_KEY_KP_Enter: shell_push(36, 0, 0, 0); return TRUE;
+		case GDK_KEY_Left: case GDK_KEY_Up: case GDK_KEY_Right: case GDK_KEY_Down: shell_push(37, shell_vk(a_keyval), 0, 0); return TRUE;
+	}
+	return FALSE;
+}
+static gboolean shell_overlay_close(GtkWindow *w, gpointer d) { (void)w; (void)d; shell_hide_overlay(); shell_push(34, 0, 0, 0); return TRUE; }
+void *shell_show_overlay(void)
+{
+	int x, y, w, h;
+	shell_app();
+	if (g_thread_self() != s_pump_thread) return NULL;
+	shell_virtual_desktop(&x, &y, &w, &h);
+	if (w <= 0 || h <= 0) return NULL;
+	if (!s_overlay) {
+		GtkGesture *g;
+		GtkEventController *m, *key;
+		s_overlay = gtk_window_new();
+		gtk_window_set_decorated(GTK_WINDOW(s_overlay), FALSE);
+		s_overlay_area = gtk_drawing_area_new();
+		gtk_widget_set_focusable(s_overlay_area, TRUE);
+		gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(s_overlay_area), shell_overlay_draw, NULL, NULL);
+		m = gtk_event_controller_motion_new();
+		g_signal_connect(m, "motion", G_CALLBACK(shell_overlay_motion), NULL);
+		gtk_widget_add_controller(s_overlay_area, m);
+		g = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(g), 0);
+		g_signal_connect(g, "pressed", G_CALLBACK(shell_overlay_press), NULL);
+		g_signal_connect(g, "released", G_CALLBACK(shell_overlay_release_cb), NULL);
+		gtk_widget_add_controller(s_overlay_area, GTK_EVENT_CONTROLLER(g));
+		key = gtk_event_controller_key_new();
+		g_signal_connect(key, "key-pressed", G_CALLBACK(shell_overlay_key), NULL);
+		gtk_widget_add_controller(s_overlay, key);
+		gtk_window_set_child(GTK_WINDOW(s_overlay), s_overlay_area);
+		g_signal_connect(s_overlay, "close-request", G_CALLBACK(shell_overlay_close), NULL);
+		g_object_add_weak_pointer(G_OBJECT(s_overlay), (gpointer *)&s_overlay);
+	}
+	if (!s_overlay_backing || cairo_image_surface_get_width(s_overlay_backing) != w || cairo_image_surface_get_height(s_overlay_backing) != h) {
+		if (s_overlay_backing) cairo_surface_destroy(s_overlay_backing);
+		s_overlay_backing = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+	}
+	gtk_window_fullscreen(GTK_WINDOW(s_overlay));
+	gtk_window_present(GTK_WINDOW(s_overlay));
+	gtk_widget_grab_focus(s_overlay_area);
+	gtk_widget_set_cursor_from_name(s_overlay_area, "crosshair");
+	shell_push(35, 0, 0, 0);
+	return s_overlay;
+}
+void shell_hide_overlay(void) { if (s_overlay) gtk_widget_set_visible(s_overlay, FALSE); }
+void *shell_overlay_dc(void) { return s_overlay ? (void *)s_overlay_backing : NULL; }
+void shell_overlay_release(void *dc) { if (dc && s_overlay_area) gtk_widget_queue_draw(s_overlay_area); }
+
+/* ------------------------------------------------------------------ outlines
+
+   Click-through colored frames at exact desktop places (8 slots). X11 places them exactly
+   (override-redirect, above everything); Wayland lets no program place a window, so there they
+   are not available. */
+#define SHELL_OUTLINES 8
+typedef struct { GtkWidget *window; int thick, rgb; } ShellOutline;
+static ShellOutline s_outline[SHELL_OUTLINES];
+static int s_outline_css = 0;
+static void shell_outline_draw(GtkDrawingArea *a, cairo_t *cr, int w, int h, gpointer d)
+{
+	int l_slot = GPOINTER_TO_INT(d), k = gtk_widget_get_scale_factor(GTK_WIDGET(a));
+	double t;
+	if (l_slot < 0 || l_slot >= SHELL_OUTLINES) return;
+	t = (double)s_outline[l_slot].thick / k;
+	cairo_set_source_rgb(cr, ((s_outline[l_slot].rgb >> 16) & 0xFF) / 255.0, ((s_outline[l_slot].rgb >> 8) & 0xFF) / 255.0, (s_outline[l_slot].rgb & 0xFF) / 255.0);
+	cairo_set_line_width(cr, t);
+	cairo_rectangle(cr, t / 2, t / 2, w - t, h - t);
+	cairo_stroke(cr);
+}
+void shell_outline_show(int slot, int x, int y, int w, int h, int thick, int rgb)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *d = shell_x11();
+	ShellOutline *o;
+	int k;
+	if (slot < 0 || slot >= SHELL_OUTLINES || w <= 0 || h <= 0 || !d || g_thread_self() != s_pump_thread) return;
+	o = &s_outline[slot];
+	o->thick = thick > 0 ? thick : 1; o->rgb = rgb;
+	k = shell_scale();
+	if (!s_outline_css) {
+		GtkCssProvider *p = gtk_css_provider_new();
+		gtk_css_provider_load_from_string(p, "window.ss-outline { background: transparent; }");
+		gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref(p);
+		s_outline_css = 1;
+	}
+	if (!o->window) {
+		GtkWidget *a = gtk_drawing_area_new();
+		o->window = gtk_window_new();
+		gtk_window_set_decorated(GTK_WINDOW(o->window), FALSE);
+		gtk_widget_add_css_class(o->window, "ss-outline");
+		gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(a), shell_outline_draw, GINT_TO_POINTER(slot), NULL);
+		gtk_window_set_child(GTK_WINDOW(o->window), a);
+		g_object_add_weak_pointer(G_OBJECT(o->window), (gpointer *)&o->window);
+	}
+	gtk_window_set_default_size(GTK_WINDOW(o->window), w / k > 0 ? w / k : 1, h / k > 0 ? h / k : 1);
+	gtk_widget_realize(o->window);
+	{
+		GdkSurface *s = gtk_native_get_surface(GTK_NATIVE(o->window));
+		Window xid = gdk_x11_surface_get_xid(s);
+		XSetWindowAttributes l_a;
+		cairo_region_t *l_none = cairo_region_create();
+		gdk_surface_set_input_region(s, l_none);   /* clicks pass through */
+		cairo_region_destroy(l_none);
+		l_a.override_redirect = True;
+		XChangeWindowAttributes(d, xid, CWOverrideRedirect, &l_a);
+		gtk_widget_set_visible(o->window, TRUE);
+		XMoveResizeWindow(d, xid, x, y, (unsigned int)w, (unsigned int)h);
+		XRaiseWindow(d, xid);
+		XFlush(d);
+	}
+	gtk_widget_queue_draw(gtk_window_get_child(GTK_WINDOW(o->window)));
+#else
+	(void)slot; (void)x; (void)y; (void)w; (void)h; (void)thick; (void)rgb;
+#endif
+}
+void shell_outline_hide(int slot)
+{
+#ifdef GDK_WINDOWING_X11
+	if (slot >= 0 && slot < SHELL_OUTLINES && s_outline[slot].window) gtk_widget_set_visible(s_outline[slot].window, FALSE);
+#else
+	(void)slot;
+#endif
+}

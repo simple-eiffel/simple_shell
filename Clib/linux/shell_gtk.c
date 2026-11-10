@@ -118,6 +118,7 @@ static int s_backdrop = 0x12141B;             /* Windows' default: RGB(18, 20, 2
 static guint s_heartbeat = 0, s_fast = 0, s_dwell = 0;
 static gint s_wake_pending = 0;
 static GThread *s_pump_thread = NULL;
+static gint s_pump_claimed = 0;            /* claim_pump_thread (1) until (0): a wake with no window has a pump to reach */
 static double s_pointer_x = 0, s_pointer_y = 0; /* the last pointer position, pixels */
 static int s_primary_down = 0;                /* the primary button is held: a move is a drag */
 
@@ -512,11 +513,16 @@ static gboolean shell_deliver_wake(gpointer d) { (void)d; g_atomic_int_set(&s_wa
 int shell_wake(void)
 {
 	if (!g_atomic_int_compare_and_exchange(&s_wake_pending, 0, 1)) return 2;
+	if (!s_window && !g_atomic_int_get(&s_pump_claimed)) {
+		/* as Windows: no window and no claimed pump, nobody to wake (Outcome_none) */
+		g_atomic_int_set(&s_wake_pending, 0);
+		return 0;
+	}
 	g_idle_add(shell_deliver_wake, NULL);   /* GLib's main context is safe to reach from any thread */
 	g_main_context_wakeup(NULL);
 	return 1;
 }
-void shell_claim_pump_thread(int l_on) { if (l_on) s_pump_thread = g_thread_self(); g_atomic_int_set(&s_wake_pending, 0); }
+void shell_claim_pump_thread(int l_on) { if (l_on) s_pump_thread = g_thread_self(); g_atomic_int_set(&s_pump_claimed, l_on ? 1 : 0); g_atomic_int_set(&s_wake_pending, 0); }
 int shell_is_pump_thread(void) { return s_pump_thread == NULL || g_thread_self() == s_pump_thread; }
 
 /* ------------------------------------------------------------------ appearance */

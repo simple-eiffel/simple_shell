@@ -1663,10 +1663,12 @@ int shell_shell_open(const void *path)
 	return ok ? 1 : 0;
 }
 
-/* ---------------- Wayland: the xdg-desktop-portal (stage 3; until then, not available) */
-static int shell_portal_hotkey_register(int l_id, int l_mods, int l_vk) { (void)l_id; (void)l_mods; (void)l_vk; return 0; }
-static void shell_portal_hotkey_unregister(int l_id) { (void)l_id; }
-static int shell_portal_grab_screen(int x, int y, int w, int h, void *bits, int stride) { (void)x; (void)y; (void)w; (void)h; (void)bits; (void)stride; return 0; }
+/* Wayland: the xdg-desktop-portal, at the end of this file */
+static int shell_portal_hotkey_register(int l_id, int l_mods, int l_vk);
+static void shell_portal_hotkey_unregister(int l_id);
+static int shell_portal_grab_screen(int x, int y, int w, int h, void *bits, int stride);
+static int shell_portal_type(const char *s);
+static int shell_portal_chord(int ctrl, int shift, int alt, guint a_keysym);
 
 /* ------------------------------------------------------------------ X11 and Wayland (Larry 2026-11-10: both)
 
@@ -1926,7 +1928,11 @@ int shell_input_type(const void *s)
 	const char *c;
 	s_input_error = 0;
 	if (!s) return 0;
-	if (!d) { s_input_error = 50; return 0; }
+	if (!d) {
+		int r = shell_portal_type((const char *)s);
+		if (r < 0) { s_input_error = 50; return 0; }   /* no portal: not available */
+		return r;
+	}
 	l_spare = shell_x11_spare_keycode(d);
 	if (!l_spare) { s_input_error = 8; return 0; }
 	for (c = (const char *)s; *c; c = g_utf8_next_char(c)) {
@@ -1956,7 +1962,13 @@ int shell_input_chord(int ctrl, int shift, int alt, int vk)
 	KeyCode l_mods[3], l_key;
 	int n = 0, i, l_sent = 0;
 	s_input_error = 0;
-	if (!d) { s_input_error = 50; return 0; }
+	if (!d) {
+		int r;
+		if (!ks) { s_input_error = 87; return 0; }
+		r = shell_portal_chord(ctrl, shift, alt, (guint)ks);
+		if (r < 0) { s_input_error = 50; return 0; }
+		return r;
+	}
 	l_key = ks ? XKeysymToKeycode(d, ks) : 0;
 	if (!l_key) { s_input_error = 87; return 0; }   /* ERROR_INVALID_PARAMETER */
 	if (ctrl) l_mods[n++] = XKeysymToKeycode(d, XK_Control_L);
@@ -2824,4 +2836,284 @@ int shell_tray_menu(HWND h, const void *l_items)
 	gtk_window_present(GTK_WINDOW(w));
 	while (s_tray_menu_open) g_main_context_iteration(NULL, TRUE);
 	return s_tray_choice;
+}
+
+/* ---------------- Wayland: the xdg-desktop-portal
+
+   Each portal call answers a Request object path at once and the result later, as that
+   Request's Response signal (0 success, 1 the user said no, 2 anything else). The shell waits
+   for it on the main loop, as Windows' calls block, up to a limit: the first use may show the
+   user a consent dialog. Where no portal answers, the result is "not available". */
+static GDBusConnection *s_portal_bus = NULL;
+typedef struct { int done; guint32 code; GVariant *results; } ShellPortalWait;
+static GDBusConnection *shell_portal_bus(void)
+{
+	if (!s_portal_bus) s_portal_bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+	return s_portal_bus;
+}
+static void shell_portal_response(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+	const gchar *signal, GVariant *params, gpointer d)
+{
+	ShellPortalWait *w = d;
+	(void)c; (void)sender; (void)path; (void)iface; (void)signal;
+	g_variant_get(params, "(u@a{sv})", &w->code, &w->results);
+	w->done = 1;
+}
+static gboolean shell_portal_timeout(gpointer d) { ((ShellPortalWait *)d)->done = 2; return G_SOURCE_REMOVE; }
+/* The Request path a call with `a_token' will answer on (known before the call, so the signal
+   is never missed). */
+static char *shell_portal_request_path(const char *a_token)
+{
+	const char *l_unique = g_dbus_connection_get_unique_name(shell_portal_bus());
+	char *l_sender = g_strdup(l_unique + 1), *c, *r;
+	for (c = l_sender; *c; c++) if (*c == '.') *c = '_';
+	r = g_strdup_printf("/org/freedesktop/portal/desktop/request/%s/%s", l_sender, a_token);
+	g_free(l_sender);
+	return r;
+}
+/* Call `a_method' of portal interface `a_iface' with `a_params' (whose options carry
+   handle_token `a_token'), wait for its Response (at most `a_seconds'), and answer the results
+   on success (to unref), else NULL. */
+static GVariant *shell_portal_call(const char *a_iface, const char *a_method, GVariant *a_params, const char *a_token, int a_seconds)
+{
+	GDBusConnection *b = shell_portal_bus();
+	ShellPortalWait w = {0, 2, NULL};
+	char *l_path;
+	guint l_sub, l_timer;
+	GVariant *r;
+	if (!b) { g_variant_unref(g_variant_ref_sink(a_params)); return NULL; }
+	l_path = shell_portal_request_path(a_token);
+	l_sub = g_dbus_connection_signal_subscribe(b, "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request",
+		"Response", l_path, NULL, G_DBUS_SIGNAL_FLAGS_NO_MATCH_RULE, shell_portal_response, &w, NULL);
+	g_free(l_path);
+	r = g_dbus_connection_call_sync(b, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", a_iface, a_method,
+		a_params, G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 2000, NULL, NULL);
+	if (!r) { g_dbus_connection_signal_unsubscribe(b, l_sub); return NULL; }   /* no portal here */
+	g_variant_unref(r);
+	l_timer = g_timeout_add_seconds((guint)a_seconds, shell_portal_timeout, &w);
+	while (!w.done) g_main_context_iteration(NULL, TRUE);
+	if (w.done == 1) g_source_remove(l_timer);
+	g_dbus_connection_signal_unsubscribe(b, l_sub);
+	if (w.code != 0) { if (w.results) g_variant_unref(w.results); return NULL; }
+	return w.results;
+}
+static char *shell_portal_token(const char *a_kind)
+{
+	static int l_n = 0;
+	return g_strdup_printf("simple_shell_%s_%d_%d", a_kind, (int)getpid(), ++l_n);
+}
+static GVariant *shell_portal_options(const char *a_token, const char *a_key, GVariant *a_value, const char *a_key2, GVariant *a_value2)
+{
+	GVariantBuilder o;
+	g_variant_builder_init(&o, G_VARIANT_TYPE("a{sv}"));
+	g_variant_builder_add(&o, "{sv}", "handle_token", g_variant_new_string(a_token));
+	if (a_key) g_variant_builder_add(&o, "{sv}", a_key, a_value);
+	if (a_key2) g_variant_builder_add(&o, "{sv}", a_key2, a_value2);
+	return g_variant_builder_end(&o);
+}
+
+/* The screen through the Screenshot portal: a full-screen PNG, cropped to the rectangle and
+   copied as BGRA with alpha forced opaque. */
+static int shell_portal_grab_screen(int x, int y, int w, int h, void *bits, int stride)
+{
+	char *l_token = shell_portal_token("shot");
+	GVariant *l_res, *l_uri;
+	GdkTexture *l_tex = NULL;
+	GFile *f;
+	int ok = 0;
+	l_res = shell_portal_call("org.freedesktop.portal.Screenshot", "Screenshot",
+		g_variant_new("(s@a{sv})", "", shell_portal_options(l_token, "interactive", g_variant_new_boolean(FALSE), NULL, NULL)), l_token, 30);
+	g_free(l_token);
+	if (!l_res) return 0;
+	l_uri = g_variant_lookup_value(l_res, "uri", G_VARIANT_TYPE_STRING);
+	if (l_uri) {
+		f = g_file_new_for_uri(g_variant_get_string(l_uri, NULL));
+		l_tex = gdk_texture_new_from_file(f, NULL);
+		if (l_tex) {
+			int tw = gdk_texture_get_width(l_tex), th = gdk_texture_get_height(l_tex), dx, dy, r, c;
+			guchar *l_all = g_malloc((size_t)tw * (size_t)th * 4);
+			shell_virtual_desktop(&dx, &dy, &r, &c);
+			gdk_texture_download(l_tex, l_all, (gsize)tw * 4);   /* BGRA premultiplied, native: matches Windows' BGRA */
+			for (r = 0; r < h; r++) {
+				unsigned char *row = (unsigned char *)bits + (size_t)r * (size_t)stride;
+				int sy = y - dy + r;
+				for (c = 0; c < w; c++) {
+					int sx = x - dx + c;
+					unsigned char *p = row + c * 4;
+					if (sx >= 0 && sy >= 0 && sx < tw && sy < th) memcpy(p, l_all + ((size_t)sy * (size_t)tw + (size_t)sx) * 4, 3);
+					else p[0] = p[1] = p[2] = 0;
+					p[3] = 255;
+				}
+			}
+			g_free(l_all);
+			g_object_unref(l_tex);
+			ok = 1;
+		}
+		g_file_delete(f, NULL, NULL);   /* the portal's copy is ours to remove */
+		g_object_unref(f);
+		g_variant_unref(l_uri);
+	}
+	g_variant_unref(l_res);
+	return ok;
+}
+
+/* Hotkeys through the GlobalShortcuts portal: one session, a shortcut per id, its trigger
+   offered in the portal's form ("CTRL+ALT+SHIFT+F20"); the desktop may ask the user, or bind
+   another key. Activated pushes 51, as WM_HOTKEY. */
+static char *s_shortcut_session = NULL;
+static guint s_shortcut_watch = 0;
+typedef struct { int used, id, vk, mods; } ShellPortalKey;
+static ShellPortalKey s_portal_key[SHELL_HOTKEYS];
+static void shell_portal_activated(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+	const gchar *signal, GVariant *params, gpointer d)
+{
+	const gchar *l_session = NULL, *l_id = NULL;
+	int i, l_n;
+	(void)c; (void)sender; (void)path; (void)iface; (void)signal; (void)d;
+	g_variant_get(params, "(&o&st@a{sv})", &l_session, &l_id, NULL, NULL);
+	if (!l_id || strncmp(l_id, "hotkey-", 7) != 0) return;
+	l_n = atoi(l_id + 7);
+	for (i = 0; i < SHELL_HOTKEYS; i++)
+		if (s_portal_key[i].used && s_portal_key[i].id == l_n) shell_push(51, l_n, s_portal_key[i].vk, s_portal_key[i].mods);
+}
+static char *shell_portal_trigger(int l_mods, int l_vk)
+{
+	GString *s = g_string_new(NULL);
+	if (l_mods & 2) g_string_append(s, "CTRL+");
+	if (l_mods & 1) g_string_append(s, "ALT+");
+	if (l_mods & 4) g_string_append(s, "SHIFT+");
+	if (l_mods & 8) g_string_append(s, "LOGO+");
+	if ((l_vk >= 'A' && l_vk <= 'Z') || (l_vk >= '0' && l_vk <= '9')) g_string_append_c(s, (char)l_vk);
+	else if (l_vk >= 0x70 && l_vk <= 0x87) g_string_append_printf(s, "F%d", l_vk - 0x70 + 1);
+	else { g_string_free(s, TRUE); return NULL; }
+	return g_string_free(s, FALSE);
+}
+static int shell_portal_hotkey_register(int l_id, int l_mods, int l_vk)
+{
+	GDBusConnection *b = shell_portal_bus();
+	char *l_token, *l_trigger, *l_name;
+	GVariant *l_res;
+	GVariantBuilder l_keys, l_props;
+	int i, l_free = -1;
+	if (!b) return 0;
+	for (i = 0; i < SHELL_HOTKEYS; i++) if (s_portal_key[i].used && s_portal_key[i].vk == l_vk && s_portal_key[i].mods == l_mods) return 0;
+	for (i = 0; i < SHELL_HOTKEYS && l_free < 0; i++) if (!s_portal_key[i].used) l_free = i;
+	l_trigger = shell_portal_trigger(l_mods, l_vk);
+	if (l_free < 0 || !l_trigger) { g_free(l_trigger); return 0; }
+	if (!s_shortcut_session) {
+		char *l_session_token = shell_portal_token("keys");
+		l_token = shell_portal_token("create");
+		l_res = shell_portal_call("org.freedesktop.portal.GlobalShortcuts", "CreateSession",
+			g_variant_new("(@a{sv})", shell_portal_options(l_token, "session_handle_token", g_variant_new_string(l_session_token), NULL, NULL)), l_token, 30);
+		g_free(l_token); g_free(l_session_token);
+		if (!l_res) { g_free(l_trigger); return 0; }
+		{
+			GVariant *l_handle = g_variant_lookup_value(l_res, "session_handle", NULL);
+			if (l_handle) { s_shortcut_session = g_strdup(g_variant_get_string(l_handle, NULL)); g_variant_unref(l_handle); }
+		}
+		g_variant_unref(l_res);
+		if (!s_shortcut_session) { g_free(l_trigger); return 0; }
+		s_shortcut_watch = g_dbus_connection_signal_subscribe(b, "org.freedesktop.portal.Desktop", "org.freedesktop.portal.GlobalShortcuts",
+			"Activated", "/org/freedesktop/portal/desktop", NULL, G_DBUS_SIGNAL_FLAGS_NONE, shell_portal_activated, NULL, NULL);
+	}
+	l_name = g_strdup_printf("hotkey-%d", l_id);
+	g_variant_builder_init(&l_props, G_VARIANT_TYPE("a{sv}"));
+	g_variant_builder_add(&l_props, "{sv}", "description", g_variant_new_string(l_name));
+	g_variant_builder_add(&l_props, "{sv}", "preferred_trigger", g_variant_new_string(l_trigger));
+	g_variant_builder_init(&l_keys, G_VARIANT_TYPE("a(sa{sv})"));
+	g_variant_builder_add(&l_keys, "(s@a{sv})", l_name, g_variant_builder_end(&l_props));
+	l_token = shell_portal_token("bind");
+	l_res = shell_portal_call("org.freedesktop.portal.GlobalShortcuts", "BindShortcuts",
+		g_variant_new("(o@a(sa{sv})s@a{sv})", s_shortcut_session, g_variant_builder_end(&l_keys), "", shell_portal_options(l_token, NULL, NULL, NULL, NULL)),
+		l_token, 60);
+	g_free(l_token); g_free(l_name); g_free(l_trigger);
+	if (!l_res) return 0;
+	g_variant_unref(l_res);
+	s_portal_key[l_free].used = 1; s_portal_key[l_free].id = l_id; s_portal_key[l_free].vk = l_vk; s_portal_key[l_free].mods = l_mods;
+	return 1;
+}
+/* The portal has no unbinding call: the shortcut stays bound to the session and is no longer
+   reported. */
+static void shell_portal_hotkey_unregister(int l_id)
+{
+	int i;
+	for (i = 0; i < SHELL_HOTKEYS; i++) if (s_portal_key[i].used && s_portal_key[i].id == l_id) s_portal_key[i].used = 0;
+}
+
+/* Typing and chords through the RemoteDesktop portal's keyboard (the user is asked once a run).
+   A click at a desktop point would need a ScreenCast stream to aim at, so pointer input stays
+   not available on Wayland. */
+static char *s_remote_session = NULL;
+static int s_remote_tried = 0;
+static int shell_portal_remote(void)
+{
+	char *l_token, *l_session_token;
+	GVariant *l_res, *l_handle;
+	if (s_remote_session) return 1;
+	if (s_remote_tried) return 0;
+	s_remote_tried = 1;
+	l_token = shell_portal_token("rcreate");
+	l_session_token = shell_portal_token("remote");
+	l_res = shell_portal_call("org.freedesktop.portal.RemoteDesktop", "CreateSession",
+		g_variant_new("(@a{sv})", shell_portal_options(l_token, "session_handle_token", g_variant_new_string(l_session_token), NULL, NULL)), l_token, 30);
+	g_free(l_token); g_free(l_session_token);
+	if (!l_res) return 0;
+	l_handle = g_variant_lookup_value(l_res, "session_handle", NULL);
+	g_variant_unref(l_res);
+	if (!l_handle) return 0;
+	s_remote_session = g_strdup(g_variant_get_string(l_handle, NULL));
+	g_variant_unref(l_handle);
+	l_token = shell_portal_token("select");
+	l_res = shell_portal_call("org.freedesktop.portal.RemoteDesktop", "SelectDevices",
+		g_variant_new("(o@a{sv})", s_remote_session, shell_portal_options(l_token, "types", g_variant_new_uint32(1), NULL, NULL)), l_token, 30);
+	g_free(l_token);
+	if (l_res) g_variant_unref(l_res);
+	l_token = shell_portal_token("start");
+	l_res = shell_portal_call("org.freedesktop.portal.RemoteDesktop", "Start",
+		g_variant_new("(os@a{sv})", s_remote_session, "", shell_portal_options(l_token, NULL, NULL, NULL, NULL)), l_token, 120);
+	g_free(l_token);
+	if (!l_res) { g_free(s_remote_session); s_remote_session = NULL; return 0; }
+	g_variant_unref(l_res);
+	return 1;
+}
+static int shell_portal_keysym(guint a_keysym, int a_down)
+{
+	GVariantBuilder o;
+	GVariant *r;
+	g_variant_builder_init(&o, G_VARIANT_TYPE("a{sv}"));
+	r = g_dbus_connection_call_sync(shell_portal_bus(), "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+		"org.freedesktop.portal.RemoteDesktop", "NotifyKeyboardKeysym",
+		g_variant_new("(o@a{sv}iu)", s_remote_session, g_variant_builder_end(&o), (gint32)a_keysym, (guint32)(a_down ? 1 : 0)),
+		NULL, G_DBUS_CALL_FLAGS_NONE, 2000, NULL, NULL);
+	if (!r) return 0;
+	g_variant_unref(r);
+	return 1;
+}
+static int shell_portal_type(const char *s)
+{
+	const char *c;
+	int l_sent = 0;
+	if (!shell_portal_remote()) return -1;
+	for (c = s; *c; c = g_utf8_next_char(c)) {
+		gunichar u = g_utf8_get_char(c);
+		guint ks = gdk_unicode_to_keyval(u);
+		int l_units = u > 0xFFFF ? 2 : 1;
+		if (shell_portal_keysym(ks, 1)) l_sent += l_units;
+		if (shell_portal_keysym(ks, 0)) l_sent += l_units;
+	}
+	return l_sent;
+}
+static int shell_portal_chord(int ctrl, int shift, int alt, guint a_keysym)
+{
+	guint l_mods[3];
+	int n = 0, i, l_sent = 0;
+	if (!shell_portal_remote()) return -1;
+	if (ctrl) l_mods[n++] = GDK_KEY_Control_L;
+	if (shift) l_mods[n++] = GDK_KEY_Shift_L;
+	if (alt) l_mods[n++] = GDK_KEY_Alt_L;
+	for (i = 0; i < n; i++) l_sent += shell_portal_keysym(l_mods[i], 1);
+	l_sent += shell_portal_keysym(a_keysym, 1);
+	l_sent += shell_portal_keysym(a_keysym, 0);
+	for (i = n - 1; i >= 0; i--) l_sent += shell_portal_keysym(l_mods[i], 0);
+	return l_sent;
 }

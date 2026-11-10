@@ -1650,8 +1650,8 @@ feature {NONE} -- Printing test support
 
 	c_paint_block (a_dc: POINTER; a_dpi_x, a_dpi_y: INTEGER)
 			-- An inch-square black block an inch in.
-		external "C inline use <windows.h>"
-		alias "PatBlt((HDC)$a_dc, $a_dpi_x, $a_dpi_y, $a_dpi_x, $a_dpi_y, BLACKNESS);"
+		external "C inline use %"shell_paint_probe.h%""
+		alias "shell_paint_probe_block($a_dc, $a_dpi_x, $a_dpi_y);"
 		end
 
 feature -- The event registry (2026-10-25)

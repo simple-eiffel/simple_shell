@@ -31,6 +31,11 @@
 #error "shell_sdk_tripwire.h is meaningless without shell_sdk_poison.h included ahead of simple_shell.h"
 #endif
 
+#ifndef _WIN32
+/* Off Windows: nothing to prove; the runner skips the tripwire tests. */
+static int shell_tripwire_poison_in_force(void) { return 0; }
+static int shell_tripwire_shell_header_survived(void) { return 0; }
+#else
 static int shell_tripwire_poison_in_force(void) {
 #ifdef small
     return 1;
@@ -48,5 +53,6 @@ static int shell_tripwire_shell_header_survived(void) {
     shell_set_fast_timer(0);
     return 1;
 }
+#endif /* _WIN32 */
 
 #endif /* SHELL_SDK_TRIPWIRE_H */

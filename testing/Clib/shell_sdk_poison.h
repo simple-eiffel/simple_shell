@@ -24,11 +24,20 @@
 #ifndef SHELL_SDK_POISON_H
 #define SHELL_SDK_POISON_H
 
+#ifndef _WIN32
+/* Off Windows there is no SDK to poison and simple_shell.h (the Win32 header) does not
+   apply: defining its guard makes the tripwire's include of it a no-op there, and the
+   runner skips the tripwire tests. */
+#define SIMPLE_SHELL_H
+#else
+
 #ifdef SIMPLE_SHELL_H
 #error "SDK-macro tripwire DISARMED: simple_shell.h was already included (unpoisoned) earlier in this translation unit, so the tripwire's own include is a no-op. Rename SDK_MACRO_TRIPWIRE so its generated C file sorts ahead of every SHELL_* class, then rebuild."
 #endif
 
 #include <rpc.h>
 #include <rpcndr.h>
+
+#endif /* _WIN32 */
 
 #endif /* SHELL_SDK_POISON_H */

@@ -43,17 +43,17 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_window_services_stay_exported, "window_services_stay_exported")
 			run_test (agent t.test_heartbeat_is_settable, "heartbeat_is_settable")
 			run_test (agent t.test_dwell_fires_once_after_rest, "dwell_fires_once_after_rest")
-			run_test (agent t.test_appearance_reads_the_windows_setting, "appearance_reads_the_windows_setting")
-			run_test (agent t.test_appearance_change_is_queued, "appearance_change_is_queued")
-			run_test (agent t.test_high_contrast_reads_the_windows_setting, "high_contrast_reads_the_windows_setting")
-			run_test (agent t.test_system_colors_read_the_windows_palette, "system_colors_read_the_windows_palette")
-			run_test (agent t.test_contrast_change_is_queued, "contrast_change_is_queued")
-			run_test (agent t.test_motion_change_is_queued, "motion_change_is_queued")
-			run_test (agent t.test_reduced_motion_reads_the_windows_setting, "reduced_motion_reads_the_windows_setting")
-			run_test (agent t.test_uia_bridge_serves_the_published_tree, "uia_bridge_serves_the_published_tree")
-			run_test (agent t.test_scan13_focus_request_is_pushed_on_the_pump_thread, "scan13_focus_request_is_pushed_on_the_pump_thread")
-			run_test (agent t.test_scan13_destroying_the_window_stops_serving, "scan13_destroying_the_window_stops_serving")
-			run_test (agent t.test_scan13_a_client_request_asks_for_a_republish, "scan13_a_client_request_asks_for_a_republish")
+			run_windows_test (agent t.test_appearance_reads_the_windows_setting, "appearance_reads_the_windows_setting")
+			run_windows_test (agent t.test_appearance_change_is_queued, "appearance_change_is_queued")
+			run_windows_test (agent t.test_high_contrast_reads_the_windows_setting, "high_contrast_reads_the_windows_setting")
+			run_windows_test (agent t.test_system_colors_read_the_windows_palette, "system_colors_read_the_windows_palette")
+			run_windows_test (agent t.test_contrast_change_is_queued, "contrast_change_is_queued")
+			run_windows_test (agent t.test_motion_change_is_queued, "motion_change_is_queued")
+			run_windows_test (agent t.test_reduced_motion_reads_the_windows_setting, "reduced_motion_reads_the_windows_setting")
+			run_windows_test (agent t.test_uia_bridge_serves_the_published_tree, "uia_bridge_serves_the_published_tree")
+			run_windows_test (agent t.test_scan13_focus_request_is_pushed_on_the_pump_thread, "scan13_focus_request_is_pushed_on_the_pump_thread")
+			run_windows_test (agent t.test_scan13_destroying_the_window_stops_serving, "scan13_destroying_the_window_stops_serving")
+			run_windows_test (agent t.test_scan13_a_client_request_asks_for_a_republish, "scan13_a_client_request_asks_for_a_republish")
 			run_test (agent t.test_event_numbers_never_collide, "event_numbers_never_collide")
 			run_test (agent t.test_gw22_framed_panel_is_a_floating_window, "gw22_framed_panel_is_a_floating_window")
 			run_test (agent t.test_scan19_a_panel_destroyed_behind_its_back_is_closed, "scan19_a_panel_destroyed_behind_its_back_is_closed")
@@ -80,14 +80,18 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_function_keys_and_ctrl_digits_are_the_windows, "function_keys_and_ctrl_digits_are_the_windows")
 			run_test (agent t.test_f5_reaches_the_queue, "f5_reaches_the_queue")
 			run_test (agent t.test_alt_letter_reaches_the_queue, "alt_letter_reaches_the_queue")
-			run_test (agent t.test_sdk_macro_poison_is_armed, "sdk_macro_poison_is_armed")
-			run_test (agent t.test_sdk_macro_tripwire, "sdk_macro_tripwire")
+			run_windows_test (agent t.test_sdk_macro_poison_is_armed, "sdk_macro_poison_is_armed")
+			run_windows_test (agent t.test_sdk_macro_tripwire, "sdk_macro_tripwire")
 				-- Last: it opens and destroys the one main window the tests above share.
 			run_test (agent t.test_stepwise_turns_return_early_and_report_close, "stepwise_turns_return_early_and_report_close")
 			run_test (agent t.test_close_request_is_an_event_when_asked, "close_request_is_an_event_when_asked")
 
 			print ("%N========================%N")
-			print ("Results: " + passed.out + " passed, " + failed.out + " failed%N")
+			print ("Results: " + passed.out + " passed, " + failed.out + " failed")
+			if skipped > 0 then
+				print (", " + skipped.out + " skipped (Windows only)")
+			end
+			print ("%N")
 			if failed > 0 then
 				print ("TESTS FAILED%N")
 			else
@@ -96,6 +100,18 @@ feature {NONE} -- Initialization
 		end
 
 feature {NONE} -- Harness
+
+	run_windows_test (a_test: PROCEDURE; a_name: STRING)
+			-- Run a test that is Windows by nature (the registry, PowerShell, the setting
+			-- messages, UI Automation, the SDK headers); elsewhere report it skipped.
+		do
+			if {PLATFORM}.is_windows then
+				run_test (a_test, a_name)
+			else
+				print ("  SKIP: " + a_name + " (Windows only)%N")
+				skipped := skipped + 1
+			end
+		end
 
 	run_test (a_test: PROCEDURE; a_name: STRING)
 			-- Run one test; any exception (contract or otherwise) fails it.
@@ -125,5 +141,8 @@ feature {NONE} -- Harness
 	passed: INTEGER
 
 	failed: INTEGER
+
+	skipped: INTEGER
+			-- Windows-only tests not run on this platform.
 
 end

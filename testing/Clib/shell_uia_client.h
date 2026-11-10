@@ -7,6 +7,18 @@
 #ifndef SHELL_UIA_CLIENT_H
 #define SHELL_UIA_CLIENT_H
 
+#ifndef _WIN32
+/* Off Windows there is no UI Automation: stand-ins with the same names, so the test
+   classes compile on the Mac and Linux; the runner skips the tests that use them. */
+#include <wchar.h>
+static int s_uia_client_hr = 0;
+static int shell_uia_client_read(void* l_hwnd, wchar_t* l_out, int l_cap) { (void)l_hwnd; if (l_out && l_cap > 0) l_out[0] = 0; return -2; }
+static int shell_uia_focus_from_worker(int l_id) { (void)l_id; return -1; }
+static int shell_uia_focus_pushed_on_this_thread(void) { return 0; }
+static void* shell_uia_probe_window(void) { return 0; }
+static void shell_uia_probe_close(void* l_hwnd) { (void)l_hwnd; }
+#else
+
 #include "simple_shell_uia.h"
 #include <UIAutomationClient.h>
 
@@ -198,5 +210,7 @@ static void shell_uia_probe_close(void* l_hwnd) {
     DestroyWindow((HWND)l_hwnd);
     while (PeekMessageW(&l_msg, 0, WM_QUIT, WM_QUIT, PM_REMOVE)) {}
 }
+
+#endif /* _WIN32 */
 
 #endif

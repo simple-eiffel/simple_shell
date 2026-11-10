@@ -57,9 +57,9 @@ feature -- Basic operations
 		require
 			claimed_bare: keydown_is_claimed (a_vk, False, False)
 		external
-			"C inline use %"simple_shell.h%""
+			"C inline use %"shell_key_probe.h%""
 		alias
-			"shell_wndproc((HWND)0, WM_KEYDOWN, (WPARAM)$a_vk, (LPARAM)0);"
+			"shell_key_probe_keydown((int)$a_vk);"
 		end
 
 	deliver_syskeydown (a_vk: INTEGER)
@@ -76,9 +76,9 @@ feature -- Basic operations
 		require
 			claimed: syskey_is_claimed (a_vk)
 		external
-			"C inline use %"simple_shell.h%""
+			"C inline use %"shell_key_probe.h%""
 		alias
-			"shell_wndproc((HWND)0, WM_SYSKEYDOWN, (WPARAM)$a_vk, (LPARAM)0);"
+			"shell_key_probe_syskeydown((int)$a_vk);"
 		end
 
 feature {NONE} -- Externals

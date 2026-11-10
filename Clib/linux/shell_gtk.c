@@ -2585,3 +2585,243 @@ int shell_spell_ignore(const void *word)
 	s_enchant_add_session(s_enchant_dict, (const char *)word, -1);
 	return 1;
 }
+
+/* ------------------------------------------------------------------ the tray
+
+   The freedesktop StatusNotifierItem over D-Bus (KDE, and GNOME with the AppIndicator
+   extension): each icon is its own session-bus connection that owns
+   org.kde.StatusNotifierItem-<pid>-<n>, exports /StatusNotifierItem and registers with the
+   desktop's StatusNotifierWatcher. Where no watcher answers, there is no notification area and
+   the icon is not installed (0), as the Windows half degrades. Clicks come back as event 52
+   (button: 1 left, 2 right, 3 middle, 4 the balloon) with the icon's id. Balloons are
+   org.freedesktop.Notifications notices; clicking one is button 4. */
+#define SHELL_TRAYS 4
+typedef struct { int used, id; GDBusConnection *conn; guint reg; char *name, *tip; guint32 notice; } ShellTray;
+static ShellTray s_tray[SHELL_TRAYS];
+static int s_tray_next_id = 0;
+static GDBusNodeInfo *s_sni_info = NULL;
+static guint s_notice_watch = 0;
+static GDBusConnection *s_notice_bus = NULL;   /* the shared session bus, for notices */
+static const char *Shell_sni_xml =
+	"<node><interface name='org.kde.StatusNotifierItem'>"
+	"<property name='Category' type='s' access='read'/>"
+	"<property name='Id' type='s' access='read'/>"
+	"<property name='Title' type='s' access='read'/>"
+	"<property name='Status' type='s' access='read'/>"
+	"<property name='IconName' type='s' access='read'/>"
+	"<property name='ToolTip' type='(sa(iiay)ss)' access='read'/>"
+	"<property name='ItemIsMenu' type='b' access='read'/>"
+	"<method name='Activate'><arg name='x' type='i' direction='in'/><arg name='y' type='i' direction='in'/></method>"
+	"<method name='SecondaryActivate'><arg name='x' type='i' direction='in'/><arg name='y' type='i' direction='in'/></method>"
+	"<method name='ContextMenu'><arg name='x' type='i' direction='in'/><arg name='y' type='i' direction='in'/></method>"
+	"<method name='Scroll'><arg name='delta' type='i' direction='in'/><arg name='orientation' type='s' direction='in'/></method>"
+	"<signal name='NewTitle'/><signal name='NewToolTip'/><signal name='NewIcon'/>"
+	"</interface></node>";
+
+static ShellTray *shell_tray_of(HWND h)
+{
+	int i;
+	for (i = 0; i < SHELL_TRAYS; i++) if (s_tray[i].used && (HWND)&s_tray[i] == h) return &s_tray[i];
+	return NULL;
+}
+static void shell_sni_call(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+	const gchar *method, GVariant *params, GDBusMethodInvocation *inv, gpointer d)
+{
+	ShellTray *t = &s_tray[GPOINTER_TO_INT(d)];
+	(void)c; (void)sender; (void)path; (void)iface; (void)params;
+	if (t->used) {
+		if (g_strcmp0(method, "Activate") == 0) shell_push(52, 1, 0, t->id);
+		else if (g_strcmp0(method, "ContextMenu") == 0) shell_push(52, 2, 0, t->id);
+		else if (g_strcmp0(method, "SecondaryActivate") == 0) shell_push(52, 3, 0, t->id);
+	}
+	g_dbus_method_invocation_return_value(inv, NULL);
+}
+static GVariant *shell_sni_get(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+	const gchar *prop, GError **err, gpointer d)
+{
+	ShellTray *t = &s_tray[GPOINTER_TO_INT(d)];
+	const char *l_tip = t->tip ? t->tip : "";
+	const char *l_icon = s_icon_name ? s_icon_name : "application-x-executable";
+	(void)c; (void)sender; (void)path; (void)iface; (void)err;
+	if (g_strcmp0(prop, "Category") == 0) return g_variant_new_string("ApplicationStatus");
+	if (g_strcmp0(prop, "Id") == 0) return g_variant_new_string(t->name ? t->name : "simple_shell");
+	if (g_strcmp0(prop, "Title") == 0) return g_variant_new_string(l_tip);
+	if (g_strcmp0(prop, "Status") == 0) return g_variant_new_string("Active");
+	if (g_strcmp0(prop, "IconName") == 0) return g_variant_new_string(l_icon);
+	if (g_strcmp0(prop, "ItemIsMenu") == 0) return g_variant_new_boolean(FALSE);
+	if (g_strcmp0(prop, "ToolTip") == 0) {
+		GVariantBuilder b;
+		g_variant_builder_init(&b, G_VARIANT_TYPE("a(iiay)"));
+		return g_variant_new("(sa(iiay)ss)", l_icon, &b, l_tip, "");
+	}
+	return NULL;
+}
+static const GDBusInterfaceVTable Shell_sni_vtable = { shell_sni_call, shell_sni_get, NULL, { 0 } };
+
+static void shell_tray_drop(ShellTray *t)
+{
+	if (t->conn) {
+		if (t->reg) g_dbus_connection_unregister_object(t->conn, t->reg);
+		g_dbus_connection_close_sync(t->conn, NULL, NULL);
+		g_object_unref(t->conn);
+	}
+	g_free(t->name); g_free(t->tip);
+	memset(t, 0, sizeof *t);
+}
+/* Install an icon titled `tip'; its handle, or 0 where there is no notification area. */
+HWND shell_tray_add(const void *tip)
+{
+	char *l_address;
+	GVariant *r;
+	GError *e = NULL;
+	ShellTray *t = NULL;
+	int i, l_slot = -1;
+	for (i = 0; i < SHELL_TRAYS && l_slot < 0; i++) if (!s_tray[i].used) l_slot = i;
+	if (l_slot < 0) return NULL;
+	if (!s_sni_info) s_sni_info = g_dbus_node_info_new_for_xml(Shell_sni_xml, NULL);
+	l_address = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+	if (!l_address || !s_sni_info) { g_free(l_address); return NULL; }
+	t = &s_tray[l_slot];
+	memset(t, 0, sizeof *t);
+	t->used = 1;
+	t->id = ++s_tray_next_id;
+	t->tip = g_strdup(tip ? (const char *)tip : "");
+	t->conn = g_dbus_connection_new_for_address_sync(l_address,
+		G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, NULL);
+	g_free(l_address);
+	if (!t->conn) { shell_tray_drop(t); return NULL; }
+	t->name = g_strdup_printf("org.kde.StatusNotifierItem-%d-%d", (int)getpid(), t->id);
+	t->reg = g_dbus_connection_register_object(t->conn, "/StatusNotifierItem", s_sni_info->interfaces[0],
+		&Shell_sni_vtable, GINT_TO_POINTER(l_slot), NULL, NULL);
+	r = g_dbus_connection_call_sync(t->conn, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+		"RequestName", g_variant_new("(su)", t->name, 4u), NULL, G_DBUS_CALL_FLAGS_NONE, 1000, NULL, &e);
+	if (r) g_variant_unref(r);
+	if (e || !t->reg) { g_clear_error(&e); shell_tray_drop(t); return NULL; }
+	r = g_dbus_connection_call_sync(t->conn, "org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+		"org.kde.StatusNotifierWatcher", "RegisterStatusNotifierItem", g_variant_new("(s)", t->name),
+		NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START, 1000, NULL, &e);
+	if (r) g_variant_unref(r);
+	if (e) { g_clear_error(&e); shell_tray_drop(t); return NULL; }   /* no notification area here */
+	return (HWND)t;
+}
+int shell_tray_id(HWND h) { ShellTray *t = shell_tray_of(h); return t ? t->id : 0; }
+int shell_tray_set_tip(HWND h, const void *tip)
+{
+	ShellTray *t = shell_tray_of(h);
+	if (!t) return 0;
+	g_free(t->tip);
+	t->tip = g_strdup(tip ? (const char *)tip : "");
+	g_dbus_connection_emit_signal(t->conn, NULL, "/StatusNotifierItem", "org.kde.StatusNotifierItem", "NewTitle", NULL, NULL);
+	g_dbus_connection_emit_signal(t->conn, NULL, "/StatusNotifierItem", "org.kde.StatusNotifierItem", "NewToolTip", NULL, NULL);
+	return 1;
+}
+static void shell_notice_action(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+	const gchar *signal, GVariant *params, gpointer d)
+{
+	guint32 l_id = 0;
+	const gchar *l_key = NULL;
+	int i;
+	(void)c; (void)sender; (void)path; (void)iface; (void)signal; (void)d;
+	g_variant_get(params, "(u&s)", &l_id, &l_key);
+	for (i = 0; i < SHELL_TRAYS; i++)
+		if (s_tray[i].used && s_tray[i].notice == l_id) { shell_push(52, 4, 0, s_tray[i].id); s_tray[i].notice = 0; }
+}
+/* A notice beside the icon; 1 when the desktop's notification service took it. */
+int shell_tray_balloon(HWND h, const void *title, const void *body)
+{
+	ShellTray *t = shell_tray_of(h);
+	GVariantBuilder l_actions;
+	GVariant *r;
+	if (!t) return 0;
+	if (!s_notice_bus) s_notice_bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+	if (!s_notice_bus) return 0;
+	if (!s_notice_watch)
+		s_notice_watch = g_dbus_connection_signal_subscribe(s_notice_bus, "org.freedesktop.Notifications", "org.freedesktop.Notifications",
+			"ActionInvoked", "/org/freedesktop/Notifications", NULL, G_DBUS_SIGNAL_FLAGS_NONE, shell_notice_action, NULL, NULL);
+	g_variant_builder_init(&l_actions, G_VARIANT_TYPE("as"));
+	g_variant_builder_add(&l_actions, "s", "default");
+	g_variant_builder_add(&l_actions, "s", "Open");
+	r = g_dbus_connection_call_sync(s_notice_bus, "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+		"org.freedesktop.Notifications", "Notify",
+		g_variant_new("(susssasa{sv}i)", t->tip ? t->tip : "", 0u, s_icon_name ? s_icon_name : "",
+			title ? (const char *)title : "", body ? (const char *)body : "", &l_actions, NULL, -1),
+		G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 1000, NULL, NULL);
+	if (!r) return 0;
+	g_variant_get(r, "(u)", &t->notice);
+	g_variant_unref(r);
+	return 1;
+}
+int shell_tray_remove(HWND h)
+{
+	ShellTray *t = shell_tray_of(h);
+	if (!t) return 0;
+	shell_tray_drop(t);
+	return 1;
+}
+/* The test door: a Windows tray message as the icon would send it. */
+void shell_tray_try_click(HWND h, int l_msg)
+{
+	ShellTray *t = shell_tray_of(h);
+	if (!t) return;
+	switch (l_msg) {
+		case 0x0202: shell_push(52, 1, 0, t->id); break;   /* WM_LBUTTONUP */
+		case 0x0205: shell_push(52, 2, 0, t->id); break;   /* WM_RBUTTONUP */
+		case 0x0203: shell_push(52, 3, 0, t->id); break;   /* WM_LBUTTONDBLCLK */
+		case 0x0405: shell_push(52, 4, 0, t->id); break;   /* NIN_BALLOONUSERCLICK */
+	}
+}
+
+/* The icon's menu: one item per line of `l_items' ("-" a separator), in a small window at the
+   pointer (placed exactly on X11; where the desktop puts it on Wayland), waiting for the choice:
+   the line number, or 0 when it closes unchosen. */
+static int s_tray_choice = 0, s_tray_menu_open = 0;
+static void shell_tray_menu_pick(GtkButton *b, gpointer d)
+{
+	s_tray_choice = GPOINTER_TO_INT(d);
+	gtk_window_close(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(b))));
+}
+static void shell_tray_menu_active(GObject *o, GParamSpec *ps, gpointer d)
+{
+	(void)ps; (void)d;
+	if (!gtk_window_is_active(GTK_WINDOW(o))) gtk_window_close(GTK_WINDOW(o));
+}
+static void shell_tray_menu_gone(GtkWidget *w, gpointer d) { (void)w; (void)d; s_tray_menu_open = 0; }
+int shell_tray_menu(HWND h, const void *l_items)
+{
+	ShellTray *t = shell_tray_of(h);
+	GtkWidget *w, *box;
+	char **l_lines, **it;
+	int n = 0;
+	if (!t || !l_items || g_thread_self() != s_pump_thread) return 0;
+	w = gtk_window_new();
+	gtk_window_set_decorated(GTK_WINDOW(w), FALSE);
+	box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	l_lines = g_strsplit((const char *)l_items, "\n", -1);
+	for (it = l_lines; *it; it++) {
+		n++;
+		if (strcmp(*it, "-") == 0) gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+		else {
+			GtkWidget *b = gtk_button_new_with_label(*it);
+			gtk_button_set_has_frame(GTK_BUTTON(b), FALSE);
+			g_signal_connect(b, "clicked", G_CALLBACK(shell_tray_menu_pick), GINT_TO_POINTER(n));
+			gtk_box_append(GTK_BOX(box), b);
+		}
+	}
+	g_strfreev(l_lines);
+	gtk_window_set_child(GTK_WINDOW(w), box);
+	g_signal_connect(w, "notify::is-active", G_CALLBACK(shell_tray_menu_active), NULL);
+	g_signal_connect(w, "destroy", G_CALLBACK(shell_tray_menu_gone), NULL);
+	s_tray_choice = 0;
+	s_tray_menu_open = 1;
+#ifdef GDK_WINDOWING_X11
+	if (shell_x11()) {
+		int px = 0, py = 0;
+		gtk_widget_realize(w);
+		shell_input_pointer(&px, &py);
+		XMoveWindow(shell_x11(), gdk_x11_surface_get_xid(gtk_native_get_surface(GTK_NATIVE(w))), px, py);
+	}
+#endif
+	gtk_window_present(GTK_WINDOW(w));
+	while (s_tray_menu_open) g_main_context_iteration(NULL, TRUE);
+	return s_tray_choice;
+}

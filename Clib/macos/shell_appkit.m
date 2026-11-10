@@ -95,6 +95,7 @@ static int s_start_hidden = 0, s_close_requests = 0, s_cursor = 0;
 static int s_backdrop = 0x12141B;             /* Windows' default: RGB(18, 20, 27) */
 static NSTimer *s_heartbeat = nil, *s_fast = nil, *s_dwell = nil;
 static atomic_int s_wake_pending = 0;
+static atomic_int s_pump_claimed = 0;   /* a host claimed the pump (shell_claim_pump_thread) */
 static int s_nudged = 0;                      /* a nudge event is waiting in AppKit's queue */
 static id s_target = nil;
 
@@ -1167,7 +1168,8 @@ int shell_wake(void)
 {
 	int l_expected = 0;
 	if (!atomic_compare_exchange_strong(&s_wake_pending, &l_expected, 1)) return 2;
-	if (!NSApp) { atomic_store(&s_wake_pending, 0); return 0; }
+	/* Nobody to wake, as on Windows: no main window open and no thread claimed. */
+	if (!NSApp || (!s_window && !atomic_load(&s_pump_claimed))) { atomic_store(&s_wake_pending, 0); return 0; }
 	dispatch_async(dispatch_get_main_queue(), ^{
 		atomic_store(&s_wake_pending, 0);
 		shell_push(54, 0, 0, 0);
@@ -1175,7 +1177,9 @@ int shell_wake(void)
 	});
 	return 1;
 }
-void shell_claim_pump_thread(int l_on) { (void)l_on; atomic_store(&s_wake_pending, 0); }
+/* AppKit's pump is always the main thread; claiming it says only that a host pumps, so a
+   wake has somebody to reach with no main window open. Releasing forgets that. */
+void shell_claim_pump_thread(int l_on) { atomic_store(&s_pump_claimed, l_on ? 1 : 0); atomic_store(&s_wake_pending, 0); }
 /* AppKit's pump is always the main thread's. */
 int shell_is_pump_thread(void) { return pthread_main_np() ? 1 : 0; }
 

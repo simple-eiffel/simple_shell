@@ -70,6 +70,12 @@ int SystemParametersInfoW(unsigned int a_action, unsigned int a_param, void *a_o
 }
 
 static void shell_take_drops(GtkWidget *a_widget, gpointer d);   /* below, with files */
+static int shell_panel_begin_grip(int l_slot, GtkGesture *g, int l_code, double x, double y);   /* below, with the grips */
+static void shell_panel_on_destroyed(GtkWidget *w, gpointer d);
+static void shell_keep_text(const char *a_text);
+static int shell_keep_drops(const char *a_paths);
+static gboolean shell_drop_accept(GtkDropTarget *t, GdkDrop *drop, gpointer d);
+static int s_dragging_out = 0, s_drag_landed_here = 0, s_main_takes_text = 0;
 
 /* ------------------------------------------------------------------ the queue */
 
@@ -774,7 +780,20 @@ typedef struct {
 	cairo_surface_t *backing;
 	int fill, framed, document, alpha, accepts, primary_down, click_through;
 	double px, py;
+	/* the place the program asked for (Wayland tells no window's place) */
+	int ax, ay, aw, ah;
+	/* grips (1.11.0, 1.14.0, 1.15.0), as the Windows half keeps them */
+	int drag, press_drag, axis, side_grip, bottom_grip, grip, minw, minh;
+	/* 1.40.0: text dragged in */
+	int takes_text;
+	/* a framed panel's title bar height, in pixels: the window is the client plus it */
+	int frame_h;
+	/* the last window that had this slot, held until the slot's next window exists, so the two
+	   never share an address (a handle compared after a destruction behind our back) */
+	GtkWidget *gone;
 } ShellPanel;
+enum { Shell_ht_caption = 2, Shell_ht_left = 10, Shell_ht_right = 11, Shell_ht_top = 12, Shell_ht_topleft = 13,
+	Shell_ht_topright = 14, Shell_ht_bottom = 15, Shell_ht_bottomleft = 16, Shell_ht_bottomright = 17 };
 static ShellPanel s_panel[SHELL_PANELS];
 
 static int shell_panel_ok(int l_slot) { return l_slot >= 0 && l_slot < SHELL_PANELS && s_panel[l_slot].window ? 1 : 0; }
@@ -806,6 +825,7 @@ static void shell_panel_rebuild(int l_slot)
 	}
 	if (p->backing) cairo_surface_destroy(p->backing);
 	p->backing = l_new;
+	p->aw = w; p->ah = h + p->frame_h;   /* laid out at a new size: that is the window's size now */
 	if (!shell_coalesce_slot(48, w, h, l_slot)) shell_push(48, w, h, l_slot);
 	shell_push(44, 0, 0, l_slot);
 }
@@ -837,6 +857,11 @@ static void shell_panel_on_press(GtkGestureClick *g, int n, double x, double y, 
 	if (!shell_panel_ok(l_slot)) return;
 	s_panel[l_slot].px = x; s_panel[l_slot].py = y;
 	gtk_widget_grab_focus(s_panel[l_slot].area);
+	if (b == GDK_BUTTON_PRIMARY) {
+		GdkModifierType l_mods = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
+		int l_code = shell_panel_press_code(l_slot, shell_panel_px(l_slot, x), shell_panel_px(l_slot, y), (l_mods & GDK_SHIFT_MASK) ? 1 : 0);
+		if (l_code && shell_panel_begin_grip(l_slot, GTK_GESTURE(g), l_code, x, y)) return;
+	}
 	if (b == GDK_BUTTON_PRIMARY) {
 		s_panel[l_slot].primary_down = 1;
 		shell_push(n == 2 ? 64 : 41, shell_panel_px(l_slot, x), shell_panel_px(l_slot, y), l_slot);
@@ -904,19 +929,33 @@ static int shell_panel_make(int l_w, int l_h, const void *l_title, int l_framed,
 	ShellPanel *p;
 	GtkGesture *g;
 	GtkEventController *m, *s, *key;
+	GtkWidget *l_gone;
 	gpointer d;
 	shell_app();
 	for (i = 0; i < SHELL_PANELS && l_slot < 0; i++) if (!s_panel[i].window) l_slot = i;
 	if (l_slot < 0 || l_w <= 0 || l_h <= 0 || g_thread_self() != s_pump_thread) return -1;
 	p = &s_panel[l_slot];
+	l_gone = p->gone;
 	memset(p, 0, sizeof *p);
 	p->fill = 0xFFFFFF; p->framed = l_framed; p->document = l_document; p->alpha = 255;
+	p->aw = l_w; p->ah = l_h;
 	d = GINT_TO_POINTER(l_slot + 1);
 	k = shell_scale();
 	p->window = gtk_window_new();
 	gtk_window_set_title(GTK_WINDOW(p->window), l_title ? (const char *)l_title : "");
 	gtk_window_set_default_size(GTK_WINDOW(p->window), l_w / k, l_h / k);
 	gtk_window_set_decorated(GTK_WINDOW(p->window), l_framed ? TRUE : FALSE);
+	if (l_gone) g_object_unref(l_gone);   /* the new window has its own address now */
+	if (l_framed) {
+		/* a title bar of our own, so its height is known before the window is shown: the
+		   client is the asked size less the caption, as on Windows */
+		GtkWidget *l_bar = gtk_header_bar_new();
+		int l_min = 0, l_nat = 0;
+		gtk_window_set_titlebar(GTK_WINDOW(p->window), l_bar);
+		gtk_widget_measure(l_bar, GTK_ORIENTATION_VERTICAL, -1, &l_min, &l_nat, NULL, NULL);
+		p->frame_h = (l_nat > 0 ? l_nat : 37) * k;
+		if (p->frame_h >= l_h) p->frame_h = 0;
+	}
 	if (l_framed && !l_document && s_window) gtk_window_set_transient_for(GTK_WINDOW(p->window), GTK_WINDOW(s_window));
 	p->area = gtk_drawing_area_new();
 	gtk_widget_set_focusable(p->area, TRUE);
@@ -940,27 +979,50 @@ static int shell_panel_make(int l_w, int l_h, const void *l_title, int l_framed,
 	shell_take_drops(p->area, d);
 	gtk_window_set_child(GTK_WINDOW(p->window), p->area);
 	g_signal_connect(p->window, "close-request", G_CALLBACK(shell_panel_on_close), d);
+	g_signal_connect(p->window, "destroy", G_CALLBACK(shell_panel_on_destroyed), d);
 	g_signal_connect(p->window, "notify::is-active", G_CALLBACK(shell_panel_on_active), d);
 	/* a backing image from the start, at the asked size, so the program can draw before the
 	   compositor has shown the window */
-	p->backing = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, l_w, l_h);
+	p->backing = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, l_w, l_h - p->frame_h);
 	return l_slot;
 }
 
 int shell_panel_open_framed_as(int l_x, int l_y, int l_w, int l_h, const void *l_title, int l_document)
 {
-	(void)l_x; (void)l_y;
-	return shell_panel_make(l_w, l_h, l_title, 1, l_document ? 1 : 0);
+	int l_slot = shell_panel_make(l_w, l_h, l_title, 1, l_document ? 1 : 0);
+	if (l_slot >= 0) { s_panel[l_slot].ax = l_x; s_panel[l_slot].ay = l_y; }
+	return l_slot;
 }
 int shell_panel_open_framed(int l_x, int l_y, int l_w, int l_h, const void *l_title) { return shell_panel_open_framed_as(l_x, l_y, l_w, l_h, l_title, 0); }
-int shell_panel_open(int l_x, int l_y, int l_w, int l_h) { (void)l_x; (void)l_y; return shell_panel_make(l_w, l_h, NULL, 0, 0); }
+int shell_panel_open(int l_x, int l_y, int l_w, int l_h)
+{
+	int l_slot = shell_panel_make(l_w, l_h, NULL, 0, 0);
+	if (l_slot >= 0) { s_panel[l_slot].ax = l_x; s_panel[l_slot].ay = l_y; }
+	return l_slot;
+}
 void shell_panel_place(int l_slot, int l_x, int l_y, int l_w, int l_h)
 {
 	int k;
-	(void)l_x; (void)l_y;
 	if (!shell_panel_ok(l_slot) || l_w <= 0 || l_h <= 0) return;
+	s_panel[l_slot].ax = l_x; s_panel[l_slot].ay = l_y; s_panel[l_slot].aw = l_w; s_panel[l_slot].ah = l_h;
 	k = shell_panel_scale(l_slot);
 	gtk_window_set_default_size(GTK_WINDOW(s_panel[l_slot].window), l_w / k, l_h / k);
+	if (!gtk_widget_get_mapped(s_panel[l_slot].window)) {
+		/* not on screen, so no layout will follow: the client takes the new size now and says
+		   so (48), as Windows' WM_SIZE does for a hidden window */
+		ShellPanel *p = &s_panel[l_slot];
+		int cw = l_w, ch = l_h - p->frame_h;
+		if (ch > 0 && (!p->backing || cairo_image_surface_get_width(p->backing) != cw || cairo_image_surface_get_height(p->backing) != ch)) {
+			cairo_surface_t *l_new = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, cw, ch);
+			cairo_t *cr = cairo_create(l_new);
+			cairo_set_source_rgb(cr, ((p->fill >> 16) & 0xFF) / 255.0, ((p->fill >> 8) & 0xFF) / 255.0, (p->fill & 0xFF) / 255.0);
+			cairo_paint(cr);
+			if (p->backing) { cairo_set_source_surface(cr, p->backing, 0, 0); cairo_paint(cr); cairo_surface_destroy(p->backing); }
+			cairo_destroy(cr);
+			p->backing = l_new;
+			if (!shell_coalesce_slot(48, cw, ch, l_slot)) shell_push(48, cw, ch, l_slot);
+		}
+	}
 }
 void shell_panel_show(int l_slot, int l_x, int l_y, int l_w, int l_h)
 {
@@ -980,6 +1042,8 @@ void shell_panel_close(int l_slot)
 	p->window = NULL; p->area = NULL;
 	if (p->backing) { cairo_surface_destroy(p->backing); p->backing = NULL; }
 	g_signal_handlers_disconnect_matched(w, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, GINT_TO_POINTER(l_slot + 1));
+	if (p->gone) g_object_unref(p->gone);
+	p->gone = g_object_ref(w);
 	gtk_window_destroy(GTK_WINDOW(w));
 }
 void shell_panel_set_title(int l_slot, const void *l_title) { if (shell_panel_ok(l_slot)) gtk_window_set_title(GTK_WINDOW(s_panel[l_slot].window), l_title ? (const char *)l_title : ""); }
@@ -992,11 +1056,14 @@ void shell_panel_client_size(int l_slot, int *l_w, int *l_h)
 	*l_w = cairo_image_surface_get_width(s_panel[l_slot].backing);
 	*l_h = cairo_image_surface_get_height(s_panel[l_slot].backing);
 }
-/* Wayland tells no window's place: the rectangle is the size at the origin. */
+/* Wayland tells no window's place: the rectangle is the place last asked for, at the size the
+   program last asked for until the window has been laid out at another. */
 void shell_panel_rect(int l_slot, int *l_x, int *l_y, int *l_w, int *l_h)
 {
 	if (!shell_panel_ok(l_slot) || !s_panel[l_slot].backing) return;
-	*l_x = 0; *l_y = 0;
+	*l_x = s_panel[l_slot].ax; *l_y = s_panel[l_slot].ay;
+	*l_w = s_panel[l_slot].aw; *l_h = s_panel[l_slot].ah;
+	return;   /* GTK 4 resizes a shown window only by the user's hand, which updates aw, ah */
 	*l_w = cairo_image_surface_get_width(s_panel[l_slot].backing);
 	*l_h = cairo_image_surface_get_height(s_panel[l_slot].backing);
 }
@@ -1036,6 +1103,333 @@ int shell_panel_is_click_through(int l_slot) { return shell_panel_ok(l_slot) && 
 void shell_panel_set_accepts_files(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel[l_slot].accepts = l_on ? 1 : 0; }
 int shell_panel_accepts_files(int l_slot) { return shell_panel_ok(l_slot) && s_panel[l_slot].accepts ? 1 : 0; }
 HWND shell_panel_hwnd(int l_slot) { return shell_panel_ok(l_slot) ? (HWND)s_panel[l_slot].window : NULL; }
+
+/* ------------------------------------------------------------------ panel grips */
+
+void shell_panel_set_draggable(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel[l_slot].drag = l_on ? 1 : 0; }
+void shell_panel_set_press_drag(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel[l_slot].press_drag = l_on ? 1 : 0; }
+void shell_panel_set_axis(int l_slot, int l_axis) { if (shell_panel_ok(l_slot)) s_panel[l_slot].axis = (l_axis >= 0 && l_axis <= 2) ? l_axis : 0; }
+void shell_panel_set_side_grip(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel[l_slot].side_grip = l_on ? 1 : 0; }
+void shell_panel_set_bottom_grip(int l_slot, int l_on) { if (shell_panel_ok(l_slot)) s_panel[l_slot].bottom_grip = l_on ? 1 : 0; }
+void shell_panel_set_resizable(int l_slot, int l_grip, int l_min_w, int l_min_h)
+{
+	ShellPanel *p;
+	int k;
+	if (!shell_panel_ok(l_slot)) return;
+	p = &s_panel[l_slot];
+	p->grip = l_grip > 0 ? l_grip : 0;
+	p->minw = l_min_w > 0 ? l_min_w : 0;
+	p->minh = l_min_h > 0 ? l_min_h : 0;
+	k = shell_panel_scale(l_slot);
+	gtk_widget_set_size_request(p->area, p->minw ? p->minw / k : -1, p->minh ? p->minh / k : -1);
+}
+static void shell_panel_wh(int l_slot, int *w, int *h)
+{
+	*w = s_panel[l_slot].backing ? cairo_image_surface_get_width(s_panel[l_slot].backing) : s_panel[l_slot].aw;
+	*h = s_panel[l_slot].backing ? cairo_image_surface_get_height(s_panel[l_slot].backing) : s_panel[l_slot].ah;
+}
+/* What a Shift+press at client point (x, y) does: a move (caption) or the resize grip there. */
+int shell_panel_grip_code(int l_slot, int l_x, int l_y)
+{
+	int g, w, h, l_left, l_right, l_top, l_bottom;
+	if (!shell_panel_ok(l_slot) || s_panel[l_slot].grip <= 0) return Shell_ht_caption;
+	g = s_panel[l_slot].grip;
+	shell_panel_wh(l_slot, &w, &h);
+	l_left = l_x < g; l_right = l_x >= w - g; l_top = l_y < g; l_bottom = l_y >= h - g;
+	if (l_top && l_left) return Shell_ht_topleft;
+	if (l_top && l_right) return Shell_ht_topright;
+	if (l_bottom && l_left) return Shell_ht_bottomleft;
+	if (l_bottom && l_right) return Shell_ht_bottomright;
+	if (l_left) return Shell_ht_left;
+	if (l_right) return Shell_ht_right;
+	if (l_top) return Shell_ht_top;
+	if (l_bottom) return Shell_ht_bottom;
+	return Shell_ht_caption;
+}
+/* What a press at client point (x, y) does, as Windows' shell_panel_press_code: 0 for the
+   program (event 41), or a move or resize the shell carries out. */
+int shell_panel_press_code(int l_slot, int l_x, int l_y, int l_shift)
+{
+	ShellPanel *p;
+	int w, h;
+	if (!shell_panel_ok(l_slot)) return 0;
+	p = &s_panel[l_slot];
+	if (p->drag && l_shift) return shell_panel_grip_code(l_slot, l_x, l_y);
+	if (p->press_drag) return Shell_ht_caption;
+	shell_panel_wh(l_slot, &w, &h);
+	if (p->side_grip && p->grip > 0) {
+		if (l_x < p->grip) return Shell_ht_left;
+		if (l_x >= w - p->grip) return Shell_ht_right;
+	}
+	if (p->bottom_grip && p->grip > 0 && l_y >= h - p->grip) return Shell_ht_bottom;
+	return 0;
+}
+/* Hand a move or resize to the compositor, as Windows' modal size-move loop does. Wayland moves
+   the window itself and tells nobody where it went, so a move cannot keep to one axis there
+   and reports no 47 or 49. */
+static int shell_panel_begin_grip(int l_slot, GtkGesture *g, int l_code, double x, double y)
+{
+	GtkNative *n = gtk_widget_get_native(s_panel[l_slot].area);
+	GdkSurface *s = n ? gtk_native_get_surface(n) : NULL;
+	GdkDevice *dev = gtk_gesture_get_device(g);
+	guint32 l_time = gtk_event_controller_get_current_event_time(GTK_EVENT_CONTROLLER(g));
+	double sx = x, sy = y;
+	GdkSurfaceEdge l_edge;
+	if (!s || !GDK_IS_TOPLEVEL(s) || !dev) return 0;
+	{
+		graphene_point_t a = GRAPHENE_POINT_INIT((float) x, (float) y), b;
+		if (gtk_widget_compute_point(s_panel[l_slot].area, GTK_WIDGET(n), &a, &b)) { sx = b.x; sy = b.y; }
+	}
+	gtk_gesture_set_state(g, GTK_EVENT_SEQUENCE_CLAIMED);
+	if (l_code == Shell_ht_caption) {
+		gdk_toplevel_begin_move(GDK_TOPLEVEL(s), dev, GDK_BUTTON_PRIMARY, sx, sy, l_time);
+		return 1;
+	}
+	switch (l_code) {
+		case Shell_ht_left: l_edge = GDK_SURFACE_EDGE_WEST; break;
+		case Shell_ht_right: l_edge = GDK_SURFACE_EDGE_EAST; break;
+		case Shell_ht_top: l_edge = GDK_SURFACE_EDGE_NORTH; break;
+		case Shell_ht_bottom: l_edge = GDK_SURFACE_EDGE_SOUTH; break;
+		case Shell_ht_topleft: l_edge = GDK_SURFACE_EDGE_NORTH_WEST; break;
+		case Shell_ht_topright: l_edge = GDK_SURFACE_EDGE_NORTH_EAST; break;
+		case Shell_ht_bottomleft: l_edge = GDK_SURFACE_EDGE_SOUTH_WEST; break;
+		default: l_edge = GDK_SURFACE_EDGE_SOUTH_EAST; break;
+	}
+	gdk_toplevel_begin_resize(GDK_TOPLEVEL(s), l_edge, dev, GDK_BUTTON_PRIMARY, sx, sy, l_time);
+	return 1;
+}
+/* Where a move by (dx, dy) would put the panel, kept to its axis (the test door to a move);
+   reported as 49, as Windows' WM_MOVING is. */
+void shell_panel_try_move(int l_slot, int l_dx, int l_dy, int *l_x, int *l_y)
+{
+	int l_left, l_top;
+	if (!shell_panel_ok(l_slot)) return;
+	if (s_panel[l_slot].axis == 1) l_dy = 0;
+	if (s_panel[l_slot].axis == 2) l_dx = 0;
+	l_left = s_panel[l_slot].ax + l_dx; l_top = s_panel[l_slot].ay + l_dy;
+	if (l_x) *l_x = l_left;
+	if (l_y) *l_y = l_top;
+	if (!shell_coalesce_slot(49, l_left, l_top, l_slot)) shell_push(49, l_left, l_top, l_slot);
+}
+/* The window went without `shell_panel_close' (its owner's destruction, or the test door): the
+   slot is free again. */
+static void shell_panel_on_destroyed(GtkWidget *w, gpointer d)
+{
+	int l_slot = shell_slot_of(d);
+	ShellPanel *p;
+	if (l_slot < 0 || l_slot >= SHELL_PANELS || s_panel[l_slot].window != w) return;
+	p = &s_panel[l_slot];
+	if (p->gone) g_object_unref(p->gone);
+	p->gone = g_object_ref(w);
+	p->window = NULL; p->area = NULL;
+	if (p->backing) { cairo_surface_destroy(p->backing); p->backing = NULL; }
+}
+void shell_panel_destroy_behind(int l_slot) { if (shell_panel_ok(l_slot)) gtk_window_destroy(GTK_WINDOW(s_panel[l_slot].window)); }
+
+/* Windows messages, as the panel's window procedure takes them (the test door): what a framed
+   panel's keys, characters, close box, activation, double clicks and leaves queue. */
+int shell_panel_send(int l_slot, int l_msg, int l_w, int l_l)
+{
+	int x = (short)(l_l & 0xFFFF), y = (short)((l_l >> 16) & 0xFFFF), l_framed;
+	if (!shell_panel_ok(l_slot)) return 0;
+	l_framed = s_panel[l_slot].framed;
+	if (l_msg == 0x0021) return l_framed ? 1 : 3;   /* WM_MOUSEACTIVATE: MA_ACTIVATE, MA_NOACTIVATE */
+	switch (l_msg) {
+		case 0x0100: if (l_framed && shell_keydown_is_ours(l_w, shell_control_down(), shell_alt_down())) shell_push(60, l_w, 0, l_slot); break;
+		case 0x0104: if (l_framed && shell_syskey_is_ours(l_w)) shell_push(60, l_w, 0, l_slot); break;
+		case 0x0102: if (l_framed) shell_push(61, l_w, 0, l_slot); break;
+		case 0x0010: if (l_framed) shell_push(62, 0, 0, l_slot); break;
+		case 0x0006: if (l_framed) shell_push(63, (l_w & 0xFFFF) ? 1 : 0, 0, l_slot); break;
+		case 0x0203: shell_push(64, x, y, l_slot); break;
+		case 0x02A3: shell_push(65, 0, 0, l_slot); break;
+		case 0x0201: shell_push(41, x, y, l_slot); break;
+		case 0x0202: shell_push(42, x, y, l_slot); break;
+		case 0x0200: shell_push(43, x, y, l_slot); break;
+		case 0x0204: shell_push(46, x, y, l_slot); break;
+		case 0x020A: shell_push(45, (short)((l_w >> 16) & 0xFFFF), 0, l_slot); break;
+		default: return 0;
+	}
+	return 0;
+}
+
+/* ------------------------------------------------------------------ the status strip */
+
+/* A small undecorated window of its own, drawn from a backing image (21 press, 23 expose). A
+   press moves it through the compositor; Wayland tells nobody where it went, so 22 is not
+   reported there. */
+static GtkWidget *s_strip = NULL, *s_strip_area = NULL;
+static cairo_surface_t *s_strip_backing = NULL;
+static void shell_strip_draw(GtkDrawingArea *a, cairo_t *cr, int w, int h, gpointer d)
+{
+	int k = gtk_widget_get_scale_factor(GTK_WIDGET(a));
+	(void)w; (void)h; (void)d;
+	if (!s_strip_backing) return;
+	cairo_scale(cr, 1.0 / k, 1.0 / k);
+	cairo_set_source_surface(cr, s_strip_backing, 0, 0);
+	cairo_paint(cr);
+}
+static void shell_strip_press(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	GtkNative *nat = gtk_widget_get_native(s_strip_area);
+	GdkSurface *s = nat ? gtk_native_get_surface(nat) : NULL;
+	int k = gtk_widget_get_scale_factor(s_strip_area);
+	(void)n; (void)d;
+	shell_push(21, (int)(x * k), (int)(y * k), 0);
+	if (s && GDK_IS_TOPLEVEL(s) && gtk_gesture_get_device(GTK_GESTURE(g)))
+		gdk_toplevel_begin_move(GDK_TOPLEVEL(s), gtk_gesture_get_device(GTK_GESTURE(g)), GDK_BUTTON_PRIMARY, x, y,
+			gtk_event_controller_get_current_event_time(GTK_EVENT_CONTROLLER(g)));
+}
+void *shell_show_strip(int x, int y, int w, int h)
+{
+	int k;
+	(void)x; (void)y;
+	if (w <= 0 || h <= 0 || g_thread_self() != s_pump_thread) return NULL;
+	shell_app();
+	k = shell_scale();
+	if (!s_strip) {
+		GtkGesture *g;
+		s_strip = gtk_window_new();
+		gtk_window_set_decorated(GTK_WINDOW(s_strip), FALSE);
+		s_strip_area = gtk_drawing_area_new();
+		gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(s_strip_area), shell_strip_draw, NULL, NULL);
+		g = gtk_gesture_click_new();
+		g_signal_connect(g, "pressed", G_CALLBACK(shell_strip_press), NULL);
+		gtk_widget_add_controller(s_strip_area, GTK_EVENT_CONTROLLER(g));
+		gtk_window_set_child(GTK_WINDOW(s_strip), s_strip_area);
+		g_object_add_weak_pointer(G_OBJECT(s_strip), (gpointer *)&s_strip);
+	}
+	if (!s_strip_backing || cairo_image_surface_get_width(s_strip_backing) != w || cairo_image_surface_get_height(s_strip_backing) != h) {
+		if (s_strip_backing) cairo_surface_destroy(s_strip_backing);
+		s_strip_backing = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+	}
+	gtk_window_set_default_size(GTK_WINDOW(s_strip), w / k > 0 ? w / k : 1, h / k > 0 ? h / k : 1);
+	gtk_widget_set_visible(s_strip, TRUE);
+	shell_push(23, 0, 0, 0);
+	return s_strip;
+}
+void shell_hide_strip(void) { if (s_strip) gtk_widget_set_visible(s_strip, FALSE); }
+void *shell_strip_dc(void) { return s_strip ? (void *)s_strip_backing : NULL; }
+void shell_strip_release(void *dc) { if (dc && s_strip_area) gtk_widget_queue_draw(s_strip_area); }
+
+/* ------------------------------------------------------------------ text in, drags out (1.40.0) */
+
+#define SHELL_TEXT_CAP 32768
+static gunichar2 s_drop_text[SHELL_TEXT_CAP];
+static int s_drop_text_len = 0;
+static void shell_keep_text(const char *a_text)
+{
+	glong n = 0;
+	gunichar2 *u = g_utf8_to_utf16(a_text ? a_text : "", -1, NULL, &n, NULL);
+	if (!u) { s_drop_text_len = 0; return; }
+	if (n > SHELL_TEXT_CAP - 1) n = SHELL_TEXT_CAP - 1;
+	memcpy(s_drop_text, u, (size_t)n * sizeof(gunichar2));
+	s_drop_text[n] = 0;
+	s_drop_text_len = (int)n;
+	g_free(u);
+}
+/* The text dropped last, UTF-16 into `buf'; taking it empties the store. */
+int shell_dropped_text(void *buf, int cap)
+{
+	int n = s_drop_text_len;
+	if (cap < 1) return 0;
+	if (n >= cap) n = cap - 1;
+	memcpy(buf, s_drop_text, (size_t)n * sizeof(gunichar2));
+	((gunichar2 *)buf)[n] = 0;
+	s_drop_text_len = 0;
+	return n;
+}
+void shell_panel_set_accepts_text(int l_slot, int l_on)
+{
+	if (l_slot < 0) s_main_takes_text = l_on ? 1 : 0;
+	else if (shell_panel_ok(l_slot)) s_panel[l_slot].takes_text = l_on ? 1 : 0;
+}
+int shell_panel_accepts_text(int l_slot)
+{
+	if (l_slot < 0) return s_main_takes_text;
+	return shell_panel_ok(l_slot) && s_panel[l_slot].takes_text ? 1 : 0;
+}
+static int shell_takes_files_at(int l_slot) { return l_slot < 0 ? 1 : shell_panel_accepts_files(l_slot); }
+/* A drag is welcome when it carries files and the window takes files, or (no files) text and
+   it takes text. A drag carrying files is files only. */
+static gboolean shell_drop_accept(GtkDropTarget *t, GdkDrop *drop, gpointer d)
+{
+	int l_slot = GPOINTER_TO_INT(d) - 1;
+	GdkContentFormats *f = gdk_drop_get_formats(drop);
+	(void)t;
+	if (gdk_content_formats_contain_gtype(f, GDK_TYPE_FILE_LIST)) return shell_takes_files_at(l_slot);
+	return gdk_content_formats_contain_gtype(f, G_TYPE_STRING) && shell_panel_accepts_text(l_slot);
+}
+/* The test door: what a drag of `l_text' and `l_paths' (UTF-8, paths one per line) brings
+   to client point (x, y), as another program's drag arrives. */
+void shell_panel_try_drag_in(int l_slot, int l_x, int l_y, const void *l_text, const void *l_paths)
+{
+	const char *l_t = l_text ? (const char *)l_text : "", *l_p = l_paths ? (const char *)l_paths : "";
+	int n;
+	if (l_slot >= 0 && !shell_panel_ok(l_slot)) return;
+	if (*l_p) {
+		if (!shell_takes_files_at(l_slot)) return;
+		n = shell_keep_drops(l_p);
+		if (l_slot < 0) shell_push(18, l_x, l_y, n); else shell_push(50, l_x, l_y, l_slot);
+	} else if (*l_t && shell_panel_accepts_text(l_slot)) {
+		shell_keep_text(l_t);
+		if (l_slot < 0) shell_push(68, l_x, l_y, 0); else shell_push(67, l_x, l_y, l_slot);
+	}
+}
+
+typedef struct { int done, taken; } ShellDragOut;
+static void shell_drag_out_dropped(GdkDrag *g, gpointer d) { (void)g; ((ShellDragOut *)d)->taken = 1; }
+static void shell_drag_out_finished(GdkDrag *g, gpointer d) { (void)g; ((ShellDragOut *)d)->done = 1; }
+static void shell_drag_out_canceled(GdkDrag *g, GdkDragCancelReason r, gpointer d) { (void)g; (void)r; ((ShellDragOut *)d)->done = 1; }
+/* Drag `l_text' and the paths (UTF-8, one per line) out with the pointer, waiting until the drag
+   ends, as Windows' DoDragDrop does: 1 another program took it, 0 refused, -1 it landed on one
+   of our own windows (which pushed its own 50 or 67). */
+int shell_drag_out(const void *l_text, const void *l_paths)
+{
+	const char *l_t = l_text ? (const char *)l_text : "", *l_p = l_paths ? (const char *)l_paths : "";
+	GtkWidget *w = s_window;
+	GtkNative *n;
+	GdkSurface *s;
+	GdkSeat *seat;
+	GdkDevice *dev;
+	GdkContentProvider *parts[2];
+	GdkContentProvider *content;
+	GdkDrag *g;
+	ShellDragOut st = {0, 0};
+	int i, k = 0;
+	if (!w) for (i = 0; i < SHELL_PANELS && !w; i++) if (s_panel[i].window) w = s_panel[i].window;
+	if (!w || s_dragging_out || (!*l_t && !*l_p)) return 0;
+	n = GTK_NATIVE(w);
+	s = gtk_native_get_surface(n);
+	seat = gdk_display_get_default_seat(gtk_widget_get_display(w));
+	dev = seat ? gdk_seat_get_pointer(seat) : NULL;
+	if (!s || !dev) return 0;
+	if (*l_p) {
+		GSList *files = NULL;
+		char **lines = g_strsplit(l_p, "\n", -1), **it;
+		for (it = lines; *it; it++) if (**it) files = g_slist_append(files, g_file_new_for_path(*it));
+		g_strfreev(lines);
+		if (files) {
+			parts[k++] = gdk_content_provider_new_typed(GDK_TYPE_FILE_LIST, files);
+			g_slist_free_full(files, g_object_unref);
+		}
+	}
+	if (*l_t) parts[k++] = gdk_content_provider_new_typed(G_TYPE_STRING, l_t);
+	if (k == 0) return 0;
+	content = k == 1 ? parts[0] : gdk_content_provider_new_union(parts, 2);
+	s_dragging_out = 1; s_drag_landed_here = 0;
+	g = gdk_drag_begin(s, dev, content, GDK_ACTION_COPY, 0, 0);
+	g_object_unref(content);
+	if (!g) { s_dragging_out = 0; return 0; }
+	g_signal_connect(g, "drop-performed", G_CALLBACK(shell_drag_out_dropped), &st);
+	g_signal_connect(g, "dnd-finished", G_CALLBACK(shell_drag_out_finished), &st);
+	g_signal_connect(g, "cancel", G_CALLBACK(shell_drag_out_canceled), &st);
+	while (!st.done) g_main_context_iteration(NULL, TRUE);
+	g_signal_handlers_disconnect_matched(g, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, &st);
+	g_object_unref(g);
+	s_dragging_out = 0;
+	if (!st.taken) return 0;
+	return s_drag_landed_here ? -1 : 1;
+}
 
 /* ------------------------------------------------------------------ files: drops and the open dialog */
 
@@ -1088,6 +1482,14 @@ static gboolean shell_on_drop(GtkDropTarget *t, const GValue *v, double x, doubl
 	GString *l_paths;
 	GSList *l;
 	(void)t;
+	if (G_VALUE_HOLDS(v, G_TYPE_STRING)) {
+		if (!shell_panel_accepts_text(l_slot)) return FALSE;   /* slot -1: the main window */
+		shell_keep_text(g_value_get_string(v));
+		if (l_slot < 0) shell_push(68, shell_px(x), shell_px(y), 0);
+		else shell_push(67, shell_panel_px(l_slot, x), shell_panel_px(l_slot, y), l_slot);
+		if (s_dragging_out) s_drag_landed_here = 1;
+		return TRUE;
+	}
 	if (!G_VALUE_HOLDS(v, GDK_TYPE_FILE_LIST)) return FALSE;
 	if (l_slot >= 0 && !shell_panel_accepts_files(l_slot)) return FALSE;
 	l_paths = g_string_new(NULL);
@@ -1100,11 +1502,16 @@ static gboolean shell_on_drop(GtkDropTarget *t, const GValue *v, double x, doubl
 	if (n == 0) return FALSE;
 	if (l_slot < 0) shell_push(18, shell_px(x), shell_px(y), n);
 	else shell_push(50, shell_panel_px(l_slot, x), shell_panel_px(l_slot, y), l_slot);
+	if (s_dragging_out) s_drag_landed_here = 1;
 	return TRUE;
 }
 static void shell_take_drops(GtkWidget *a_widget, gpointer d)
 {
-	GtkDropTarget *t = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+	GtkDropTarget *t = gtk_drop_target_new(G_TYPE_INVALID, GDK_ACTION_COPY);
+	GType l_types[2];
+	l_types[0] = GDK_TYPE_FILE_LIST; l_types[1] = G_TYPE_STRING;   /* files first: a drag carrying both is files */
+	gtk_drop_target_set_gtypes(t, l_types, 2);
+	g_signal_connect(t, "accept", G_CALLBACK(shell_drop_accept), d);
 	g_signal_connect(t, "drop", G_CALLBACK(shell_on_drop), d);
 	gtk_widget_add_controller(a_widget, GTK_EVENT_CONTROLLER(t));
 }

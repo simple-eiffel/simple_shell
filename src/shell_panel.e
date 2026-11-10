@@ -48,6 +48,7 @@ inherit
 			Event_panel_resized as Event_resized,
 			Event_panel_moving as Event_moving,
 			Event_panel_dropped as Event_dropped,
+			Event_panel_text_dropped as Event_text_dropped,
 			Event_panel_key as Event_key,
 			Event_panel_char as Event_char,
 			Event_panel_close_request as Event_close_request,
@@ -477,6 +478,40 @@ feature -- Appearance
 			set: accepts_files = a_on
 		end
 
+	accepts_text: BOOLEAN
+			-- Does text other programs drag onto the panel arrive as `Event_text_dropped'?
+		require
+			open: is_open
+		do
+			Result := c_accepts_text (slot) = 1
+		end
+
+	set_accepts_text (a_on: BOOLEAN)
+			-- Take text dragged in from other programs (OLE drag and drop on Windows; event 67,
+			-- the text in `SHELL_WINDOW.take_dropped_text'), or refuse it. While on, files
+			-- dragged in come through OLE too, still as `Event_dropped' when `accepts_files'.
+		require
+			open: is_open
+		do
+			c_set_accepts_text (slot, a_on.to_integer)
+		end
+
+	simulate_drag_in (a_x, a_y: INTEGER; a_text, a_paths: READABLE_STRING_GENERAL)
+			-- Hand the panel, at (`a_x', `a_y'), the data a drag carrying `a_text' and the
+			-- newline-separated `a_paths' brings, built as `SHELL_WINDOW.drag_out' builds it and
+			-- given to the panel's drop target as another program's drag would: the test door to
+			-- `Event_text_dropped' (and to `Event_dropped' through OLE).
+		require
+			open: is_open
+			something: not a_text.is_empty or not a_paths.is_empty
+		local
+			l_text, l_paths: NATIVE_STRING
+		do
+			create l_text.make (a_text)
+			create l_paths.make (a_paths)
+			c_try_drag_in (slot, a_x, a_y, l_text.item, l_paths.item)
+		end
+
 	simulate_drop (a_x, a_y: INTEGER; a_paths: READABLE_STRING_GENERAL)
 			-- Hand the panel a real drop of `a_paths' (newline-separated) at (`a_x', `a_y'),
 			-- built as the shell builds one: the test door to `Event_dropped'.
@@ -866,6 +901,21 @@ feature {NONE} -- Externals
 	c_accepts_files (a_slot: INTEGER): INTEGER
 		external "C inline use %"simple_shell.h%""
 		alias "return shell_panel_accepts_files($a_slot);"
+		end
+
+	c_set_accepts_text (a_slot, a_on: INTEGER)
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_set_accepts_text($a_slot, $a_on);"
+		end
+
+	c_accepts_text (a_slot: INTEGER): INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_panel_accepts_text($a_slot);"
+		end
+
+	c_try_drag_in (a_slot, a_x, a_y: INTEGER; a_text, a_paths: POINTER)
+		external "C inline use %"simple_shell.h%""
+		alias "shell_panel_try_drag_in($a_slot, $a_x, $a_y, (const wchar_t*)$a_text, (const wchar_t*)$a_paths);"
 		end
 
 	c_try_drop (a_slot, a_x, a_y: INTEGER; a_paths: POINTER)

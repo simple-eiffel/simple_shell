@@ -362,6 +362,41 @@ feature -- Panels (1.11.0)
 			p.close
 		end
 
+	test_panel_text_dragged_in
+			-- 1.40.0, a REAL panel offscreen with a real OLE drop target: text dragged in becomes
+			-- event 67 at the drop point; a drag carrying files is taken as files only (event
+			-- 50 when the panel takes files, nothing when it does not); text off, none arrives.
+		local
+			p: SHELL_PANEL
+			w: SHELL_TEST_WINDOW
+			l_paths: ARRAYED_LIST [STRING_32]
+		do
+			create p.make
+			create w
+			p.open (-3000, -3000, 200, 100)
+			p.show (-3000, -3000, 200, 100)
+			assert ("refuses text at first", not p.accepts_text)
+			p.set_accepts_text (True)
+			assert ("accepts text", p.accepts_text)
+			p.simulate_drag_in (30, 40, {STRING_32} "Romans 8:28 %/0x2014/ grace %/0x1F54A/", {STRING_32} "")
+			assert ("text at the point", w.drain_event (p.Event_text_dropped, 30) and w.last_second = 40)
+			assert ("from this panel", w.last_extra = p.slot)
+			assert ("the text, whole", w.take_dropped_text.same_string ({STRING_32} "Romans 8:28 %/0x2014/ grace %/0x1F54A/"))
+			assert ("taken once", w.take_dropped_text.is_empty)
+			p.simulate_drag_in (10, 20, {STRING_32} "and files", {STRING_32} "C:/scripts/one.md")
+			assert ("files the panel refuses: no text either", not w.drain_event (p.Event_text_dropped, 10))
+			p.set_accepts_files (True)
+			p.simulate_drag_in (10, 20, {STRING_32} "and files", {STRING_32} "C:/scripts/one.md%NC:/scripts/two words.txt")
+			assert ("files through OLE", w.drain_event (p.Event_dropped, 10) and w.last_second = 20)
+			l_paths := w.take_dropped_paths
+			assert ("both paths", l_paths.count = 2 and l_paths [2].same_string ({STRING_32} "C:/scripts/two words.txt"))
+			p.set_accepts_text (False)
+			assert ("refuses text again", not p.accepts_text)
+			p.simulate_drag_in (30, 40, {STRING_32} "late", {STRING_32} "")
+			assert ("none after", not w.drain_event (p.Event_text_dropped, 30))
+			p.close
+		end
+
 	test_panel_handle_and_side_grips
 			-- 1.14.0, a REAL panel offscreen: a handle drags on a plain press and keeps its moves
 			-- to one axis; side grips size on a plain press; Shift keeps its old meaning.
@@ -1634,7 +1669,7 @@ feature -- The event registry (2026-10-25)
 				assert_false ("event " + ic_event.out + " numbered once", l_seen.has (ic_event))
 				l_seen.extend (ic_event)
 			end
-			assert_integers_equal ("the next free number follows the last", 67, l_events.next_free_event)
+			assert_integers_equal ("the next free number follows the last", 69, l_events.next_free_event)
 			assert_integers_equal ("panel press", {SHELL_EVENTS}.Event_panel_press, {SHELL_PANEL}.Event_press)
 			assert_integers_equal ("tray click", {SHELL_EVENTS}.Event_tray_click, {SHELL_TRAY}.Event_click)
 			assert_integers_equal ("appearance", {SHELL_EVENTS}.Event_appearance_changed, {SHELL_APPEARANCE}.Event_changed)

@@ -80,6 +80,9 @@
    triple/move/leave/wheel/resize types once one pump served both) */
 #define SHELL_QCAP 1024
 SHELL_SHARED HWND s_shell_hwnd = 0;
+/* 1.40.0: the main window's OLE drop target (slot -1 below), when it takes text. */
+SHELL_SHARED void* s_shell_main_target = 0;
+static void shell_panel_drop_ole(int l_slot);
 SHELL_SHARED LONG s_shell_dbl_time = 0;
 SHELL_SHARED int  s_shell_tracking = 0;
 SHELL_SHARED int  s_shell_dbl_x = 0;
@@ -206,10 +209,9 @@ static int shell_syschar_is_ours(int l_ch) {
    queue carries only ints). Shared by the main window (event 18) and panels
    (event 50, 1.14.0). Answers how many files were dropped; `l_at' gets the
    drop point in the window's client coordinates. */
-static int shell_collect_drop(HDROP l_hd, POINT* l_at) {
+static int shell_gather_paths(HDROP l_hd) {
     UINT l_n, l_i, l_len;
     s_shell_drops_len = 0;
-    DragQueryPoint(l_hd, l_at);
     l_n = DragQueryFileW(l_hd, 0xFFFFFFFF, NULL, 0);
     for (l_i = 0; l_i < l_n; l_i++) {
         l_len = DragQueryFileW(l_hd, l_i, NULL, 0);
@@ -220,8 +222,14 @@ static int shell_collect_drop(HDROP l_hd, POINT* l_at) {
         s_shell_drops_len += (int)l_len;
     }
     s_shell_drops[s_shell_drops_len] = 0;
-    DragFinish(l_hd);
     return (int)l_n;
+}
+static int shell_collect_drop(HDROP l_hd, POINT* l_at) {
+    int l_n;
+    DragQueryPoint(l_hd, l_at);
+    l_n = shell_gather_paths(l_hd);
+    DragFinish(l_hd);
+    return l_n;
 }
 
 /* Appearance (1.16.0, GW-27): the Windows light/dark app setting.
@@ -592,6 +600,7 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             break;
         case WM_DESTROY:
             if (s_shell_destroy_hook) s_shell_destroy_hook(h);
+            shell_panel_drop_ole(-1);
             KillTimer(h, 1);
             s_shell_close_requests = 0;
             PostQuitMessage(0);
@@ -1211,6 +1220,9 @@ SHELL_SHARED int  s_shell_panel_start_y[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0}
    size, live while sizing, and 47 still arrives when a move ends. */
 SHELL_SHARED int  s_shell_panel_framed[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 SHELL_SHARED int  s_shell_panel_tracking[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
+/* 1.40.0: a panel that takes text registers an OLE drop target (its pointer here, one
+   reference of ours); text arrives as event 67 (x, y, slot). */
+SHELL_SHARED void* s_shell_panel_target[SHELL_PANELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 typedef BOOL (WINAPI *shell_set_affinity_fn)(HWND, DWORD);
 typedef BOOL (WINAPI *shell_get_affinity_fn)(HWND, DWORD*);
@@ -1487,8 +1499,10 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             /* scan 19: destroyed by `close' or behind its back (its owner's
                destruction takes owned panels first) - either way the slot
                must not keep a dead handle */
-            if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel[l_slot] == h)
+            if (l_slot >= 0 && l_slot < SHELL_PANELS && s_shell_panel[l_slot] == h) {
+                shell_panel_drop_ole(l_slot);
                 shell_panel_forget(l_slot);
+            }
             break;
     }
     return DefWindowProcW(h, m, w, l);
@@ -1744,16 +1758,14 @@ typedef struct {        /* DROPFILES' layout (shlobj_core.h, not included: it pu
     BOOL fWide;
 } shell_dropfiles_t;
 
-static void shell_panel_try_drop(int l_slot, int l_x, int l_y, const wchar_t* l_paths) {
-    HWND l_hwnd = shell_panel_hwnd(l_slot);
+static HGLOBAL shell_hdrop_new(int l_x, int l_y, const wchar_t* l_paths) {
     size_t l_len, l_i;
     HGLOBAL l_mem;
     shell_dropfiles_t* l_df;
     wchar_t* l_list;
-    if (!l_hwnd || !l_paths) return;
     l_len = wcslen(l_paths);
     l_mem = GlobalAlloc(GHND, sizeof(shell_dropfiles_t) + (l_len + 2) * sizeof(wchar_t));
-    if (!l_mem) return;
+    if (!l_mem) return 0;
     l_df = (shell_dropfiles_t*)GlobalLock(l_mem);
     l_df->pFiles = sizeof(shell_dropfiles_t);
     l_df->pt.x = l_x;
@@ -1766,7 +1778,287 @@ static void shell_panel_try_drop(int l_slot, int l_x, int l_y, const wchar_t* l_
     l_list[l_len] = 0;
     l_list[l_len + 1] = 0;
     GlobalUnlock(l_mem);
-    SendMessageW(l_hwnd, WM_DROPFILES, (WPARAM)l_mem, 0);
+    return l_mem;
+}
+
+static void shell_panel_try_drop(int l_slot, int l_x, int l_y, const wchar_t* l_paths) {
+    HWND l_hwnd = shell_panel_hwnd(l_slot);
+    HGLOBAL l_mem;
+    if (!l_hwnd || !l_paths) return;
+    l_mem = shell_hdrop_new(l_x, l_y, l_paths);
+    if (l_mem) SendMessageW(l_hwnd, WM_DROPFILES, (WPARAM)l_mem, 0);
+}
+
+/* ---- OLE drag and drop (1.40.0; simple_gui 1q-b text in, 1q-c drags out) ----
+   A panel (or the main window, slot -1) that takes text registers an IDropTarget.
+   Registered, it also receives Explorer's files through OLE (OLE prefers it to WM_DROPFILES),
+   so it takes CF_HDROP as WM_DROPFILES did (event 50 on a panel, 18 on the main window, when
+   it takes files) and CF_UNICODETEXT as event 67 (x, y, slot) on a panel, 68 (x, y) on the
+   main window, the text waiting in s_shell_drop_text for `take_dropped_text'. A drag carrying files is
+   taken as files only. `shell_drag_out' runs DoDragDrop with CF_UNICODETEXT and/or
+   CF_HDROP and answers 1 (another program copied it), 0 (refused), or -1 (it landed on one
+   of our own panels, which pushed its own 50 or 67). Nothing here calls into Eiffel. */
+#include <ole2.h>
+#pragma comment(lib, "ole32.lib")
+SHELL_SHARED wchar_t s_shell_drop_text[32768] = {0};
+SHELL_SHARED int s_shell_drop_text_len = 0;
+SHELL_SHARED int s_shell_ole_state = 0;       /* 0 untried, 1 ready, -1 failed */
+SHELL_SHARED int s_shell_dragging_out = 0, s_shell_drag_landed_inside = 0;
+static const IID s_shell_iid_unknown = {0x00000000, 0x0000, 0x0000, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+static const IID s_shell_iid_drop_target = {0x00000122, 0x0000, 0x0000, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+static const IID s_shell_iid_drop_source = {0x00000121, 0x0000, 0x0000, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+static const IID s_shell_iid_data_object = {0x0000010e, 0x0000, 0x0000, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+
+static int shell_ole_ready(void) {
+    if (s_shell_ole_state == 0) s_shell_ole_state = SUCCEEDED(OleInitialize(NULL)) ? 1 : -1;
+    return s_shell_ole_state == 1;
+}
+
+/* Slot -1 is the main window. */
+static HWND shell_ole_hwnd(int l_slot) { return l_slot < 0 ? s_shell_hwnd : shell_panel_hwnd(l_slot); }
+static void** shell_ole_target_cell(int l_slot) {
+    return l_slot < 0 ? &s_shell_main_target : (l_slot < SHELL_PANELS ? &s_shell_panel_target[l_slot] : 0);
+}
+static int shell_ole_takes_files(int l_slot) {
+    HWND l_hwnd = shell_ole_hwnd(l_slot);
+    return (l_hwnd && (GetWindowLongPtrW(l_hwnd, GWL_EXSTYLE) & WS_EX_ACCEPTFILES)) ? 1 : 0;
+}
+/* What a drag offers this window: 1 files, 2 text, 0 nothing it takes. */
+static int shell_ole_kind(IDataObject* l_d, int l_slot) {
+    FORMATETC l_f;
+    void** l_cell = shell_ole_target_cell(l_slot);
+    l_f.cfFormat = CF_HDROP; l_f.ptd = NULL; l_f.dwAspect = DVASPECT_CONTENT; l_f.lindex = -1; l_f.tymed = TYMED_HGLOBAL;
+    if (!l_d || !l_cell) return 0;
+    if (l_d->lpVtbl->QueryGetData(l_d, &l_f) == S_OK) return shell_ole_takes_files(l_slot) ? 1 : 0;
+    l_f.cfFormat = CF_UNICODETEXT;
+    if (*l_cell && l_d->lpVtbl->QueryGetData(l_d, &l_f) == S_OK) return 2;
+    return 0;
+}
+
+typedef struct { IDropTarget face; LONG refs; int slot; int kind; } shell_drop_target_t;
+
+static HRESULT STDMETHODCALLTYPE shell_dt_query(IDropTarget* l_this, REFIID l_iid, void** l_out) {
+    if (IsEqualIID(l_iid, &s_shell_iid_unknown) || IsEqualIID(l_iid, &s_shell_iid_drop_target)) {
+        *l_out = l_this;
+        l_this->lpVtbl->AddRef(l_this);
+        return S_OK;
+    }
+    *l_out = NULL;
+    return E_NOINTERFACE;
+}
+static ULONG STDMETHODCALLTYPE shell_dt_add_ref(IDropTarget* l_this) {
+    return (ULONG)InterlockedIncrement(&((shell_drop_target_t*)l_this)->refs);
+}
+static ULONG STDMETHODCALLTYPE shell_dt_release(IDropTarget* l_this) {
+    LONG l_n = InterlockedDecrement(&((shell_drop_target_t*)l_this)->refs);
+    if (l_n == 0) HeapFree(GetProcessHeap(), 0, l_this);
+    return (ULONG)l_n;
+}
+static HRESULT STDMETHODCALLTYPE shell_dt_enter(IDropTarget* l_this, IDataObject* l_d, DWORD l_keys, POINTL l_pt, DWORD* l_effect) {
+    shell_drop_target_t* l_t = (shell_drop_target_t*)l_this;
+    (void)l_keys; (void)l_pt;
+    l_t->kind = shell_ole_kind(l_d, l_t->slot);
+    *l_effect = l_t->kind ? (*l_effect & DROPEFFECT_COPY) : DROPEFFECT_NONE;
+    return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE shell_dt_over(IDropTarget* l_this, DWORD l_keys, POINTL l_pt, DWORD* l_effect) {
+    (void)l_keys; (void)l_pt;
+    *l_effect = ((shell_drop_target_t*)l_this)->kind ? (*l_effect & DROPEFFECT_COPY) : DROPEFFECT_NONE;
+    return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE shell_dt_leave(IDropTarget* l_this) {
+    ((shell_drop_target_t*)l_this)->kind = 0;
+    return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE shell_dt_drop(IDropTarget* l_this, IDataObject* l_d, DWORD l_keys, POINTL l_pt, DWORD* l_effect) {
+    shell_drop_target_t* l_t = (shell_drop_target_t*)l_this;
+    HWND l_hwnd = shell_ole_hwnd(l_t->slot);
+    int l_kind = shell_ole_kind(l_d, l_t->slot);
+    FORMATETC l_f;
+    STGMEDIUM l_m;
+    POINT l_at;
+    (void)l_keys;
+    l_t->kind = 0;
+    *l_effect = DROPEFFECT_NONE;
+    if (!l_hwnd || !l_kind) return S_OK;
+    l_at.x = l_pt.x; l_at.y = l_pt.y;
+    ScreenToClient(l_hwnd, &l_at);
+    l_f.cfFormat = (CLIPFORMAT)(l_kind == 1 ? CF_HDROP : CF_UNICODETEXT);
+    l_f.ptd = NULL; l_f.dwAspect = DVASPECT_CONTENT; l_f.lindex = -1; l_f.tymed = TYMED_HGLOBAL;
+    if (l_d->lpVtbl->GetData(l_d, &l_f, &l_m) != S_OK) return S_OK;
+    if (l_kind == 1) {
+        HDROP l_hd = (HDROP)GlobalLock(l_m.hGlobal);
+        if (l_hd) {
+            int l_count = shell_gather_paths(l_hd);
+            GlobalUnlock(l_m.hGlobal);
+            if (l_t->slot < 0) shell_push(18, (int)l_at.x, (int)l_at.y, l_count);
+            else shell_push(50, (int)l_at.x, (int)l_at.y, l_t->slot);
+            *l_effect = DROPEFFECT_COPY;
+        }
+    } else {
+        const wchar_t* l_s = (const wchar_t*)GlobalLock(l_m.hGlobal);
+        if (l_s) {
+            size_t l_cap = GlobalSize(l_m.hGlobal) / sizeof(wchar_t), l_n = 0;
+            while (l_n < l_cap && l_s[l_n] && l_n < 32767) l_n++;
+            memcpy(s_shell_drop_text, l_s, l_n * sizeof(wchar_t));
+            s_shell_drop_text[l_n] = 0;
+            s_shell_drop_text_len = (int)l_n;
+            GlobalUnlock(l_m.hGlobal);
+            if (l_t->slot < 0) shell_push(68, (int)l_at.x, (int)l_at.y, 0);
+            else shell_push(67, (int)l_at.x, (int)l_at.y, l_t->slot);
+            *l_effect = DROPEFFECT_COPY;
+        }
+    }
+    ReleaseStgMedium(&l_m);
+    if (*l_effect != DROPEFFECT_NONE && s_shell_dragging_out) s_shell_drag_landed_inside = 1;
+    return S_OK;
+}
+static IDropTargetVtbl s_shell_dt_vtbl = {
+    shell_dt_query, shell_dt_add_ref, shell_dt_release, shell_dt_enter, shell_dt_over, shell_dt_leave, shell_dt_drop
+};
+
+/* Take text dropped from other programs on the panel (event 67; slot -1: the main window,
+   event 68), or stop. */
+static void shell_panel_set_accepts_text(int l_slot, int l_on) {
+    HWND l_hwnd = shell_ole_hwnd(l_slot);
+    void** l_cell = shell_ole_target_cell(l_slot);
+    if (!l_hwnd || !l_cell) return;
+    if (l_on && !*l_cell && shell_ole_ready()) {
+        shell_drop_target_t* l_t = (shell_drop_target_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(shell_drop_target_t));
+        if (!l_t) return;
+        l_t->face.lpVtbl = &s_shell_dt_vtbl;
+        l_t->refs = 1;   /* ours, kept in s_shell_panel_target */
+        l_t->slot = l_slot;
+        if (RegisterDragDrop(l_hwnd, &l_t->face) == S_OK) *l_cell = l_t;
+        else l_t->face.lpVtbl->Release(&l_t->face);
+    } else if (!l_on && *l_cell) {
+        IDropTarget* l_t = (IDropTarget*)*l_cell;
+        RevokeDragDrop(l_hwnd);
+        *l_cell = 0;
+        l_t->lpVtbl->Release(l_t);
+    }
+}
+static int shell_panel_accepts_text(int l_slot) {
+    void** l_cell = shell_ole_target_cell(l_slot);
+    return (l_cell && *l_cell) ? 1 : 0;
+}
+static void shell_panel_drop_ole(int l_slot) { shell_panel_set_accepts_text(l_slot, 0); }
+
+/* The text dropped last, into `l_buf' (UTF-16, `l_cap' units); the buffer clears on read. */
+static int shell_dropped_text(wchar_t* l_buf, int l_cap) {
+    int l_n = s_shell_drop_text_len;
+    if (l_n >= l_cap) l_n = l_cap - 1;
+    memcpy(l_buf, s_shell_drop_text, l_n * sizeof(wchar_t));
+    l_buf[l_n] = 0;
+    s_shell_drop_text_len = 0;
+    return l_n;
+}
+
+/* A data object carrying `l_text' (CF_UNICODETEXT) and/or `l_paths' (newline-separated,
+   CF_HDROP): the shell's own (SHCreateDataObject), which also keeps the formats targets set
+   on it during a drag. Found at run time, as the _WIN32_WINNT=0x0500 headers hide it. */
+typedef HRESULT (WINAPI *shell_make_data_fn)(void*, UINT, void*, IDataObject*, REFIID, void**);
+static IDataObject* shell_drag_data(const wchar_t* l_text, const wchar_t* l_paths) {
+    IDataObject* l_d = NULL;
+    FORMATETC l_f;
+    STGMEDIUM l_m;
+    HGLOBAL l_g;
+    shell_make_data_fn l_make = (shell_make_data_fn)GetProcAddress(GetModuleHandleW(L"shell32.dll"), "SHCreateDataObject");
+    if (!l_make || FAILED(l_make(NULL, 0, NULL, NULL, &s_shell_iid_data_object, (void**)&l_d)) || !l_d) return NULL;
+    l_f.ptd = NULL; l_f.dwAspect = DVASPECT_CONTENT; l_f.lindex = -1; l_f.tymed = TYMED_HGLOBAL;
+    l_m.tymed = TYMED_HGLOBAL; l_m.pUnkForRelease = NULL;
+    if (l_paths && *l_paths && (l_g = shell_hdrop_new(0, 0, l_paths))) {
+        l_f.cfFormat = CF_HDROP; l_m.hGlobal = l_g;
+        if (l_d->lpVtbl->SetData(l_d, &l_f, &l_m, TRUE) != S_OK) GlobalFree(l_g);
+    }
+    if (l_text && *l_text) {
+        size_t l_n = wcslen(l_text);
+        l_g = GlobalAlloc(GMEM_MOVEABLE, (l_n + 1) * sizeof(wchar_t));
+        if (l_g) {
+            memcpy(GlobalLock(l_g), l_text, (l_n + 1) * sizeof(wchar_t));
+            GlobalUnlock(l_g);
+            l_f.cfFormat = CF_UNICODETEXT; l_m.hGlobal = l_g;
+            if (l_d->lpVtbl->SetData(l_d, &l_f, &l_m, TRUE) != S_OK) GlobalFree(l_g);
+        }
+    }
+    return l_d;
+}
+
+typedef struct { IDropSource face; } shell_drop_source_t;
+static HRESULT STDMETHODCALLTYPE shell_ds_query(IDropSource* l_this, REFIID l_iid, void** l_out) {
+    if (IsEqualIID(l_iid, &s_shell_iid_unknown) || IsEqualIID(l_iid, &s_shell_iid_drop_source)) {
+        *l_out = l_this;
+        return S_OK;
+    }
+    *l_out = NULL;
+    return E_NOINTERFACE;
+}
+static ULONG STDMETHODCALLTYPE shell_ds_ref(IDropSource* l_this) { (void)l_this; return 1; }   /* lives on the caller's stack for the drag */
+static HRESULT STDMETHODCALLTYPE shell_ds_continue(IDropSource* l_this, BOOL l_escape, DWORD l_keys) {
+    (void)l_this;
+    if (l_escape) return DRAGDROP_S_CANCEL;
+    if (!(l_keys & (MK_LBUTTON | MK_RBUTTON))) return DRAGDROP_S_DROP;
+    return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE shell_ds_feedback(IDropSource* l_this, DWORD l_effect) {
+    (void)l_this; (void)l_effect;
+    return DRAGDROP_S_USEDEFAULTCURSORS;
+}
+static IDropSourceVtbl s_shell_ds_vtbl = { shell_ds_query, shell_ds_ref, shell_ds_ref, shell_ds_continue, shell_ds_feedback };
+
+/* Drag `l_text' and/or `l_paths' out with the mouse button that is down now (modal, as every
+   Windows drag is): 1 another program copied it, 0 refused or canceled, -1 it landed on one
+   of our own panels. */
+static int shell_drag_out(const wchar_t* l_text, const wchar_t* l_paths) {
+    IDataObject* l_d;
+    shell_drop_source_t l_s;
+    DWORD l_effect = DROPEFFECT_NONE;
+    HRESULT l_hr;
+    if (!shell_ole_ready() || s_shell_dragging_out) return 0;
+    l_d = shell_drag_data(l_text, l_paths);
+    if (!l_d) return 0;
+    l_s.face.lpVtbl = &s_shell_ds_vtbl;
+    s_shell_dragging_out = 1;
+    s_shell_drag_landed_inside = 0;
+    l_hr = DoDragDrop(l_d, &l_s.face, DROPEFFECT_COPY, &l_effect);
+    s_shell_dragging_out = 0;
+    l_d->lpVtbl->Release(l_d);
+    if (l_hr != DRAGDROP_S_DROP || !(l_effect & DROPEFFECT_COPY)) return 0;
+    return s_shell_drag_landed_inside ? -1 : 1;
+}
+
+/* Test door: hand the panel the data object a drag out of `l_text' / `l_paths' would carry,
+   through its OLE drop target (DragEnter, then Drop at client (x, y)), as a drag from another
+   program arrives. A panel without one gets the files as OLE gives them to it: WM_DROPFILES. */
+static void shell_panel_try_drag_in(int l_slot, int l_x, int l_y, const wchar_t* l_text, const wchar_t* l_paths) {
+    HWND l_hwnd = shell_ole_hwnd(l_slot);
+    void** l_cell = shell_ole_target_cell(l_slot);
+    IDataObject* l_d;
+    IDropTarget* l_t;
+    POINT l_p;
+    POINTL l_pt;
+    DWORD l_effect = DROPEFFECT_COPY;
+    if (!l_hwnd || !l_cell) return;
+    if (!*l_cell) {
+        if (l_paths && *l_paths && shell_ole_takes_files(l_slot)) {
+            HGLOBAL l_mem = shell_hdrop_new(l_x, l_y, l_paths);
+            if (l_mem) SendMessageW(l_hwnd, WM_DROPFILES, (WPARAM)l_mem, 0);
+        }
+        return;
+    }
+    l_d = shell_drag_data(l_text, l_paths);
+    if (!l_d) return;
+    l_t = (IDropTarget*)*l_cell;
+    l_p.x = l_x; l_p.y = l_y;
+    ClientToScreen(l_hwnd, &l_p);
+    l_pt.x = l_p.x; l_pt.y = l_p.y;
+    l_t->lpVtbl->DragEnter(l_t, l_d, MK_LBUTTON, l_pt, &l_effect);
+    if (l_effect == DROPEFFECT_NONE) l_t->lpVtbl->DragLeave(l_t);
+    else {
+        l_effect = DROPEFFECT_COPY;
+        l_t->lpVtbl->Drop(l_t, l_d, 0, l_pt, &l_effect);
+    }
+    l_d->lpVtbl->Release(l_d);
 }
 
 static void shell_panel_set_draggable(int l_slot, int l_on) {

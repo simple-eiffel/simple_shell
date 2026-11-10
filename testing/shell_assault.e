@@ -452,15 +452,16 @@ feature -- Panels (1.11.0)
 		do
 			create p.make
 			create d
-			p.open (40, 40, 48, 48)
-			p.show (40, 40, 48, 48)
+				-- 200 down, clear of the macOS menu bar, which draws over anything under it.
+			p.open (40, 200, 48, 48)
+			p.show (40, 200, 48, 48)
 			p.fill (0xFF0000)
 			d.pump_for (150)
 			p.fill (0xFF0000)
-			l_before := red_pixels (d, 52, 52, 24, 24)
+			l_before := red_pixels (d, 52, 212, 24, 24)
 			p.request_capture_exclusion
 			d.pump_for (150)
-			l_after := red_pixels (d, 52, 52, 24, 24)
+			l_after := red_pixels (d, 52, 212, 24, 24)
 			if p.capture_affinity = p.Affinity_excluded_from_captures then
 					-- Thresholds are DPI-agnostic: this test process is not DPI aware, so
 					-- on a scaled display the panel covers only part of the sampled square
@@ -478,7 +479,7 @@ feature -- Panels (1.11.0)
 feature -- Hotkeys (1.11.0)
 
 	test_hotkey_registers_and_delivers
-			-- An unlikely chord (Ctrl+Alt+Shift+F24) is registered; the message
+			-- An unlikely chord (Ctrl+Alt+Shift+F20; the Mac has no F21 - F24) is registered; the message
 			-- Windows sends for it becomes event 51 with id, key and modifiers.
 		local
 			k: SHELL_HOTKEYS
@@ -490,12 +491,12 @@ feature -- Hotkeys (1.11.0)
 			create d
 			create w
 			l_mods := k.Mod_control | k.Mod_alt | k.Mod_shift
-			k.register (9001, l_mods, 0x87)
+			k.register (9001, l_mods, 0x83)
 			assert ("registered", k.last_succeeded and k.is_registered (9001) and k.count = 1)
-			k.simulate (9001, l_mods, 0x87)
+			k.simulate (9001, l_mods, 0x83)
 			d.pump_for (30)
 			assert ("delivered as event 51", w.drain_event (k.Event_hotkey, 9001))
-			assert ("key and modifiers carried", w.last_second = 0x87 and w.last_extra = l_mods)
+			assert ("key and modifiers carried", w.last_second = 0x83 and w.last_extra = l_mods)
 			k.unregister (9001)
 			assert ("released", not k.is_registered (9001) and k.count = 0)
 		end
@@ -509,9 +510,9 @@ feature -- Hotkeys (1.11.0)
 		do
 			create k.make
 			l_mods := k.Mod_control | k.Mod_alt | k.Mod_shift
-			k.register (9002, l_mods, 0x86)
+			k.register (9002, l_mods, 0x82)
 			assert ("first holder", k.last_succeeded)
-			k.register (9003, l_mods, 0x86)
+			k.register (9003, l_mods, 0x82)
 			assert ("second refused", not k.last_succeeded and not k.is_registered (9003))
 			k.unregister_all
 			assert ("all released", k.count = 0)
@@ -556,7 +557,8 @@ feature -- Monitors (1.11.0)
 feature {NONE} -- Panel probes
 
 	red_pixels (a_desktop: SHELL_DESKTOP; a_x, a_y, a_w, a_h: INTEGER): INTEGER
-			-- Pure-red pixels in a screen grab of the given region.
+			-- Red pixels in a screen grab of the given region: pure red, give or take the few
+			-- steps a color-managed capture (macOS) moves it.
 		local
 			l_bits: MANAGED_POINTER
 			l_px: NATURAL_32
@@ -566,7 +568,7 @@ feature {NONE} -- Panel probes
 			if a_desktop.grab_into (a_x, a_y, a_w, a_h, l_bits.item, a_w * 4) then
 				from i := 0 until i >= a_w * a_h loop
 					l_px := l_bits.read_natural_32 (i * 4)
-					if (l_px & 0x00FFFFFF) = 0x00FF0000 then
+					if ((l_px |>> 16) & 0xFF) >= 0xF0 and ((l_px |>> 8) & 0xFF) <= 0x30 and (l_px & 0xFF) <= 0x30 then
 						Result := Result + 1
 					end
 					i := i + 1
@@ -1518,7 +1520,9 @@ feature -- Framed panels (GW-22, 1.23.0)
 			p.set_title ({STRING_32} "Cross references")
 			assert_true ("retitled", p.title.same_string ("Cross references"))
 			assert_false ("never topmost", p.is_topmost)
-			assert_true ("a border and a caption", p.client_width < 400 and p.client_height < 300 - 10)
+				-- A caption everywhere; side borders on Windows only (a macOS window has none).
+			assert_true ("a border and a caption: " + p.client_width.out + "x" + p.client_height.out,
+				p.client_width <= 400 and p.client_height < 300 - 10 and ({PLATFORM}.is_windows implies p.client_width < 400))
 			assert_integers_equal ("a click activates it (MA_ACTIVATE)", 1, p.simulate_message (0x0021, 0, 0))
 			p.place (-3000, -3000, 500, 360)
 			assert_true ("48 carries the client size", w.drain_event (p.Event_resized, p.client_width)

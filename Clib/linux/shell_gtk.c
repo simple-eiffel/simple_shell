@@ -2282,3 +2282,306 @@ void shell_outline_hide(int slot)
 	(void)slot;
 #endif
 }
+
+/* ------------------------------------------------------------------ printing
+
+   As on the Mac (shell_appkit_print.m): the "DC" is a cairo PDF surface in points (72 dots per
+   inch, nothing unprintable); at the end the PDF goes to the printer through CUPS, or stays at
+   the output path when one was given. CUPS is loaded when the program first prints, so a system
+   without it still prints to files; without it no printers are listed. */
+#include <cairo-pdf.h>
+#include <dlfcn.h>
+#include <langinfo.h>
+#include <unistd.h>
+
+typedef struct { char *name; char *instance; int is_default; int num_options; void *options; } ShellCupsDest;
+typedef int (*ShellCupsGetDests)(ShellCupsDest **);
+typedef void (*ShellCupsFreeDests)(int, ShellCupsDest *);
+typedef int (*ShellCupsPrintFile)(const char *, const char *, const char *, int, void *);
+static void *s_cups = NULL;
+static int s_cups_tried = 0;
+static ShellCupsGetDests s_cups_get_dests = NULL;
+static ShellCupsFreeDests s_cups_free_dests = NULL;
+static ShellCupsPrintFile s_cups_print_file = NULL;
+static int shell_cups(void)
+{
+	if (!s_cups_tried) {
+		s_cups_tried = 1;
+		s_cups = dlopen("libcups.so.2", RTLD_NOW | RTLD_LOCAL);
+		if (s_cups) {
+			s_cups_get_dests = (ShellCupsGetDests)dlsym(s_cups, "cupsGetDests");
+			s_cups_free_dests = (ShellCupsFreeDests)dlsym(s_cups, "cupsFreeDests");
+			s_cups_print_file = (ShellCupsPrintFile)dlsym(s_cups, "cupsPrintFile");
+		}
+	}
+	return s_cups_get_dests && s_cups_free_dests && s_cups_print_file;
+}
+
+static cairo_surface_t *s_doc = NULL;
+static int s_in_page = 0, s_to_printer = 0;
+static double s_page_w = 0, s_page_h = 0;
+static char s_printer[256], s_doc_title[256], s_doc_path[2048];
+
+/* UTF-8 `a_text' as UTF-16 into `buf' from `a_at' (room for `cap' units); the new length, or -1. */
+static int shell_print_put(void *buf, int cap, int a_at, const char *a_text)
+{
+	glong n = 0;
+	gunichar2 *u = g_utf8_to_utf16(a_text ? a_text : "", -1, NULL, &n, NULL);
+	if (!u) return a_at;
+	if (a_at + (int)n + 2 > cap) { g_free(u); return -1; }
+	memcpy((gunichar2 *)buf + a_at, u, (size_t)n * sizeof(gunichar2));
+	((gunichar2 *)buf)[a_at + n] = 0;
+	g_free(u);
+	return a_at + (int)n;
+}
+/* The default printer's name, UTF-16; its length, or 0 when there is none. */
+int shell_print_default(void *l_buf, int l_cap)
+{
+	ShellCupsDest *d = NULL;
+	int i, l_n = 0, l_count;
+	if (!l_buf || l_cap <= 0) return 0;
+	((gunichar2 *)l_buf)[0] = 0;
+	if (!shell_cups()) return 0;
+	l_count = s_cups_get_dests(&d);
+	for (i = 0; i < l_count; i++)
+		if (d[i].is_default && !d[i].instance) { int r = shell_print_put(l_buf, l_cap, 0, d[i].name); l_n = r < 0 ? 0 : r; break; }
+	s_cups_free_dests(l_count, d);
+	return l_n;
+}
+/* Every printer's name, each followed by a newline, UTF-16; the characters written. */
+int shell_print_names(void *l_buf, int l_cap)
+{
+	ShellCupsDest *d = NULL;
+	int i, l_len = 0, l_count;
+	if (!l_buf || l_cap <= 0) return 0;
+	((gunichar2 *)l_buf)[0] = 0;
+	if (!shell_cups()) return 0;
+	l_count = s_cups_get_dests(&d);
+	for (i = 0; i < l_count; i++) {
+		int r;
+		if (d[i].instance) continue;
+		r = shell_print_put(l_buf, l_cap, l_len, d[i].name);
+		if (r < 0) break;
+		((gunichar2 *)l_buf)[r] = '\n';
+		l_len = r + 1;
+		((gunichar2 *)l_buf)[l_len] = 0;
+	}
+	s_cups_free_dests(l_count, d);
+	return l_len;
+}
+static int shell_print_known(const char *a_name)
+{
+	ShellCupsDest *d = NULL;
+	int i, l_count, l_known = 0;
+	if (!shell_cups()) return 0;
+	l_count = s_cups_get_dests(&d);
+	for (i = 0; i < l_count && !l_known; i++) if (!d[i].instance && strcmp(d[i].name, a_name) == 0) l_known = 1;
+	s_cups_free_dests(l_count, d);
+	return l_known;
+}
+/* The paper in points: Windows' DMPAPER codes 1 Letter, 5 Legal, 9 A4; 0 the locale's own
+   (glibc's LC_PAPER: 210 mm wide is A4). */
+static void shell_print_paper(int a_paper, int a_landscape)
+{
+	if (a_paper == 0) {
+#ifdef _NL_PAPER_WIDTH
+		union { char *s; int i; } w;
+		w.s = nl_langinfo(_NL_PAPER_WIDTH);
+		a_paper = w.i == 210 ? 9 : 1;
+#else
+		a_paper = 1;
+#endif
+	}
+	switch (a_paper) {
+		case 5: s_page_w = 612; s_page_h = 1008; break;
+		case 9: s_page_w = 595.276; s_page_h = 841.890; break;
+		default: s_page_w = 612; s_page_h = 792;
+	}
+	if (a_landscape) { double t = s_page_w; s_page_w = s_page_h; s_page_h = t; }
+}
+/* Begin a document on `l_printer' (a known printer, as on Windows) titled `l_title', written to
+   `l_output' when that is not empty, on paper `l_paper', in landscape when asked. 1 when it began. */
+int shell_print_begin(const void *l_printer, const void *l_title, const void *l_output, int l_paper, int l_landscape)
+{
+	const char *p = (const char *)l_printer, *t = (const char *)l_title, *o = (const char *)l_output;
+	if (s_doc || !p || !p[0]) return 0;
+	s_to_printer = !(o && o[0]);
+	if (s_to_printer && !shell_print_known(p)) return 0;
+	snprintf(s_printer, sizeof s_printer, "%s", p);
+	snprintf(s_doc_title, sizeof s_doc_title, "%s", t && t[0] ? t : "Document");
+	if (s_to_printer) snprintf(s_doc_path, sizeof s_doc_path, "%s/simple_shell_print_%d.pdf", g_get_tmp_dir(), (int)getpid());
+	else snprintf(s_doc_path, sizeof s_doc_path, "%s", o);
+	shell_print_paper(l_paper, l_landscape);
+	s_doc = cairo_pdf_surface_create(s_doc_path, s_page_w, s_page_h);
+	if (cairo_surface_status(s_doc) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(s_doc);
+		s_doc = NULL;
+		return 0;
+	}
+	cairo_pdf_surface_set_metadata(s_doc, CAIRO_PDF_METADATA_TITLE, s_doc_title);
+	s_in_page = 0;
+	return 1;
+}
+int shell_print_begin_page(void)
+{
+	if (!s_doc || s_in_page) return 0;
+	s_in_page = 1;
+	return 1;
+}
+/* The page itself is added by the program's show_page on the surface. */
+int shell_print_end_page(void)
+{
+	if (!s_doc || !s_in_page) return 0;
+	s_in_page = 0;
+	return 1;
+}
+static void shell_print_close(void)
+{
+	cairo_surface_destroy(s_doc);
+	s_doc = NULL;
+	s_in_page = 0;
+}
+/* End the document: the PDF is written, then printed through CUPS (or left at the output path).
+   1 when it was accepted. */
+int shell_print_end(void)
+{
+	int l_ok;
+	if (!s_doc) return 0;
+	s_in_page = 0;
+	cairo_surface_finish(s_doc);
+	l_ok = cairo_surface_status(s_doc) == CAIRO_STATUS_SUCCESS;
+	if (l_ok && s_to_printer) {
+		l_ok = shell_cups() && s_cups_print_file(s_printer, s_doc_path, s_doc_title, 0, NULL) > 0;
+		unlink(s_doc_path);
+	}
+	shell_print_close();
+	return l_ok ? 1 : 0;
+}
+/* Throw the document away, the partial file with it. */
+void shell_print_abort(void)
+{
+	if (!s_doc) return;
+	cairo_surface_finish(s_doc);
+	unlink(s_doc_path);
+	shell_print_close();
+}
+/* GetDeviceCaps: 88/90 dots per inch (72: points), 8/10 printable width and height, 110/111 the
+   page, 112/113 the unprintable offsets (none on a PDF page). */
+int shell_print_caps(int l_index)
+{
+	if (!s_doc) return 0;
+	switch (l_index) {
+		case 88: case 90: return 72;
+		case 8: case 110: return (int)floor(s_page_w + 0.5);
+		case 10: case 111: return (int)floor(s_page_h + 0.5);
+		default: return 0;
+	}
+}
+void *shell_print_dc(void) { return s_doc; }
+int shell_print_in_page(void) { return s_in_page; }
+
+/* ------------------------------------------------------------------ the speller
+
+   Enchant (libenchant-2, which fronts Hunspell and the others), loaded on first use, in American
+   English as the Windows half's ISpellChecker. Without it, or without an English dictionary, the
+   speller degrades: no word is reported wrong and nothing is suggested, and nothing fails.
+   Ranges are UTF-16 units, as on Windows. */
+typedef void *(*ShellEnchantInit)(void);
+typedef void *(*ShellEnchantRequest)(void *, const char *);
+typedef int (*ShellEnchantCheck)(void *, const char *, ssize_t);
+typedef char **(*ShellEnchantSuggest)(void *, const char *, ssize_t, size_t *);
+typedef void (*ShellEnchantFreeList)(void *, char **);
+typedef void (*ShellEnchantAdd)(void *, const char *, ssize_t);
+static void *s_enchant_dict = NULL;
+static int s_enchant_tried = 0;
+static ShellEnchantCheck s_enchant_check = NULL;
+static ShellEnchantSuggest s_enchant_suggest = NULL;
+static ShellEnchantFreeList s_enchant_free_list = NULL;
+static ShellEnchantAdd s_enchant_add = NULL, s_enchant_add_session = NULL;
+static int shell_speller(void)
+{
+	if (!s_enchant_tried) {
+		void *l = dlopen("libenchant-2.so.2", RTLD_NOW | RTLD_LOCAL);
+		s_enchant_tried = 1;
+		if (l) {
+			ShellEnchantInit l_init = (ShellEnchantInit)dlsym(l, "enchant_broker_init");
+			ShellEnchantRequest l_request = (ShellEnchantRequest)dlsym(l, "enchant_broker_request_dict");
+			void *b;
+			s_enchant_check = (ShellEnchantCheck)dlsym(l, "enchant_dict_check");
+			s_enchant_suggest = (ShellEnchantSuggest)dlsym(l, "enchant_dict_suggest");
+			s_enchant_free_list = (ShellEnchantFreeList)dlsym(l, "enchant_dict_free_string_list");
+			s_enchant_add = (ShellEnchantAdd)dlsym(l, "enchant_dict_add");
+			s_enchant_add_session = (ShellEnchantAdd)dlsym(l, "enchant_dict_add_to_session");
+			b = l_init && l_request ? l_init() : NULL;
+			if (b) s_enchant_dict = l_request(b, "en_US");
+		}
+	}
+	return s_enchant_dict && s_enchant_check && s_enchant_suggest && s_enchant_free_list && s_enchant_add && s_enchant_add_session;
+}
+static int shell_word_char(gunichar c) { return g_unichar_isalpha(c) || c == '\'' || c == 0x2019; }
+/* Misspellings in `text' (UTF-8): (start, length) pairs in UTF-16 units into `out', at most
+   `cap_pairs'; answers how many. */
+int shell_spell_check(const void *text, int *out, int cap_pairs)
+{
+	const char *p = (const char *)text, *l_start = NULL;
+	int n = 0, l_u16 = 0, l_word_u16 = 0;
+	if (!p || !shell_speller()) return 0;
+	for (;; p = g_utf8_next_char(p)) {
+		gunichar c = *p ? g_utf8_get_char(p) : 0;
+		if (c && shell_word_char(c)) {
+			if (!l_start) { l_start = p; l_word_u16 = l_u16; }
+		} else if (l_start) {
+			/* a word ends: trim apostrophes at its edges */
+			const char *b = l_start, *e = p;
+			int l_lead = 0;
+			while (b < e && (*b == '\'')) { b++; l_lead++; }
+			while (e > b && e[-1] == '\'') e--;
+			if (e > b && s_enchant_check(s_enchant_dict, b, e - b) > 0 && n < cap_pairs) {
+				glong l_len = 0;
+				gunichar2 *u = g_utf8_to_utf16(b, e - b, NULL, &l_len, NULL);
+				g_free(u);
+				out[n * 2] = l_word_u16 + l_lead;
+				out[n * 2 + 1] = (int)l_len;
+				n++;
+			}
+			l_start = NULL;
+		}
+		if (!c) break;
+		l_u16 += c > 0xFFFF ? 2 : 1;
+	}
+	return n;
+}
+/* Up to five suggestions for `word', UTF-16 and one per line, into `buf'; answers how many. */
+int shell_spell_suggest(const void *word, void *buf, int cap)
+{
+	size_t l_count = 0, i;
+	char **l_list;
+	int n = 0, pos = 0;
+	if (!buf || cap < 1) return 0;
+	((gunichar2 *)buf)[0] = 0;
+	if (!word || !*(const char *)word || !shell_speller()) return 0;
+	l_list = s_enchant_suggest(s_enchant_dict, (const char *)word, -1, &l_count);
+	for (i = 0; l_list && i < l_count && n < 5; i++) {
+		int r = shell_print_put(buf, cap, pos + (n ? 1 : 0), l_list[i]);
+		if (r < 0) break;
+		if (n) ((gunichar2 *)buf)[pos] = '\n';
+		pos = r;
+		n++;
+	}
+	if (l_list) s_enchant_free_list(s_enchant_dict, l_list);
+	return n;
+}
+/* Learn `word' into the user's dictionary, as ISpellChecker::Add. */
+int shell_spell_add(const void *word)
+{
+	if (!word || !*(const char *)word || !shell_speller()) return 0;
+	s_enchant_add(s_enchant_dict, (const char *)word, -1);
+	return 1;
+}
+/* Ignore `word' for this run, as ISpellChecker::Ignore. */
+int shell_spell_ignore(const void *word)
+{
+	if (!word || !*(const char *)word || !shell_speller()) return 0;
+	s_enchant_add_session(s_enchant_dict, (const char *)word, -1);
+	return 1;
+}

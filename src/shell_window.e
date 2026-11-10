@@ -545,6 +545,84 @@ feature -- Services
 			end
 		end
 
+feature -- Dragging out (1.40.0)
+
+	take_dropped_text: STRING_32
+			-- The text dragged onto a panel last (`Event_panel_text_dropped'); clears on read.
+		local
+			l_buf: MANAGED_POINTER
+			l_n, i: INTEGER
+			c: NATURAL_16
+		do
+			create l_buf.make (65536)
+			l_n := shell_dropped_text_ext (l_buf.item, 32768)
+			create Result.make (l_n)
+			from
+				i := 0
+			until
+				i >= l_n
+			loop
+				c := l_buf.read_natural_16 (i * 2)
+				if c >= 0xD800 and c <= 0xDBFF and i + 1 < l_n then
+					Result.append_code (0x10000
+						+ (c.to_natural_32 - 0xD800) * 0x400
+						+ (l_buf.read_natural_16 ((i + 1) * 2).to_natural_32 - 0xDC00))
+					i := i + 2
+				else
+					Result.append_character (c.to_character_32)
+					i := i + 1
+				end
+			end
+		end
+
+	accepts_text: BOOLEAN
+			-- Does text other programs drag onto the window arrive as `Event_window_text_drop'?
+		do
+			Result := shell_accepts_text_ext = 1
+		end
+
+	set_accepts_text (a_on: BOOLEAN)
+			-- Take text dragged in from other programs (OLE drag and drop on Windows), or
+			-- refuse it. While on, files dragged in come through OLE too, still as
+			-- `Event_window_drop'. Needs the window open.
+		do
+			shell_set_accepts_text_ext (a_on.to_integer)
+		end
+
+	simulate_drag_in (a_x, a_y: INTEGER; a_text, a_paths: READABLE_STRING_GENERAL)
+			-- As `SHELL_PANEL.simulate_drag_in', for the window.
+		require
+			something: not a_text.is_empty or not a_paths.is_empty
+		local
+			l_text, l_paths: NATIVE_STRING
+		do
+			create l_text.make (a_text)
+			create l_paths.make (a_paths)
+			shell_try_drag_in_ext (a_x, a_y, l_text.item, l_paths.item)
+		end
+
+	drag_out (a_text, a_paths: READABLE_STRING_GENERAL): INTEGER
+			-- Drag `a_text' and the newline-separated `a_paths' out to other programs with the
+			-- mouse button held now. Modal, as every Windows drag is: it answers when the drag
+			-- ends, `Drag_copied' when another program took a copy, `Drag_refused' when nothing
+			-- did, `Drag_landed_here' when it landed on one of this program's panels (which
+			-- queued its own drop event).
+		require
+			something: not a_text.is_empty or not a_paths.is_empty
+		local
+			l_text, l_paths: NATIVE_STRING
+		do
+			create l_text.make (a_text)
+			create l_paths.make (a_paths)
+			Result := shell_drag_out_ext (l_text.item, l_paths.item)
+		ensure
+			known: Result = Drag_copied or Result = Drag_refused or Result = Drag_landed_here
+		end
+
+	Drag_copied: INTEGER = 1
+	Drag_refused: INTEGER = 0
+	Drag_landed_here: INTEGER = -1
+
 feature {NONE} -- Implementation
 
 	ev_buf: MANAGED_POINTER
@@ -641,6 +719,41 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_add_font((const char*)$a_path);"
+		end
+
+	shell_accepts_text_ext: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_panel_accepts_text(-1);"
+		end
+
+	shell_set_accepts_text_ext (a_on: INTEGER)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_panel_set_accepts_text(-1, $a_on);"
+		end
+
+	shell_try_drag_in_ext (a_x, a_y: INTEGER; a_text, a_paths: POINTER)
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"shell_panel_try_drag_in(-1, $a_x, $a_y, (const wchar_t*)$a_text, (const wchar_t*)$a_paths);"
+		end
+
+	shell_dropped_text_ext (a_buf: POINTER; a_cap: INTEGER): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_dropped_text((wchar_t*)$a_buf, $a_cap);"
+		end
+
+	shell_drag_out_ext (a_text, a_paths: POINTER): INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_drag_out((const wchar_t*)$a_text, (const wchar_t*)$a_paths);"
 		end
 
 	shell_drop_paths_ext (a_buf: POINTER; a_cap: INTEGER): INTEGER

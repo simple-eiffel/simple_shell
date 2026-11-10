@@ -70,6 +70,7 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_panel_resize_grips, "panel_resize_grips")
 			run_test (agent t.test_panel_handle_and_side_grips, "panel_handle_and_side_grips")
 			run_test (agent t.test_panel_file_drop, "panel_file_drop")
+			run_test (agent t.test_panel_text_dragged_in, "panel_text_dragged_in")
 			run_test (agent t.test_tray_clicks, "tray_clicks")
 			run_test (agent t.test_hotkey_registers_and_delivers, "hotkey_registers_and_delivers")
 			run_test (agent t.test_hotkey_conflict_is_reported, "hotkey_conflict_is_reported")

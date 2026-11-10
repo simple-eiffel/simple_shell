@@ -38,6 +38,9 @@ feature -- The main window
 	Event_window_resize: INTEGER = 16
 	Event_window_middle: INTEGER = 17
 	Event_window_drop: INTEGER = 18
+	Event_window_text_drop: INTEGER = 68
+			-- Text another program dragged onto the window, at (x, y); the text waits in
+			-- `take_dropped_text' (1.40.0, `SHELL_WINDOW.set_accepts_text').
 	Event_fast_tick: INTEGER = 25
 			-- The app-settable fast tick.
 
@@ -74,6 +77,9 @@ feature -- Panels (`SHELL_PANEL'; the panel's slot in the third field)
 			-- During a move: the panel's left and top now (1.14.0).
 	Event_panel_dropped: INTEGER = 50
 			-- Files dropped on the panel, at (x, y) in it (1.14.0).
+	Event_panel_text_dropped: INTEGER = 67
+			-- Text another program dragged onto the panel, at (x, y) in it; the text waits in
+			-- `SHELL_WINDOW.take_dropped_text' (1.40.0).
 
 feature -- Framed panels (`SHELL_PANEL.open_framed', 1.23.0; the slot in the third field)
 
@@ -135,20 +141,20 @@ feature -- The registry
 			Result := <<Event_window_press, Event_window_char, Event_window_key, Event_window_expose,
 				Event_tick, Event_window_double, Event_window_drag, Event_window_release,
 				Event_window_context, Event_window_triple, Event_window_move, Event_window_leave,
-				Event_window_wheel, Event_window_resize, Event_window_middle, Event_window_drop,
+				Event_window_wheel, Event_window_resize, Event_window_middle, Event_window_drop, Event_window_text_drop,
 				Event_fast_tick, Event_strip_press, Event_strip_moved, Event_strip_expose,
 				Event_overlay_move, Event_overlay_press, Event_overlay_release, Event_overlay_cancel,
 				Event_overlay_expose, Event_overlay_accept, Event_overlay_arrow,
 				Event_panel_press, Event_panel_release, Event_panel_move, Event_panel_expose,
 				Event_panel_wheel, Event_panel_right_press, Event_panel_moved, Event_panel_resized,
-				Event_panel_moving, Event_panel_dropped,
+				Event_panel_moving, Event_panel_dropped, Event_panel_text_dropped,
 				Event_panel_key, Event_panel_char, Event_panel_close_request, Event_panel_activated,
 				Event_panel_double, Event_panel_leave,
 				Event_hotkey, Event_tray_click, Event_appearance_changed, Event_wake, Event_dwell,
 				Event_contrast_changed, Event_motion_changed, Event_focus_request, Event_refresh_request,
 				Event_window_close_request>>
 		ensure
-			every_event: Result.count = 53
+			every_event: Result.count = 55
 		end
 
 	next_free_event: INTEGER

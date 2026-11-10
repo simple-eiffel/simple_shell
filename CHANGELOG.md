@@ -2,6 +2,17 @@
 
 All notable changes to simple_shell.
 
+## 1.40.0 - 2026-11-10
+
+### Added
+
+- Windows: OLE drag and drop, for simple_gui 1q-b (text in) and 1q-c (dragging out).
+  - **Text in:** `SHELL_PANEL.set_accepts_text` and `SHELL_WINDOW.set_accepts_text` register an OLE drop target. Text another program drags in arrives as event 67 (`Event_panel_text_dropped`: x, y, slot) or 68 (`Event_window_text_drop`: x, y), and `take_dropped_text` collects it.
+  - **Files:** while the target is registered, Explorer's files come through OLE too. They still arrive as events 50 and 18, with the paths in `take_dropped_paths`. A drag carrying files is taken as files only.
+  - **Dragging out:** `SHELL_WINDOW.drag_out (text, paths)` runs DoDragDrop with CF_UNICODETEXT and CF_HDROP, from the shell's own data object (SHCreateDataObject, found at run time). It offers a copy only and answers `Drag_copied`, `Drag_refused`, or `Drag_landed_here` (it landed on one of this program's windows).
+  - **Test door:** `simulate_drag_in` hands the window or panel the data object a drag out would build, through its real drop target.
+- The Linux and Mac halves get "not available" stubs for the new entry points (make_stubs.pl).
+
 ## 1.39.0 - 2026-11-08
 
 ### Added

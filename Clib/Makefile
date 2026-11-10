@@ -38,7 +38,7 @@ else ifeq ($(shell uname -s),Linux)
 # links on Linux. The entry points without a body yet get make_stubs.pl's "not available" stubs,
 # generated from the declarations shared with the macOS half.
 CC ?= cc
-GTK_CFLAGS := $(shell pkg-config --cflags gtk4 fontconfig)
+GTK_CFLAGS := $(shell pkg-config --cflags gtk4 fontconfig x11 xtst)
 CFLAGS ?= -O2 -g
 CFLAGS += -Wall -fPIC $(GTK_CFLAGS)
 

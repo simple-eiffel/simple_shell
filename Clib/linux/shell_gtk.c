@@ -2011,3 +2011,817 @@ int shell_grab_screen(int x, int y, int w, int h, void *bits, int stride)
    and the affinity says none. */
 void shell_panel_set_capture_excluded(int l_slot, int l_on) { (void)l_slot; (void)l_on; }
 int shell_panel_capture_affinity(int l_slot) { (void)l_slot; return 0; }
+
+/* ------------------------------------------------------------------ appearance: the palette
+
+   GTK 4 offers no system palette to read. The colors are Adwaita's for the light or dark style
+   in force (GNOME's own, and GTK's default), and the high-contrast palette when that theme is
+   on: what a GTK program's windows actually show. Indices are Windows' COLOR_* numbers. */
+unsigned int shell_system_color(int l_index)
+{
+	int l_dark = shell_system_prefers_dark(), l_hc = shell_high_contrast_on();
+	if (l_hc) {
+		switch (l_index) {
+			case 5: case 15: return l_dark ? 0x000000 : 0xFFFFFF;
+			case 13: case 26: return l_dark ? 0x78AEED : 0x1C71D8;
+			case 17: return l_dark ? 0xC0C0C0 : 0x404040;
+			default: return l_dark ? 0xFFFFFF : 0x000000;
+		}
+	}
+	switch (l_index) {
+		case 5: return l_dark ? 0x1E1E1E : 0xFFFFFF;                 /* COLOR_WINDOW: a view */
+		case 8: case 18: return l_dark ? 0xFFFFFF : 0x000000;        /* text */
+		case 13: return 0x3584E4;                                    /* COLOR_HIGHLIGHT: the accent */
+		case 14: return 0xFFFFFF;                                    /* COLOR_HIGHLIGHTTEXT */
+		case 15: return l_dark ? 0x303030 : 0xFAFAFA;                /* COLOR_BTNFACE: window and headers */
+		case 17: return l_dark ? 0x9A9A9A : 0x7E7E7E;                /* COLOR_GRAYTEXT */
+		case 26: return l_dark ? 0x78AEED : 0x1C71D8;                /* COLOR_HOTLIGHT: links */
+		case 1: case 2: case 3: case 4: case 10: case 11: case 12: case 16: case 20: case 21: case 22:
+			return l_dark ? 0x242424 : 0xFAFAFA;                     /* frames, faces, shadows */
+	}
+	return l_dark ? 0xFFFFFF : 0x000000;
+}
+void shell_system_colors_changed(void) { shell_push(56, shell_high_contrast_on(), 0, 0); }
+
+/* ------------------------------------------------------------------ icons
+
+   GTK 4 names icons: the image's folder joins the icon theme's search path and its name (the
+   file name less its extension) becomes every window's icon. */
+static char *s_icon_name = NULL;
+void shell_set_window_icon(const void *path)
+{
+	char *l_dir, *l_base, *l_dot;
+	GtkIconTheme *l_theme;
+	if (!path || !*(const char *)path) return;
+	shell_app();
+	l_theme = gtk_icon_theme_get_for_display(gdk_display_get_default());
+	l_dir = g_path_get_dirname((const char *)path);
+	l_base = g_path_get_basename((const char *)path);
+	l_dot = strrchr(l_base, '.');
+	if (l_dot) *l_dot = 0;
+	gtk_icon_theme_add_search_path(l_theme, l_dir);
+	gtk_window_set_default_icon_name(l_base);
+	g_free(s_icon_name);
+	s_icon_name = l_base;
+	g_free(l_dir);
+}
+/* The application's icon, as a handle to compare (Void until one is set). */
+void *shell_main_icon(void) { return s_icon_name; }
+/* A document window shows the application's icon on its taskbar button, as on Windows. */
+void *shell_panel_icon(int l_slot) { return shell_panel_ok(l_slot) && s_panel[l_slot].document ? shell_main_icon() : NULL; }
+
+/* ------------------------------------------------------------------ the text menu
+
+   Cut, Copy, Paste and Select All at the pointer, waiting for the choice as TrackPopupMenu
+   does: 1 Cut, 2 Copy, 3 Paste, 4 Select All, 0 none. */
+static int s_text_menu_choice = 0, s_text_menu_open = 0;
+static void shell_text_menu_pick(GtkButton *b, gpointer d)
+{
+	s_text_menu_choice = GPOINTER_TO_INT(d);
+	gtk_popover_popdown(GTK_POPOVER(g_object_get_data(G_OBJECT(b), "sg-popover")));
+}
+static void shell_text_menu_closed(GtkPopover *p, gpointer d) { (void)p; (void)d; s_text_menu_open = 0; }
+int shell_text_menu(int can_cut, int can_copy, int can_paste, int can_select)
+{
+	static const char *l_titles[4] = {"Cut", "Copy", "Paste", "Select All"};
+	int l_on[4];
+	GtkWidget *l_parent = s_area, *l_pop, *l_box;
+	GdkRectangle r;
+	int i;
+	l_on[0] = can_cut; l_on[1] = can_copy; l_on[2] = can_paste; l_on[3] = can_select;
+	if (!l_parent) for (i = 0; i < SHELL_PANELS && !l_parent; i++) if (s_panel[i].window && gtk_window_is_active(GTK_WINDOW(s_panel[i].window))) l_parent = s_panel[i].area;
+	if (!l_parent || !gtk_widget_get_mapped(l_parent)) return 0;
+	l_pop = gtk_popover_new();
+	l_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	for (i = 0; i < 4; i++) {
+		GtkWidget *b = gtk_button_new_with_label(l_titles[i]);
+		gtk_button_set_has_frame(GTK_BUTTON(b), FALSE);
+		gtk_widget_set_sensitive(b, l_on[i] != 0);
+		g_object_set_data(G_OBJECT(b), "sg-popover", l_pop);
+		g_signal_connect(b, "clicked", G_CALLBACK(shell_text_menu_pick), GINT_TO_POINTER(i + 1));
+		if (i == 3) gtk_box_append(GTK_BOX(l_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+		gtk_box_append(GTK_BOX(l_box), b);
+	}
+	gtk_popover_set_child(GTK_POPOVER(l_pop), l_box);
+	gtk_widget_set_parent(l_pop, l_parent);
+	r.x = (int)s_pointer_x; r.y = (int)s_pointer_y; r.width = 1; r.height = 1;
+	gtk_popover_set_pointing_to(GTK_POPOVER(l_pop), &r);
+	gtk_popover_set_has_arrow(GTK_POPOVER(l_pop), FALSE);
+	g_signal_connect(l_pop, "closed", G_CALLBACK(shell_text_menu_closed), NULL);
+	s_text_menu_choice = 0;
+	s_text_menu_open = 1;
+	gtk_popover_popup(GTK_POPOVER(l_pop));
+	while (s_text_menu_open) g_main_context_iteration(NULL, TRUE);
+	gtk_widget_unparent(l_pop);
+	return s_text_menu_choice;
+}
+
+/* ------------------------------------------------------------------ the overlay
+
+   A full-screen window for picking a region (31 move, 32 press, 33 release, 34 cancel: Escape
+   or a right press, already hidden; 35 expose; 36 Enter; 37 an arrow key). Wayland gives it the
+   monitor it opens on; X11 the whole desktop. */
+static GtkWidget *s_overlay = NULL, *s_overlay_area = NULL;
+static cairo_surface_t *s_overlay_backing = NULL;
+static void shell_overlay_draw(GtkDrawingArea *a, cairo_t *cr, int w, int h, gpointer d)
+{
+	int k = gtk_widget_get_scale_factor(GTK_WIDGET(a));
+	(void)w; (void)h; (void)d;
+	if (!s_overlay_backing) return;
+	cairo_scale(cr, 1.0 / k, 1.0 / k);
+	cairo_set_source_surface(cr, s_overlay_backing, 0, 0);
+	cairo_paint(cr);
+}
+static int shell_overlay_px(double v) { return (int)floor(v * (s_overlay_area ? gtk_widget_get_scale_factor(s_overlay_area) : 1)); }
+static void shell_overlay_motion(GtkEventControllerMotion *m, double x, double y, gpointer d)
+{
+	int last = (s_qtail + SHELL_QCAP - 1) % SHELL_QCAP;
+	(void)m; (void)d;
+	if (s_qtail != s_qhead && s_q[last][0] == 31) { s_q[last][1] = shell_overlay_px(x); s_q[last][2] = shell_overlay_px(y); }
+	else shell_push(31, shell_overlay_px(x), shell_overlay_px(y), 0);
+}
+static void shell_overlay_press(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	(void)n; (void)d;
+	if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g)) == GDK_BUTTON_SECONDARY) { shell_hide_overlay(); shell_push(34, 0, 0, 0); }
+	else shell_push(32, shell_overlay_px(x), shell_overlay_px(y), 0);
+}
+static void shell_overlay_release_cb(GtkGestureClick *g, int n, double x, double y, gpointer d)
+{
+	(void)n; (void)d;
+	if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g)) == GDK_BUTTON_PRIMARY) shell_push(33, shell_overlay_px(x), shell_overlay_px(y), 0);
+}
+static gboolean shell_overlay_key(GtkEventControllerKey *k, guint a_keyval, guint a_code, GdkModifierType a_state, gpointer d)
+{
+	(void)k; (void)a_code; (void)a_state; (void)d;
+	switch (a_keyval) {
+		case GDK_KEY_Escape: shell_hide_overlay(); shell_push(34, 0, 0, 0); return TRUE;
+		case GDK_KEY_Return: case GDK_KEY_KP_Enter: shell_push(36, 0, 0, 0); return TRUE;
+		case GDK_KEY_Left: case GDK_KEY_Up: case GDK_KEY_Right: case GDK_KEY_Down: shell_push(37, shell_vk(a_keyval), 0, 0); return TRUE;
+	}
+	return FALSE;
+}
+static gboolean shell_overlay_close(GtkWindow *w, gpointer d) { (void)w; (void)d; shell_hide_overlay(); shell_push(34, 0, 0, 0); return TRUE; }
+void *shell_show_overlay(void)
+{
+	int x, y, w, h;
+	shell_app();
+	if (g_thread_self() != s_pump_thread) return NULL;
+	shell_virtual_desktop(&x, &y, &w, &h);
+	if (w <= 0 || h <= 0) return NULL;
+	if (!s_overlay) {
+		GtkGesture *g;
+		GtkEventController *m, *key;
+		s_overlay = gtk_window_new();
+		gtk_window_set_decorated(GTK_WINDOW(s_overlay), FALSE);
+		s_overlay_area = gtk_drawing_area_new();
+		gtk_widget_set_focusable(s_overlay_area, TRUE);
+		gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(s_overlay_area), shell_overlay_draw, NULL, NULL);
+		m = gtk_event_controller_motion_new();
+		g_signal_connect(m, "motion", G_CALLBACK(shell_overlay_motion), NULL);
+		gtk_widget_add_controller(s_overlay_area, m);
+		g = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(g), 0);
+		g_signal_connect(g, "pressed", G_CALLBACK(shell_overlay_press), NULL);
+		g_signal_connect(g, "released", G_CALLBACK(shell_overlay_release_cb), NULL);
+		gtk_widget_add_controller(s_overlay_area, GTK_EVENT_CONTROLLER(g));
+		key = gtk_event_controller_key_new();
+		g_signal_connect(key, "key-pressed", G_CALLBACK(shell_overlay_key), NULL);
+		gtk_widget_add_controller(s_overlay, key);
+		gtk_window_set_child(GTK_WINDOW(s_overlay), s_overlay_area);
+		g_signal_connect(s_overlay, "close-request", G_CALLBACK(shell_overlay_close), NULL);
+		g_object_add_weak_pointer(G_OBJECT(s_overlay), (gpointer *)&s_overlay);
+	}
+	if (!s_overlay_backing || cairo_image_surface_get_width(s_overlay_backing) != w || cairo_image_surface_get_height(s_overlay_backing) != h) {
+		if (s_overlay_backing) cairo_surface_destroy(s_overlay_backing);
+		s_overlay_backing = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+	}
+	gtk_window_fullscreen(GTK_WINDOW(s_overlay));
+	gtk_window_present(GTK_WINDOW(s_overlay));
+	gtk_widget_grab_focus(s_overlay_area);
+	gtk_widget_set_cursor_from_name(s_overlay_area, "crosshair");
+	shell_push(35, 0, 0, 0);
+	return s_overlay;
+}
+void shell_hide_overlay(void) { if (s_overlay) gtk_widget_set_visible(s_overlay, FALSE); }
+void *shell_overlay_dc(void) { return s_overlay ? (void *)s_overlay_backing : NULL; }
+void shell_overlay_release(void *dc) { if (dc && s_overlay_area) gtk_widget_queue_draw(s_overlay_area); }
+
+/* ------------------------------------------------------------------ outlines
+
+   Click-through colored frames at exact desktop places (8 slots). X11 places them exactly
+   (override-redirect, above everything); Wayland lets no program place a window, so there they
+   are not available. */
+#define SHELL_OUTLINES 8
+typedef struct { GtkWidget *window; int thick, rgb; } ShellOutline;
+static ShellOutline s_outline[SHELL_OUTLINES];
+static int s_outline_css = 0;
+static void shell_outline_draw(GtkDrawingArea *a, cairo_t *cr, int w, int h, gpointer d)
+{
+	int l_slot = GPOINTER_TO_INT(d), k = gtk_widget_get_scale_factor(GTK_WIDGET(a));
+	double t;
+	if (l_slot < 0 || l_slot >= SHELL_OUTLINES) return;
+	t = (double)s_outline[l_slot].thick / k;
+	cairo_set_source_rgb(cr, ((s_outline[l_slot].rgb >> 16) & 0xFF) / 255.0, ((s_outline[l_slot].rgb >> 8) & 0xFF) / 255.0, (s_outline[l_slot].rgb & 0xFF) / 255.0);
+	cairo_set_line_width(cr, t);
+	cairo_rectangle(cr, t / 2, t / 2, w - t, h - t);
+	cairo_stroke(cr);
+}
+void shell_outline_show(int slot, int x, int y, int w, int h, int thick, int rgb)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *d = shell_x11();
+	ShellOutline *o;
+	int k;
+	if (slot < 0 || slot >= SHELL_OUTLINES || w <= 0 || h <= 0 || !d || g_thread_self() != s_pump_thread) return;
+	o = &s_outline[slot];
+	o->thick = thick > 0 ? thick : 1; o->rgb = rgb;
+	k = shell_scale();
+	if (!s_outline_css) {
+		GtkCssProvider *p = gtk_css_provider_new();
+		gtk_css_provider_load_from_string(p, "window.ss-outline { background: transparent; }");
+		gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref(p);
+		s_outline_css = 1;
+	}
+	if (!o->window) {
+		GtkWidget *a = gtk_drawing_area_new();
+		o->window = gtk_window_new();
+		gtk_window_set_decorated(GTK_WINDOW(o->window), FALSE);
+		gtk_widget_add_css_class(o->window, "ss-outline");
+		gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(a), shell_outline_draw, GINT_TO_POINTER(slot), NULL);
+		gtk_window_set_child(GTK_WINDOW(o->window), a);
+		g_object_add_weak_pointer(G_OBJECT(o->window), (gpointer *)&o->window);
+	}
+	gtk_window_set_default_size(GTK_WINDOW(o->window), w / k > 0 ? w / k : 1, h / k > 0 ? h / k : 1);
+	gtk_widget_realize(o->window);
+	{
+		GdkSurface *s = gtk_native_get_surface(GTK_NATIVE(o->window));
+		Window xid = gdk_x11_surface_get_xid(s);
+		XSetWindowAttributes l_a;
+		cairo_region_t *l_none = cairo_region_create();
+		gdk_surface_set_input_region(s, l_none);   /* clicks pass through */
+		cairo_region_destroy(l_none);
+		l_a.override_redirect = True;
+		XChangeWindowAttributes(d, xid, CWOverrideRedirect, &l_a);
+		gtk_widget_set_visible(o->window, TRUE);
+		XMoveResizeWindow(d, xid, x, y, (unsigned int)w, (unsigned int)h);
+		XRaiseWindow(d, xid);
+		XFlush(d);
+	}
+	gtk_widget_queue_draw(gtk_window_get_child(GTK_WINDOW(o->window)));
+#else
+	(void)slot; (void)x; (void)y; (void)w; (void)h; (void)thick; (void)rgb;
+#endif
+}
+void shell_outline_hide(int slot)
+{
+#ifdef GDK_WINDOWING_X11
+	if (slot >= 0 && slot < SHELL_OUTLINES && s_outline[slot].window) gtk_widget_set_visible(s_outline[slot].window, FALSE);
+#else
+	(void)slot;
+#endif
+}
+
+/* ------------------------------------------------------------------ printing
+
+   As on the Mac (shell_appkit_print.m): the "DC" is a cairo PDF surface in points (72 dots per
+   inch, nothing unprintable); at the end the PDF goes to the printer through CUPS, or stays at
+   the output path when one was given. CUPS is loaded when the program first prints, so a system
+   without it still prints to files; without it no printers are listed. */
+#include <cairo-pdf.h>
+#include <dlfcn.h>
+#include <langinfo.h>
+#include <unistd.h>
+
+typedef struct { char *name; char *instance; int is_default; int num_options; void *options; } ShellCupsDest;
+typedef int (*ShellCupsGetDests)(ShellCupsDest **);
+typedef void (*ShellCupsFreeDests)(int, ShellCupsDest *);
+typedef int (*ShellCupsPrintFile)(const char *, const char *, const char *, int, void *);
+static void *s_cups = NULL;
+static int s_cups_tried = 0;
+static ShellCupsGetDests s_cups_get_dests = NULL;
+static ShellCupsFreeDests s_cups_free_dests = NULL;
+static ShellCupsPrintFile s_cups_print_file = NULL;
+static int shell_cups(void)
+{
+	if (!s_cups_tried) {
+		s_cups_tried = 1;
+		s_cups = dlopen("libcups.so.2", RTLD_NOW | RTLD_LOCAL);
+		if (s_cups) {
+			s_cups_get_dests = (ShellCupsGetDests)dlsym(s_cups, "cupsGetDests");
+			s_cups_free_dests = (ShellCupsFreeDests)dlsym(s_cups, "cupsFreeDests");
+			s_cups_print_file = (ShellCupsPrintFile)dlsym(s_cups, "cupsPrintFile");
+		}
+	}
+	return s_cups_get_dests && s_cups_free_dests && s_cups_print_file;
+}
+
+static cairo_surface_t *s_doc = NULL;
+static int s_in_page = 0, s_to_printer = 0;
+static double s_page_w = 0, s_page_h = 0;
+static char s_printer[256], s_doc_title[256], s_doc_path[2048];
+
+/* UTF-8 `a_text' as UTF-16 into `buf' from `a_at' (room for `cap' units); the new length, or -1. */
+static int shell_print_put(void *buf, int cap, int a_at, const char *a_text)
+{
+	glong n = 0;
+	gunichar2 *u = g_utf8_to_utf16(a_text ? a_text : "", -1, NULL, &n, NULL);
+	if (!u) return a_at;
+	if (a_at + (int)n + 2 > cap) { g_free(u); return -1; }
+	memcpy((gunichar2 *)buf + a_at, u, (size_t)n * sizeof(gunichar2));
+	((gunichar2 *)buf)[a_at + n] = 0;
+	g_free(u);
+	return a_at + (int)n;
+}
+/* The default printer's name, UTF-16; its length, or 0 when there is none. */
+int shell_print_default(void *l_buf, int l_cap)
+{
+	ShellCupsDest *d = NULL;
+	int i, l_n = 0, l_count;
+	if (!l_buf || l_cap <= 0) return 0;
+	((gunichar2 *)l_buf)[0] = 0;
+	if (!shell_cups()) return 0;
+	l_count = s_cups_get_dests(&d);
+	for (i = 0; i < l_count; i++)
+		if (d[i].is_default && !d[i].instance) { int r = shell_print_put(l_buf, l_cap, 0, d[i].name); l_n = r < 0 ? 0 : r; break; }
+	s_cups_free_dests(l_count, d);
+	return l_n;
+}
+/* Every printer's name, each followed by a newline, UTF-16; the characters written. */
+int shell_print_names(void *l_buf, int l_cap)
+{
+	ShellCupsDest *d = NULL;
+	int i, l_len = 0, l_count;
+	if (!l_buf || l_cap <= 0) return 0;
+	((gunichar2 *)l_buf)[0] = 0;
+	if (!shell_cups()) return 0;
+	l_count = s_cups_get_dests(&d);
+	for (i = 0; i < l_count; i++) {
+		int r;
+		if (d[i].instance) continue;
+		r = shell_print_put(l_buf, l_cap, l_len, d[i].name);
+		if (r < 0) break;
+		((gunichar2 *)l_buf)[r] = '\n';
+		l_len = r + 1;
+		((gunichar2 *)l_buf)[l_len] = 0;
+	}
+	s_cups_free_dests(l_count, d);
+	return l_len;
+}
+static int shell_print_known(const char *a_name)
+{
+	ShellCupsDest *d = NULL;
+	int i, l_count, l_known = 0;
+	if (!shell_cups()) return 0;
+	l_count = s_cups_get_dests(&d);
+	for (i = 0; i < l_count && !l_known; i++) if (!d[i].instance && strcmp(d[i].name, a_name) == 0) l_known = 1;
+	s_cups_free_dests(l_count, d);
+	return l_known;
+}
+/* The paper in points: Windows' DMPAPER codes 1 Letter, 5 Legal, 9 A4; 0 the locale's own
+   (glibc's LC_PAPER: 210 mm wide is A4). */
+static void shell_print_paper(int a_paper, int a_landscape)
+{
+	if (a_paper == 0) {
+#ifdef _NL_PAPER_WIDTH
+		union { char *s; int i; } w;
+		w.s = nl_langinfo(_NL_PAPER_WIDTH);
+		a_paper = w.i == 210 ? 9 : 1;
+#else
+		a_paper = 1;
+#endif
+	}
+	switch (a_paper) {
+		case 5: s_page_w = 612; s_page_h = 1008; break;
+		case 9: s_page_w = 595.276; s_page_h = 841.890; break;
+		default: s_page_w = 612; s_page_h = 792;
+	}
+	if (a_landscape) { double t = s_page_w; s_page_w = s_page_h; s_page_h = t; }
+}
+/* Begin a document on `l_printer' (a known printer, as on Windows) titled `l_title', written to
+   `l_output' when that is not empty, on paper `l_paper', in landscape when asked. 1 when it began. */
+int shell_print_begin(const void *l_printer, const void *l_title, const void *l_output, int l_paper, int l_landscape)
+{
+	const char *p = (const char *)l_printer, *t = (const char *)l_title, *o = (const char *)l_output;
+	if (s_doc || !p || !p[0]) return 0;
+	s_to_printer = !(o && o[0]);
+	if (s_to_printer && !shell_print_known(p)) return 0;
+	snprintf(s_printer, sizeof s_printer, "%s", p);
+	snprintf(s_doc_title, sizeof s_doc_title, "%s", t && t[0] ? t : "Document");
+	if (s_to_printer) snprintf(s_doc_path, sizeof s_doc_path, "%s/simple_shell_print_%d.pdf", g_get_tmp_dir(), (int)getpid());
+	else snprintf(s_doc_path, sizeof s_doc_path, "%s", o);
+	shell_print_paper(l_paper, l_landscape);
+	s_doc = cairo_pdf_surface_create(s_doc_path, s_page_w, s_page_h);
+	if (cairo_surface_status(s_doc) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(s_doc);
+		s_doc = NULL;
+		return 0;
+	}
+	cairo_pdf_surface_set_metadata(s_doc, CAIRO_PDF_METADATA_TITLE, s_doc_title);
+	s_in_page = 0;
+	return 1;
+}
+int shell_print_begin_page(void)
+{
+	if (!s_doc || s_in_page) return 0;
+	s_in_page = 1;
+	return 1;
+}
+/* The page itself is added by the program's show_page on the surface. */
+int shell_print_end_page(void)
+{
+	if (!s_doc || !s_in_page) return 0;
+	s_in_page = 0;
+	return 1;
+}
+static void shell_print_close(void)
+{
+	cairo_surface_destroy(s_doc);
+	s_doc = NULL;
+	s_in_page = 0;
+}
+/* End the document: the PDF is written, then printed through CUPS (or left at the output path).
+   1 when it was accepted. */
+int shell_print_end(void)
+{
+	int l_ok;
+	if (!s_doc) return 0;
+	s_in_page = 0;
+	cairo_surface_finish(s_doc);
+	l_ok = cairo_surface_status(s_doc) == CAIRO_STATUS_SUCCESS;
+	if (l_ok && s_to_printer) {
+		l_ok = shell_cups() && s_cups_print_file(s_printer, s_doc_path, s_doc_title, 0, NULL) > 0;
+		unlink(s_doc_path);
+	}
+	shell_print_close();
+	return l_ok ? 1 : 0;
+}
+/* Throw the document away, the partial file with it. */
+void shell_print_abort(void)
+{
+	if (!s_doc) return;
+	cairo_surface_finish(s_doc);
+	unlink(s_doc_path);
+	shell_print_close();
+}
+/* GetDeviceCaps: 88/90 dots per inch (72: points), 8/10 printable width and height, 110/111 the
+   page, 112/113 the unprintable offsets (none on a PDF page). */
+int shell_print_caps(int l_index)
+{
+	if (!s_doc) return 0;
+	switch (l_index) {
+		case 88: case 90: return 72;
+		case 8: case 110: return (int)floor(s_page_w + 0.5);
+		case 10: case 111: return (int)floor(s_page_h + 0.5);
+		default: return 0;
+	}
+}
+void *shell_print_dc(void) { return s_doc; }
+int shell_print_in_page(void) { return s_in_page; }
+
+/* ------------------------------------------------------------------ the speller
+
+   Enchant (libenchant-2, which fronts Hunspell and the others), loaded on first use, in American
+   English as the Windows half's ISpellChecker. Without it, or without an English dictionary, the
+   speller degrades: no word is reported wrong and nothing is suggested, and nothing fails.
+   Ranges are UTF-16 units, as on Windows. */
+typedef void *(*ShellEnchantInit)(void);
+typedef void *(*ShellEnchantRequest)(void *, const char *);
+typedef int (*ShellEnchantCheck)(void *, const char *, ssize_t);
+typedef char **(*ShellEnchantSuggest)(void *, const char *, ssize_t, size_t *);
+typedef void (*ShellEnchantFreeList)(void *, char **);
+typedef void (*ShellEnchantAdd)(void *, const char *, ssize_t);
+static void *s_enchant_dict = NULL;
+static int s_enchant_tried = 0;
+static ShellEnchantCheck s_enchant_check = NULL;
+static ShellEnchantSuggest s_enchant_suggest = NULL;
+static ShellEnchantFreeList s_enchant_free_list = NULL;
+static ShellEnchantAdd s_enchant_add = NULL, s_enchant_add_session = NULL;
+static int shell_speller(void)
+{
+	if (!s_enchant_tried) {
+		void *l = dlopen("libenchant-2.so.2", RTLD_NOW | RTLD_LOCAL);
+		s_enchant_tried = 1;
+		if (l) {
+			ShellEnchantInit l_init = (ShellEnchantInit)dlsym(l, "enchant_broker_init");
+			ShellEnchantRequest l_request = (ShellEnchantRequest)dlsym(l, "enchant_broker_request_dict");
+			void *b;
+			s_enchant_check = (ShellEnchantCheck)dlsym(l, "enchant_dict_check");
+			s_enchant_suggest = (ShellEnchantSuggest)dlsym(l, "enchant_dict_suggest");
+			s_enchant_free_list = (ShellEnchantFreeList)dlsym(l, "enchant_dict_free_string_list");
+			s_enchant_add = (ShellEnchantAdd)dlsym(l, "enchant_dict_add");
+			s_enchant_add_session = (ShellEnchantAdd)dlsym(l, "enchant_dict_add_to_session");
+			b = l_init && l_request ? l_init() : NULL;
+			if (b) s_enchant_dict = l_request(b, "en_US");
+		}
+	}
+	return s_enchant_dict && s_enchant_check && s_enchant_suggest && s_enchant_free_list && s_enchant_add && s_enchant_add_session;
+}
+static int shell_word_char(gunichar c) { return g_unichar_isalpha(c) || c == '\'' || c == 0x2019; }
+/* Misspellings in `text' (UTF-8): (start, length) pairs in UTF-16 units into `out', at most
+   `cap_pairs'; answers how many. */
+int shell_spell_check(const void *text, int *out, int cap_pairs)
+{
+	const char *p = (const char *)text, *l_start = NULL;
+	int n = 0, l_u16 = 0, l_word_u16 = 0;
+	if (!p || !shell_speller()) return 0;
+	for (;; p = g_utf8_next_char(p)) {
+		gunichar c = *p ? g_utf8_get_char(p) : 0;
+		if (c && shell_word_char(c)) {
+			if (!l_start) { l_start = p; l_word_u16 = l_u16; }
+		} else if (l_start) {
+			/* a word ends: trim apostrophes at its edges */
+			const char *b = l_start, *e = p;
+			int l_lead = 0;
+			while (b < e && (*b == '\'')) { b++; l_lead++; }
+			while (e > b && e[-1] == '\'') e--;
+			if (e > b && s_enchant_check(s_enchant_dict, b, e - b) > 0 && n < cap_pairs) {
+				glong l_len = 0;
+				gunichar2 *u = g_utf8_to_utf16(b, e - b, NULL, &l_len, NULL);
+				g_free(u);
+				out[n * 2] = l_word_u16 + l_lead;
+				out[n * 2 + 1] = (int)l_len;
+				n++;
+			}
+			l_start = NULL;
+		}
+		if (!c) break;
+		l_u16 += c > 0xFFFF ? 2 : 1;
+	}
+	return n;
+}
+/* Up to five suggestions for `word', UTF-16 and one per line, into `buf'; answers how many. */
+int shell_spell_suggest(const void *word, void *buf, int cap)
+{
+	size_t l_count = 0, i;
+	char **l_list;
+	int n = 0, pos = 0;
+	if (!buf || cap < 1) return 0;
+	((gunichar2 *)buf)[0] = 0;
+	if (!word || !*(const char *)word || !shell_speller()) return 0;
+	l_list = s_enchant_suggest(s_enchant_dict, (const char *)word, -1, &l_count);
+	for (i = 0; l_list && i < l_count && n < 5; i++) {
+		int r = shell_print_put(buf, cap, pos + (n ? 1 : 0), l_list[i]);
+		if (r < 0) break;
+		if (n) ((gunichar2 *)buf)[pos] = '\n';
+		pos = r;
+		n++;
+	}
+	if (l_list) s_enchant_free_list(s_enchant_dict, l_list);
+	return n;
+}
+/* Learn `word' into the user's dictionary, as ISpellChecker::Add. */
+int shell_spell_add(const void *word)
+{
+	if (!word || !*(const char *)word || !shell_speller()) return 0;
+	s_enchant_add(s_enchant_dict, (const char *)word, -1);
+	return 1;
+}
+/* Ignore `word' for this run, as ISpellChecker::Ignore. */
+int shell_spell_ignore(const void *word)
+{
+	if (!word || !*(const char *)word || !shell_speller()) return 0;
+	s_enchant_add_session(s_enchant_dict, (const char *)word, -1);
+	return 1;
+}
+
+/* ------------------------------------------------------------------ the tray
+
+   The freedesktop StatusNotifierItem over D-Bus (KDE, and GNOME with the AppIndicator
+   extension): each icon is its own session-bus connection that owns
+   org.kde.StatusNotifierItem-<pid>-<n>, exports /StatusNotifierItem and registers with the
+   desktop's StatusNotifierWatcher. Where no watcher answers, there is no notification area and
+   the icon is not installed (0), as the Windows half degrades. Clicks come back as event 52
+   (button: 1 left, 2 right, 3 middle, 4 the balloon) with the icon's id. Balloons are
+   org.freedesktop.Notifications notices; clicking one is button 4. */
+#define SHELL_TRAYS 4
+typedef struct { int used, id; GDBusConnection *conn; guint reg; char *name, *tip; guint32 notice; } ShellTray;
+static ShellTray s_tray[SHELL_TRAYS];
+static int s_tray_next_id = 0;
+static GDBusNodeInfo *s_sni_info = NULL;
+static guint s_notice_watch = 0;
+static GDBusConnection *s_notice_bus = NULL;   /* the shared session bus, for notices */
+static const char *Shell_sni_xml =
+	"<node><interface name='org.kde.StatusNotifierItem'>"
+	"<property name='Category' type='s' access='read'/>"
+	"<property name='Id' type='s' access='read'/>"
+	"<property name='Title' type='s' access='read'/>"
+	"<property name='Status' type='s' access='read'/>"
+	"<property name='IconName' type='s' access='read'/>"
+	"<property name='ToolTip' type='(sa(iiay)ss)' access='read'/>"
+	"<property name='ItemIsMenu' type='b' access='read'/>"
+	"<method name='Activate'><arg name='x' type='i' direction='in'/><arg name='y' type='i' direction='in'/></method>"
+	"<method name='SecondaryActivate'><arg name='x' type='i' direction='in'/><arg name='y' type='i' direction='in'/></method>"
+	"<method name='ContextMenu'><arg name='x' type='i' direction='in'/><arg name='y' type='i' direction='in'/></method>"
+	"<method name='Scroll'><arg name='delta' type='i' direction='in'/><arg name='orientation' type='s' direction='in'/></method>"
+	"<signal name='NewTitle'/><signal name='NewToolTip'/><signal name='NewIcon'/>"
+	"</interface></node>";
+
+static ShellTray *shell_tray_of(HWND h)
+{
+	int i;
+	for (i = 0; i < SHELL_TRAYS; i++) if (s_tray[i].used && (HWND)&s_tray[i] == h) return &s_tray[i];
+	return NULL;
+}
+static void shell_sni_call(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+	const gchar *method, GVariant *params, GDBusMethodInvocation *inv, gpointer d)
+{
+	ShellTray *t = &s_tray[GPOINTER_TO_INT(d)];
+	(void)c; (void)sender; (void)path; (void)iface; (void)params;
+	if (t->used) {
+		if (g_strcmp0(method, "Activate") == 0) shell_push(52, 1, 0, t->id);
+		else if (g_strcmp0(method, "ContextMenu") == 0) shell_push(52, 2, 0, t->id);
+		else if (g_strcmp0(method, "SecondaryActivate") == 0) shell_push(52, 3, 0, t->id);
+	}
+	g_dbus_method_invocation_return_value(inv, NULL);
+}
+static GVariant *shell_sni_get(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+	const gchar *prop, GError **err, gpointer d)
+{
+	ShellTray *t = &s_tray[GPOINTER_TO_INT(d)];
+	const char *l_tip = t->tip ? t->tip : "";
+	const char *l_icon = s_icon_name ? s_icon_name : "application-x-executable";
+	(void)c; (void)sender; (void)path; (void)iface; (void)err;
+	if (g_strcmp0(prop, "Category") == 0) return g_variant_new_string("ApplicationStatus");
+	if (g_strcmp0(prop, "Id") == 0) return g_variant_new_string(t->name ? t->name : "simple_shell");
+	if (g_strcmp0(prop, "Title") == 0) return g_variant_new_string(l_tip);
+	if (g_strcmp0(prop, "Status") == 0) return g_variant_new_string("Active");
+	if (g_strcmp0(prop, "IconName") == 0) return g_variant_new_string(l_icon);
+	if (g_strcmp0(prop, "ItemIsMenu") == 0) return g_variant_new_boolean(FALSE);
+	if (g_strcmp0(prop, "ToolTip") == 0) {
+		GVariantBuilder b;
+		g_variant_builder_init(&b, G_VARIANT_TYPE("a(iiay)"));
+		return g_variant_new("(sa(iiay)ss)", l_icon, &b, l_tip, "");
+	}
+	return NULL;
+}
+static const GDBusInterfaceVTable Shell_sni_vtable = { shell_sni_call, shell_sni_get, NULL, { 0 } };
+
+static void shell_tray_drop(ShellTray *t)
+{
+	if (t->conn) {
+		if (t->reg) g_dbus_connection_unregister_object(t->conn, t->reg);
+		g_dbus_connection_close_sync(t->conn, NULL, NULL);
+		g_object_unref(t->conn);
+	}
+	g_free(t->name); g_free(t->tip);
+	memset(t, 0, sizeof *t);
+}
+/* Install an icon titled `tip'; its handle, or 0 where there is no notification area. */
+HWND shell_tray_add(const void *tip)
+{
+	char *l_address;
+	GVariant *r;
+	GError *e = NULL;
+	ShellTray *t = NULL;
+	int i, l_slot = -1;
+	for (i = 0; i < SHELL_TRAYS && l_slot < 0; i++) if (!s_tray[i].used) l_slot = i;
+	if (l_slot < 0) return NULL;
+	if (!s_sni_info) s_sni_info = g_dbus_node_info_new_for_xml(Shell_sni_xml, NULL);
+	l_address = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+	if (!l_address || !s_sni_info) { g_free(l_address); return NULL; }
+	t = &s_tray[l_slot];
+	memset(t, 0, sizeof *t);
+	t->used = 1;
+	t->id = ++s_tray_next_id;
+	t->tip = g_strdup(tip ? (const char *)tip : "");
+	t->conn = g_dbus_connection_new_for_address_sync(l_address,
+		G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, NULL);
+	g_free(l_address);
+	if (!t->conn) { shell_tray_drop(t); return NULL; }
+	t->name = g_strdup_printf("org.kde.StatusNotifierItem-%d-%d", (int)getpid(), t->id);
+	t->reg = g_dbus_connection_register_object(t->conn, "/StatusNotifierItem", s_sni_info->interfaces[0],
+		&Shell_sni_vtable, GINT_TO_POINTER(l_slot), NULL, NULL);
+	r = g_dbus_connection_call_sync(t->conn, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+		"RequestName", g_variant_new("(su)", t->name, 4u), NULL, G_DBUS_CALL_FLAGS_NONE, 1000, NULL, &e);
+	if (r) g_variant_unref(r);
+	if (e || !t->reg) { g_clear_error(&e); shell_tray_drop(t); return NULL; }
+	r = g_dbus_connection_call_sync(t->conn, "org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+		"org.kde.StatusNotifierWatcher", "RegisterStatusNotifierItem", g_variant_new("(s)", t->name),
+		NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START, 1000, NULL, &e);
+	if (r) g_variant_unref(r);
+	if (e) { g_clear_error(&e); shell_tray_drop(t); return NULL; }   /* no notification area here */
+	return (HWND)t;
+}
+int shell_tray_id(HWND h) { ShellTray *t = shell_tray_of(h); return t ? t->id : 0; }
+int shell_tray_set_tip(HWND h, const void *tip)
+{
+	ShellTray *t = shell_tray_of(h);
+	if (!t) return 0;
+	g_free(t->tip);
+	t->tip = g_strdup(tip ? (const char *)tip : "");
+	g_dbus_connection_emit_signal(t->conn, NULL, "/StatusNotifierItem", "org.kde.StatusNotifierItem", "NewTitle", NULL, NULL);
+	g_dbus_connection_emit_signal(t->conn, NULL, "/StatusNotifierItem", "org.kde.StatusNotifierItem", "NewToolTip", NULL, NULL);
+	return 1;
+}
+static void shell_notice_action(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+	const gchar *signal, GVariant *params, gpointer d)
+{
+	guint32 l_id = 0;
+	const gchar *l_key = NULL;
+	int i;
+	(void)c; (void)sender; (void)path; (void)iface; (void)signal; (void)d;
+	g_variant_get(params, "(u&s)", &l_id, &l_key);
+	for (i = 0; i < SHELL_TRAYS; i++)
+		if (s_tray[i].used && s_tray[i].notice == l_id) { shell_push(52, 4, 0, s_tray[i].id); s_tray[i].notice = 0; }
+}
+/* A notice beside the icon; 1 when the desktop's notification service took it. */
+int shell_tray_balloon(HWND h, const void *title, const void *body)
+{
+	ShellTray *t = shell_tray_of(h);
+	GVariantBuilder l_actions;
+	GVariant *r;
+	if (!t) return 0;
+	if (!s_notice_bus) s_notice_bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+	if (!s_notice_bus) return 0;
+	if (!s_notice_watch)
+		s_notice_watch = g_dbus_connection_signal_subscribe(s_notice_bus, "org.freedesktop.Notifications", "org.freedesktop.Notifications",
+			"ActionInvoked", "/org/freedesktop/Notifications", NULL, G_DBUS_SIGNAL_FLAGS_NONE, shell_notice_action, NULL, NULL);
+	g_variant_builder_init(&l_actions, G_VARIANT_TYPE("as"));
+	g_variant_builder_add(&l_actions, "s", "default");
+	g_variant_builder_add(&l_actions, "s", "Open");
+	r = g_dbus_connection_call_sync(s_notice_bus, "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+		"org.freedesktop.Notifications", "Notify",
+		g_variant_new("(susssasa{sv}i)", t->tip ? t->tip : "", 0u, s_icon_name ? s_icon_name : "",
+			title ? (const char *)title : "", body ? (const char *)body : "", &l_actions, NULL, -1),
+		G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 1000, NULL, NULL);
+	if (!r) return 0;
+	g_variant_get(r, "(u)", &t->notice);
+	g_variant_unref(r);
+	return 1;
+}
+int shell_tray_remove(HWND h)
+{
+	ShellTray *t = shell_tray_of(h);
+	if (!t) return 0;
+	shell_tray_drop(t);
+	return 1;
+}
+/* The test door: a Windows tray message as the icon would send it. */
+void shell_tray_try_click(HWND h, int l_msg)
+{
+	ShellTray *t = shell_tray_of(h);
+	if (!t) return;
+	switch (l_msg) {
+		case 0x0202: shell_push(52, 1, 0, t->id); break;   /* WM_LBUTTONUP */
+		case 0x0205: shell_push(52, 2, 0, t->id); break;   /* WM_RBUTTONUP */
+		case 0x0203: shell_push(52, 3, 0, t->id); break;   /* WM_LBUTTONDBLCLK */
+		case 0x0405: shell_push(52, 4, 0, t->id); break;   /* NIN_BALLOONUSERCLICK */
+	}
+}
+
+/* The icon's menu: one item per line of `l_items' ("-" a separator), in a small window at the
+   pointer (placed exactly on X11; where the desktop puts it on Wayland), waiting for the choice:
+   the line number, or 0 when it closes unchosen. */
+static int s_tray_choice = 0, s_tray_menu_open = 0;
+static void shell_tray_menu_pick(GtkButton *b, gpointer d)
+{
+	s_tray_choice = GPOINTER_TO_INT(d);
+	gtk_window_close(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(b))));
+}
+static void shell_tray_menu_active(GObject *o, GParamSpec *ps, gpointer d)
+{
+	(void)ps; (void)d;
+	if (!gtk_window_is_active(GTK_WINDOW(o))) gtk_window_close(GTK_WINDOW(o));
+}
+static void shell_tray_menu_gone(GtkWidget *w, gpointer d) { (void)w; (void)d; s_tray_menu_open = 0; }
+int shell_tray_menu(HWND h, const void *l_items)
+{
+	ShellTray *t = shell_tray_of(h);
+	GtkWidget *w, *box;
+	char **l_lines, **it;
+	int n = 0;
+	if (!t || !l_items || g_thread_self() != s_pump_thread) return 0;
+	w = gtk_window_new();
+	gtk_window_set_decorated(GTK_WINDOW(w), FALSE);
+	box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	l_lines = g_strsplit((const char *)l_items, "\n", -1);
+	for (it = l_lines; *it; it++) {
+		n++;
+		if (strcmp(*it, "-") == 0) gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+		else {
+			GtkWidget *b = gtk_button_new_with_label(*it);
+			gtk_button_set_has_frame(GTK_BUTTON(b), FALSE);
+			g_signal_connect(b, "clicked", G_CALLBACK(shell_tray_menu_pick), GINT_TO_POINTER(n));
+			gtk_box_append(GTK_BOX(box), b);
+		}
+	}
+	g_strfreev(l_lines);
+	gtk_window_set_child(GTK_WINDOW(w), box);
+	g_signal_connect(w, "notify::is-active", G_CALLBACK(shell_tray_menu_active), NULL);
+	g_signal_connect(w, "destroy", G_CALLBACK(shell_tray_menu_gone), NULL);
+	s_tray_choice = 0;
+	s_tray_menu_open = 1;
+#ifdef GDK_WINDOWING_X11
+	if (shell_x11()) {
+		int px = 0, py = 0;
+		gtk_widget_realize(w);
+		shell_input_pointer(&px, &py);
+		XMoveWindow(shell_x11(), gdk_x11_surface_get_xid(gtk_native_get_surface(GTK_NATIVE(w))), px, py);
+	}
+#endif
+	gtk_window_present(GTK_WINDOW(w));
+	while (s_tray_menu_open) g_main_context_iteration(NULL, TRUE);
+	return s_tray_choice;
+}

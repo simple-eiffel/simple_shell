@@ -5,7 +5,8 @@ note
 		hidden window of its own, removed cleanly on `remove'. The icon
 		is the program's own (resource 1 of its .rc) when it has one.
 		Since 1.14.0 clicks on the icon arrive on the shared queue as
-		`Event_click' (button in the first field, `id' in the fourth -
+		`Event_click' (button in the first field - a
+		click on a balloon notice, `Click_balloon'; `id' in the fourth -
 		pushed, never called back: the queue-polled pump law holds),
 		and `choose' opens a popup menu at the pointer.
 		Built for simple_chat's TRAY_NOTIFIER: balloon per notice unless
@@ -69,6 +70,8 @@ feature -- Clicks and menu (1.14.0)
 	Click_left: INTEGER = 1
 	Click_right: INTEGER = 2
 	Click_double: INTEGER = 3
+	Click_balloon: INTEGER = 4
+			-- A click on the balloon notice this icon showed (simple_gui 1o).
 
 	choose (a_items: ARRAY [READABLE_STRING_GENERAL]): INTEGER
 			-- Open a popup menu of `a_items' ("-" for a separator) at the pointer; the number
@@ -99,13 +102,16 @@ feature -- Clicks and menu (1.14.0)
 			-- to `Event_click'.
 		require
 			installed: is_installed
-			known: a_button >= Click_left and a_button <= Click_double
+			known: a_button >= Click_left and a_button <= Click_balloon
 		do
 			inspect a_button
 			when Click_left then
 				shell_tray_try_click (handle, 0x0202)
 			when Click_right then
 				shell_tray_try_click (handle, 0x0205)
+			when Click_balloon then
+					-- NIN_BALLOONUSERCLICK
+				shell_tray_try_click (handle, 0x0405)
 			else
 				shell_tray_try_click (handle, 0x0203)
 			end

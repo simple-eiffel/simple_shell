@@ -72,7 +72,8 @@
                 46 right press | 47 moved - slot in the fourth field (1.11.0)
                 48 resized | 49 moving (1.14.0) | 50 drop(x,y) (1.14.0)
    hotkeys:     51 hotkey(id, vk, modifiers) - a thread message (1.11.0)
-   tray:        52 click(button, 0, tray id) - 1 left, 2 right, 3 double (1.14.0)
+   tray:        52 click(button, 0, tray id) - 1 left, 2 right, 3 double (1.14.0),
+                4 a click on the icon's balloon notice (simple_gui 1o)
    wake:        54 a worker woke the pump (shell_wake, 1.18.0)
    appearance:  53 light/dark app setting changed(1 dark, 0 light) (1.16.0)
    (overlay renumbered 2026-08-23: 12..16 collided with the main window's
@@ -2409,6 +2410,7 @@ static LRESULT CALLBACK shell_tray_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             case WM_LBUTTONUP:     shell_push(52, 1, 0, l_id); break;
             case WM_RBUTTONUP:     shell_push(52, 2, 0, l_id); break;
             case WM_LBUTTONDBLCLK: shell_push(52, 3, 0, l_id); break;
+            case NIN_BALLOONUSERCLICK: shell_push(52, 4, 0, l_id); break;
         }
         return 0;
     }

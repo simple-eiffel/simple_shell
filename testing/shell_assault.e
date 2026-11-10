@@ -326,6 +326,8 @@ feature -- Panels (1.11.0)
 				assert ("carrying the icon's id", w.last_extra = t.id)
 				t.simulate_click (t.Click_right)
 				assert ("a right click arrives", w.drain_event (t.Event_click, t.Click_right) and w.last_extra = t.id)
+				t.simulate_click (t.Click_balloon)
+				assert ("a balloon click arrives", w.drain_event (t.Event_click, t.Click_balloon) and w.last_extra = t.id)
 				t.remove
 			else
 				assert ("no notification area in this session", True)

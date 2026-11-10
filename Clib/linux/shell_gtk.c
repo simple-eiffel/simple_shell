@@ -1662,3 +1662,352 @@ int shell_shell_open(const void *path)
 	g_free(l_uri);
 	return ok ? 1 : 0;
 }
+
+/* ---------------- Wayland: the xdg-desktop-portal (stage 3; until then, not available) */
+static int shell_portal_hotkey_register(int l_id, int l_mods, int l_vk) { (void)l_id; (void)l_mods; (void)l_vk; return 0; }
+static void shell_portal_hotkey_unregister(int l_id) { (void)l_id; }
+static int shell_portal_grab_screen(int x, int y, int w, int h, void *bits, int stride) { (void)x; (void)y; (void)w; (void)h; (void)bits; (void)stride; return 0; }
+
+/* ------------------------------------------------------------------ X11 and Wayland (Larry 2026-11-10: both)
+
+   On an X11 session (or XWayland, GDK_BACKEND=x11) the desktop is reached directly: hotkeys by
+   XGrabKey on the root window, input by XTest, the screen by XGetImage. On Wayland these go
+   through the xdg-desktop-portal (asking the user), below; where neither exists the answer is
+   "not available": 0, and for input OS error 50 (ERROR_NOT_SUPPORTED). */
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#include <X11/extensions/XTest.h>
+#endif
+
+static Display *shell_x11(void)
+{
+#ifdef GDK_WINDOWING_X11
+	GdkDisplay *d;
+	shell_app();
+	d = gdk_display_get_default();
+	if (d && GDK_IS_X11_DISPLAY(d)) return gdk_x11_display_get_xdisplay(d);
+#endif
+	return NULL;
+}
+
+/* Is (x, y) on the virtual desktop? Any session. */
+int shell_input_on_desktop(int x, int y)
+{
+	int dx, dy, dw, dh;
+	shell_virtual_desktop(&dx, &dy, &dw, &dh);
+	return x >= dx && y >= dy && x < dx + dw && y < dy + dh ? 1 : 0;
+}
+
+#ifdef GDK_WINDOWING_X11
+/* A Windows virtual key as an X keysym (0: none). */
+static KeySym shell_keysym_of_vk(int vk)
+{
+	if ((vk >= 'A' && vk <= 'Z')) return XK_a + (vk - 'A');
+	if (vk >= '0' && vk <= '9') return XK_0 + (vk - '0');
+	if (vk >= 0x70 && vk <= 0x87) return XK_F1 + (vk - 0x70);   /* F1 - F24 */
+	if (vk >= 0x60 && vk <= 0x69) return XK_KP_0 + (vk - 0x60);
+	switch (vk) {
+		case 0x25: return XK_Left; case 0x26: return XK_Up; case 0x27: return XK_Right; case 0x28: return XK_Down;
+		case 0x24: return XK_Home; case 0x23: return XK_End; case 0x21: return XK_Page_Up; case 0x22: return XK_Page_Down;
+		case 0x2E: return XK_Delete; case 0x2D: return XK_Insert; case 0x08: return XK_BackSpace; case 0x0D: return XK_Return;
+		case 0x09: return XK_Tab; case 0x1B: return XK_Escape; case 0x20: return XK_space;
+		case 0x10: case 0xA0: return XK_Shift_L; case 0xA1: return XK_Shift_R;
+		case 0x11: case 0xA2: return XK_Control_L; case 0xA3: return XK_Control_R;
+		case 0x12: case 0xA4: return XK_Alt_L; case 0xA5: return XK_Alt_R;
+		case 0x5B: return XK_Super_L; case 0x5C: return XK_Super_R;
+		case 0xBB: return XK_equal; case 0xBD: return XK_minus; case 0x6B: return XK_KP_Add; case 0x6D: return XK_KP_Subtract;
+		case 0xBA: return XK_semicolon; case 0xBF: return XK_slash; case 0xC0: return XK_grave; case 0xDB: return XK_bracketleft;
+		case 0xDC: return XK_backslash; case 0xDD: return XK_bracketright; case 0xDE: return XK_apostrophe;
+		case 0xBC: return XK_comma; case 0xBE: return XK_period;
+	}
+	return 0;
+}
+#endif
+
+#ifdef GDK_WINDOWING_X11
+/* A key code no keysym is mapped to (0: none free). */
+static int shell_x11_spare_keycode(Display *d)
+{
+	int l_min, l_max, l_per, k, l_spare = 0;
+	KeySym *l_map;
+	XDisplayKeycodes(d, &l_min, &l_max);
+	l_map = XGetKeyboardMapping(d, (KeyCode)l_min, l_max - l_min + 1, &l_per);
+	if (!l_map) return 0;
+	for (k = l_max; k >= l_min && !l_spare; k--) {
+		int j, l_empty = 1;
+		for (j = 0; j < l_per; j++) if (l_map[(k - l_min) * l_per + j] != NoSymbol) l_empty = 0;
+		if (l_empty) l_spare = k;
+	}
+	XFree(l_map);
+	return l_spare;
+}
+/* Give back a spare key code we mapped (0: nothing to give back). */
+static void shell_x11_unmap(Display *d, int a_code)
+{
+	KeySym l_none = NoSymbol;
+	if (!d || !a_code) return;
+	XChangeKeyboardMapping(d, a_code, 1, &l_none, 1);
+	XSync(d, False);
+}
+#endif
+
+/* ---------------- hotkeys */
+
+#define SHELL_HOTKEYS 32
+typedef struct { int used, id, vk, mods, code, mapped; unsigned int xmods; } ShellHotkey;   /* mapped: a spare key code we gave the keysym */
+static ShellHotkey s_hotkey[SHELL_HOTKEYS];
+static int s_hotkey_hooked = 0;
+
+#ifdef GDK_WINDOWING_X11
+static const unsigned int s_lock_variants[4] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};   /* Caps and Num Lock */
+static gboolean shell_on_xevent(GdkX11Display *d, gpointer a_event, gpointer data)
+{
+	XEvent *e = a_event;
+	int i;
+	(void)d; (void)data;
+	if (e->type != KeyPress) return FALSE;
+	for (i = 0; i < SHELL_HOTKEYS; i++)
+		if (s_hotkey[i].used && s_hotkey[i].code == (int)e->xkey.keycode
+				&& (e->xkey.state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask)) == s_hotkey[i].xmods) {
+			shell_push(51, s_hotkey[i].id, s_hotkey[i].vk, s_hotkey[i].mods);
+			return TRUE;
+		}
+	return FALSE;
+}
+#endif
+
+/* Hold a system-wide chord (mods: 1 Alt, 2 Ctrl, 4 Shift, 8 Win, as RegisterHotKey); 1 when
+   held, 0 when refused: another holder (here or another program), or not available. */
+int shell_hotkey_register(int l_id, int l_mods, int l_vk)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *x = shell_x11();
+	KeySym ks;
+	int i, l_free = -1, l_code, l_failed, l_mapped;
+	unsigned int m;
+	Window root;
+	if (!x) return shell_portal_hotkey_register(l_id, l_mods, l_vk);
+	ks = shell_keysym_of_vk(l_vk);
+	if (!ks) return 0;
+	shell_hotkey_unregister(l_id);
+	l_code = XKeysymToKeycode(x, ks);
+	l_mapped = 0;
+	if (!l_code) {
+		/* the keyboard map has no key for it (F13 - F24 often): give it a spare key code while
+		   held, as Windows registers a key no keyboard has */
+		l_code = shell_x11_spare_keycode(x);
+		if (!l_code) return 0;
+		XChangeKeyboardMapping(x, l_code, 1, &ks, 1);
+		XSync(x, False);
+		l_mapped = 1;
+	}
+	for (i = 0; i < SHELL_HOTKEYS; i++)
+		if (s_hotkey[i].used && s_hotkey[i].vk == l_vk && s_hotkey[i].mods == l_mods) { shell_x11_unmap(x, l_mapped ? l_code : 0); return 0; }   /* held here already */
+	for (i = 0; i < SHELL_HOTKEYS && l_free < 0; i++) if (!s_hotkey[i].used) l_free = i;
+	if (l_free < 0) { shell_x11_unmap(x, l_mapped ? l_code : 0); return 0; }
+	m = ((l_mods & 1) ? Mod1Mask : 0) | ((l_mods & 2) ? ControlMask : 0) | ((l_mods & 4) ? ShiftMask : 0) | ((l_mods & 8) ? Mod4Mask : 0);
+	root = DefaultRootWindow(x);
+	gdk_x11_display_error_trap_push(gdk_display_get_default());
+	for (i = 0; i < 4; i++) XGrabKey(x, l_code, m | s_lock_variants[i], root, False, GrabModeAsync, GrabModeAsync);
+	XSync(x, False);
+	l_failed = gdk_x11_display_error_trap_pop(gdk_display_get_default());
+	if (l_failed) {   /* another program holds it (BadAccess): let go of what we took */
+		gdk_x11_display_error_trap_push(gdk_display_get_default());
+		for (i = 0; i < 4; i++) XUngrabKey(x, l_code, m | s_lock_variants[i], root);
+		XSync(x, False);
+		gdk_x11_display_error_trap_pop_ignored(gdk_display_get_default());
+		shell_x11_unmap(x, l_mapped ? l_code : 0);
+		return 0;
+	}
+	if (!s_hotkey_hooked) {
+		g_signal_connect(gdk_display_get_default(), "xevent", G_CALLBACK(shell_on_xevent), NULL);
+		s_hotkey_hooked = 1;
+	}
+	s_hotkey[l_free].used = 1; s_hotkey[l_free].id = l_id; s_hotkey[l_free].vk = l_vk; s_hotkey[l_free].mods = l_mods;
+	s_hotkey[l_free].code = l_code; s_hotkey[l_free].xmods = m; s_hotkey[l_free].mapped = l_mapped;
+	return 1;
+#else
+	return shell_portal_hotkey_register(l_id, l_mods, l_vk);
+#endif
+}
+void shell_hotkey_unregister(int l_id)
+{
+	int i;
+#ifdef GDK_WINDOWING_X11
+	Display *x = shell_x11();
+	int j;
+#endif
+	for (i = 0; i < SHELL_HOTKEYS; i++)
+		if (s_hotkey[i].used && s_hotkey[i].id == l_id) {
+#ifdef GDK_WINDOWING_X11
+			if (x && s_hotkey[i].code) {
+				gdk_x11_display_error_trap_push(gdk_display_get_default());
+				for (j = 0; j < 4; j++) XUngrabKey(x, s_hotkey[i].code, s_hotkey[i].xmods | s_lock_variants[j], DefaultRootWindow(x));
+				XSync(x, False);
+				gdk_x11_display_error_trap_pop_ignored(gdk_display_get_default());
+				shell_x11_unmap(x, s_hotkey[i].mapped ? s_hotkey[i].code : 0);
+			}
+#endif
+			s_hotkey[i].used = 0;
+		}
+	shell_portal_hotkey_unregister(l_id);
+}
+/* The test door: the chord pressed, as the system delivers it (event 51). */
+void shell_hotkey_simulate(int l_id, int l_mods, int l_vk) { shell_push(51, l_id, l_vk, l_mods); }
+
+/* ---------------- input synthesis */
+
+static int s_input_error = 0;
+int shell_input_last_error(void) { return s_input_error; }
+int shell_input_type_units(const void *s)
+{
+	glong n = 0;
+	gunichar2 *u;
+	if (!s) return 0;
+	u = g_utf8_to_utf16((const char *)s, -1, NULL, &n, NULL);
+	g_free(u);
+	return (int)n;
+}
+int shell_input_pointer(int *x, int *y)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *d = shell_x11();
+	Window r, c;
+	int rx, ry, wx, wy;
+	unsigned int m;
+	*x = 0; *y = 0;
+	if (d && XQueryPointer(d, DefaultRootWindow(d), &r, &c, &rx, &ry, &wx, &wy, &m)) { *x = rx; *y = ry; return 1; }
+#else
+	*x = 0; *y = 0;
+#endif
+	return 0;   /* Wayland tells no program where the pointer is outside its own windows */
+}
+#ifdef GDK_WINDOWING_X11
+static void shell_x11_key(Display *d, KeyCode k, int a_down) { XTestFakeKeyEvent(d, k, a_down ? True : False, CurrentTime); }
+#endif
+int shell_input_click(int x, int y, int restore_cursor, int restore_focus)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *d = shell_x11();
+	int bx = 0, by = 0, l_revert;
+	Window l_focus = None;
+	s_input_error = 0;
+	if (!d) { s_input_error = 50; return 0; }
+	shell_input_pointer(&bx, &by);
+	XGetInputFocus(d, &l_focus, &l_revert);
+	XTestFakeMotionEvent(d, -1, x, y, CurrentTime);
+	XTestFakeButtonEvent(d, 1, True, CurrentTime);
+	XTestFakeButtonEvent(d, 1, False, CurrentTime);
+	XSync(d, False);
+	if (restore_cursor) { XTestFakeMotionEvent(d, -1, bx, by, CurrentTime); XSync(d, False); }
+	if (restore_focus && l_focus != None && l_focus != PointerRoot) {
+		g_usleep(120000);   /* let the click's activation land first, as on Windows */
+		gdk_x11_display_error_trap_push(gdk_display_get_default());
+		XSetInputFocus(d, l_focus, RevertToParent, CurrentTime);
+		XSync(d, False);
+		gdk_x11_display_error_trap_pop_ignored(gdk_display_get_default());
+	}
+	return 1;
+#else
+	(void)x; (void)y; (void)restore_cursor; (void)restore_focus;
+	s_input_error = 50;
+	return 0;
+#endif
+}
+/* Type text, two events per UTF-16 unit as SendInput counts them. Each character goes through a
+   spare key code mapped to its keysym for the moment, so any character types on any layout. */
+int shell_input_type(const void *s)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *d = shell_x11();
+	int l_spare = 0, l_sent = 0;
+	const char *c;
+	s_input_error = 0;
+	if (!s) return 0;
+	if (!d) { s_input_error = 50; return 0; }
+	l_spare = shell_x11_spare_keycode(d);
+	if (!l_spare) { s_input_error = 8; return 0; }
+	for (c = (const char *)s; *c; c = g_utf8_next_char(c)) {
+		gunichar u = g_utf8_get_char(c);
+		KeySym ks = (KeySym)gdk_unicode_to_keyval(u);
+		XChangeKeyboardMapping(d, l_spare, 1, &ks, 1);
+		XSync(d, False);
+		shell_x11_key(d, (KeyCode)l_spare, 1);
+		shell_x11_key(d, (KeyCode)l_spare, 0);
+		XSync(d, False);
+		l_sent += u > 0xFFFF ? 4 : 2;
+	}
+	shell_x11_unmap(d, l_spare);
+	return l_sent;
+#else
+	(void)s;
+	s_input_error = 50;
+	return 0;
+#endif
+}
+/* A chord: the modifiers down, the key down and up, the modifiers up; answers the events sent. */
+int shell_input_chord(int ctrl, int shift, int alt, int vk)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *d = shell_x11();
+	KeySym ks = shell_keysym_of_vk(vk);
+	KeyCode l_mods[3], l_key;
+	int n = 0, i, l_sent = 0;
+	s_input_error = 0;
+	if (!d) { s_input_error = 50; return 0; }
+	l_key = ks ? XKeysymToKeycode(d, ks) : 0;
+	if (!l_key) { s_input_error = 87; return 0; }   /* ERROR_INVALID_PARAMETER */
+	if (ctrl) l_mods[n++] = XKeysymToKeycode(d, XK_Control_L);
+	if (shift) l_mods[n++] = XKeysymToKeycode(d, XK_Shift_L);
+	if (alt) l_mods[n++] = XKeysymToKeycode(d, XK_Alt_L);
+	for (i = 0; i < n; i++) { shell_x11_key(d, l_mods[i], 1); l_sent++; }
+	shell_x11_key(d, l_key, 1); l_sent++;
+	shell_x11_key(d, l_key, 0); l_sent++;
+	for (i = n - 1; i >= 0; i--) { shell_x11_key(d, l_mods[i], 0); l_sent++; }
+	XSync(d, False);
+	return l_sent;
+#else
+	(void)ctrl; (void)shift; (void)alt; (void)vk;
+	s_input_error = 50;
+	return 0;
+#endif
+}
+
+/* ---------------- the screen */
+
+/* Copy the desktop rectangle into `bits' (BGRA rows of `stride' bytes, alpha forced opaque). */
+int shell_grab_screen(int x, int y, int w, int h, void *bits, int stride)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *d = shell_x11();
+	XImage *im;
+	int r, c;
+	if (!bits || w <= 0 || h <= 0 || stride < w * 4) return 0;
+	if (!d) return shell_portal_grab_screen(x, y, w, h, bits, stride);
+	gdk_x11_display_error_trap_push(gdk_display_get_default());
+	im = XGetImage(d, DefaultRootWindow(d), x, y, (unsigned int)w, (unsigned int)h, AllPlanes, ZPixmap);
+	gdk_x11_display_error_trap_pop_ignored(gdk_display_get_default());
+	if (!im) return 0;
+	for (r = 0; r < h; r++) {
+		unsigned char *row = (unsigned char *)bits + (size_t)r * (size_t)stride;
+		for (c = 0; c < w; c++) {
+			unsigned long p = XGetPixel(im, c, r);
+			unsigned int rr = (unsigned int)((p & im->red_mask) >> (__builtin_ctzl(im->red_mask)));
+			unsigned int gg = (unsigned int)((p & im->green_mask) >> (__builtin_ctzl(im->green_mask)));
+			unsigned int bb = (unsigned int)((p & im->blue_mask) >> (__builtin_ctzl(im->blue_mask)));
+			row[c * 4] = (unsigned char)bb; row[c * 4 + 1] = (unsigned char)gg; row[c * 4 + 2] = (unsigned char)rr; row[c * 4 + 3] = 255;
+		}
+	}
+	XDestroyImage(im);
+	return 1;
+#else
+	return shell_portal_grab_screen(x, y, w, h, bits, stride);
+#endif
+}
+
+/* Neither X11 nor Wayland can keep a window out of other programs' captures: not available,
+   and the affinity says none. */
+void shell_panel_set_capture_excluded(int l_slot, int l_on) { (void)l_slot; (void)l_on; }
+int shell_panel_capture_affinity(int l_slot) { (void)l_slot; return 0; }

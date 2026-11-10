@@ -468,8 +468,12 @@ feature -- Panels (1.11.0)
 					-- (measured 256 of 576 pixels at the first run).
 				assert ("visible to captures before: " + l_before.out, l_before > 100)
 				assert ("absent from captures after: " + l_after.out, l_after < 50)
-			else
+			elseif {PLATFORM}.is_windows then
 				assert ("older Windows: at least blacked out", p.capture_affinity = p.Affinity_black_in_captures)
+			else
+					-- Neither X11 nor Wayland can keep a window out of captures: not available,
+					-- and it says so (the affinity stays none).
+				assert ("not available here: says none", p.capture_affinity = p.Affinity_none)
 			end
 			p.allow_capture
 			assert ("capture allowed again", p.capture_affinity = p.Affinity_none)

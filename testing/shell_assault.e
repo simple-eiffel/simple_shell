@@ -1601,6 +1601,20 @@ feature -- Framed panels (GW-22, 1.23.0)
 
 feature -- Printing (GW-20, 1.24.0)
 
+	test_print_dialog_starts_with_nothing_chosen
+			-- 1v-c (2026-11-11): the Windows print dialog's answers before any `show': no printer,
+			-- one copy, every page. (The dialog itself needs a person and is never run in a suite.)
+		local
+			l_dialog: SHELL_PRINT_DIALOG
+		do
+			create l_dialog.make
+			assert ("no printer yet", l_dialog.printer_name.is_empty)
+			assert ("one copy", l_dialog.copies = 1)
+			assert ("every page", l_dialog.is_all_pages)
+			assert ("the answers are distinct", l_dialog.Answer_print /= l_dialog.Answer_cancel
+				and l_dialog.Answer_cancel /= l_dialog.Answer_failed)
+		end
+
 	test_gw20_printers_and_a_document_written_to_a_file
 			-- The printers are listed and the default is one of them. When the
 			-- Windows file printer is installed, a Letter page is printed to a

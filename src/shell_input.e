@@ -40,6 +40,17 @@ class
 
 feature -- Status report
 
+	can_send: BOOLEAN
+			-- Does this session offer a way to send input to the desktop (1.41.0)?
+			-- Windows: always. macOS: only with the Accessibility permission. Linux: on an
+			-- X11 session, or where a RemoteDesktop portal answers; a Wayland session
+			-- without one offers none. Asks the user nothing.
+			-- True is not a promise: a locked session or a refused consent still leaves
+			-- `was_accepted' False. False is one: nothing sent is accepted.
+		do
+			Result := c_input_can_send = 1
+		end
+
 	is_on_desktop (a_x, a_y: INTEGER): BOOLEAN
 			-- Is (`a_x', `a_y') inside the virtual desktop?
 		do
@@ -257,6 +268,13 @@ feature {NONE} -- Externals
 			"C inline use %"simple_shell.h%""
 		alias
 			"return shell_input_type_units((const wchar_t*)$a_s);"
+		end
+
+	c_input_can_send: INTEGER
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_input_can_send();"
 		end
 
 	c_input_last_error: INTEGER

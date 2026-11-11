@@ -60,6 +60,16 @@ feature -- Access
 
 feature -- Status
 
+	can_register: BOOLEAN
+			-- Does this session offer a way to hold a system-wide chord (1.41.0)?
+			-- Windows and macOS: always. Linux: on an X11 session, or where a
+			-- GlobalShortcuts portal answers; a Wayland session without one offers none.
+			-- True is not a promise: a chord another program holds is still refused.
+			-- False is one: `register' then leaves `last_succeeded' False.
+		do
+			Result := c_can_register = 1
+		end
+
 	is_registered (a_id: INTEGER): BOOLEAN
 			-- Is hotkey `a_id' registered through this object?
 		do
@@ -148,6 +158,11 @@ feature {NONE} -- Implementation
 		end
 
 feature {NONE} -- Externals
+
+	c_can_register: INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_hotkey_can_register();"
+		end
 
 	c_register (a_id, a_mods, a_vk: INTEGER): INTEGER
 		external "C inline use %"simple_shell.h%""

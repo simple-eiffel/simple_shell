@@ -2957,6 +2957,28 @@ static int shell_portal_grab_screen(int x, int y, int w, int h, void *bits, int 
 	return ok;
 }
 
+/* Does this session offer a way to the desktop: an X11 display, or portal interface `a_iface'
+   answering on the session bus (its version is read). Asks the user nothing and starts no
+   portal, as the portal calls themselves start none. */
+static int shell_session_offers(const char *a_iface)
+{
+	GDBusConnection *b;
+	GVariant *r;
+	if (shell_x11()) return 1;
+	b = shell_portal_bus();
+	if (!b) return 0;
+	r = g_dbus_connection_call_sync(b, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+		"org.freedesktop.DBus.Properties", "Get", g_variant_new("(ss)", a_iface, "version"),
+		G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 2000, NULL, NULL);
+	if (!r) return 0;
+	g_variant_unref(r);
+	return 1;
+}
+/* The three things Wayland keeps from a program unless a portal grants them. */
+int shell_can_grab_screen(void) { return shell_session_offers("org.freedesktop.portal.Screenshot"); }
+int shell_input_can_send(void) { return shell_session_offers("org.freedesktop.portal.RemoteDesktop"); }
+int shell_hotkey_can_register(void) { return shell_session_offers("org.freedesktop.portal.GlobalShortcuts"); }
+
 /* Hotkeys through the GlobalShortcuts portal: one session, a shortcut per id, its trigger
    offered in the portal's form ("CTRL+ALT+SHIFT+F20"); the desktop may ask the user, or bind
    another key. Activated pushes 51, as WM_HOTKEY. */

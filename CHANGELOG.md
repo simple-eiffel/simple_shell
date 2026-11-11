@@ -2,6 +2,28 @@
 
 All notable changes to simple_shell.
 
+## 1.41.0 - 2026-11-11
+
+### Added
+
+- `SHELL_DESKTOP.can_grab`: does this session offer a way to read the desktop's pixels? It asks the user nothing.
+  - **Windows:** always.
+  - **macOS:** only with the Screen Recording permission.
+  - **Linux:** on an X11 session, or where a Screenshot portal answers on the session bus. A Wayland session without one (WSLg) offers none.
+  - True is not a promise: a locked session or a refused consent still makes `grab_into` answer False. False is one.
+- `SHELL_INPUT.can_send`: does this session offer a way to send clicks and keys to the desktop?
+  - **Windows:** always.
+  - **macOS:** only with the Accessibility permission.
+  - **Linux:** on an X11 session, or where a RemoteDesktop portal answers.
+- `SHELL_HOTKEYS.can_register`: does this session offer a way to hold a system-wide chord?
+  - **Windows and macOS:** always.
+  - **Linux:** on an X11 session, or where a GlobalShortcuts portal answers.
+- A program can now hide or disable a capture button, a hotkey setting or an input feature up front, where before it could only try and fail.
+
+### Fixed
+
+- Four tests (`desktop_grab`, `input_keys_are_accepted`, `hotkey_registers_and_delivers`, `hotkey_conflict_is_reported`) demanded a grab, an injection and a held chord on every session, so they failed on a Wayland session without the portals (WSLg). Each now asks the session first and holds the outcome to that answer: Linux went from 46 passed, 4 failed to 50 passed, 0 failed (13 skipped, Windows only).
+
 ## 1.40.0 - 2026-11-10
 
 ### Added

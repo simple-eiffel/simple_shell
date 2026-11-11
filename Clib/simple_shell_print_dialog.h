@@ -18,6 +18,9 @@
 #include <string.h>
 #include <wchar.h>
 #include <windows.h>
+/* commdlg.h declares PRINTDLGEXW only when STDMETHOD is defined (objbase.h), which a
+   lean windows.h does not bring in: a client's translation unit failed with C2065. */
+#include <objbase.h>
 #include <commdlg.h>
 
 #pragma comment(lib, "comdlg32.lib")

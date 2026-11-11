@@ -188,6 +188,17 @@ feature -- Drives
 
 feature -- Capture
 
+	can_grab: BOOLEAN
+			-- Does this session offer a way to read the desktop's pixels (1.41.0)?
+			-- Windows: always. macOS: only with the Screen Recording permission. Linux: on
+			-- an X11 session, or where a Screenshot portal answers; a Wayland session
+			-- without one offers none. Asks the user nothing.
+			-- True is not a promise: a locked session or a refused consent still makes
+			-- `grab_into' answer False. False is one: `grab_into' then answers False.
+		do
+			Result := c_can_grab = 1
+		end
+
 	grab_into (a_x, a_y, a_w, a_h: INTEGER; a_bits: POINTER; a_stride: INTEGER): BOOLEAN
 			-- BitBlt the desktop region into `a_bits' (ARGB32 rows of
 			-- `a_stride' bytes), alpha forced opaque. False when the
@@ -255,6 +266,16 @@ feature -- Shell
 		end
 
 feature {NONE} -- Externals
+
+	c_can_grab: INTEGER
+			-- 1 when the session offers a way to read the desktop. On a Wayland session it
+			-- asks the session bus one question (the Screenshot portal's version), without
+			-- starting a portal that is not running.
+		external
+			"C inline use %"simple_shell.h%""
+		alias
+			"return shell_can_grab_screen();"
+		end
 
 	c_grab (a_x, a_y, a_w, a_h: INTEGER; a_bits: POINTER; a_stride: INTEGER): INTEGER
 			-- DELIBERATELY NOT `blocking'. A full-screen BitBlt is long CPU,

@@ -2001,7 +2001,9 @@ int shell_grab_screen(int x, int y, int w, int h, void *bits, int stride)
 	gdk_x11_display_error_trap_push(gdk_display_get_default());
 	im = XGetImage(d, DefaultRootWindow(d), x, y, (unsigned int)w, (unsigned int)h, AllPlanes, ZPixmap);
 	gdk_x11_display_error_trap_pop_ignored(gdk_display_get_default());
-	if (!im) return 0;
+		/* A rootless XWayland server refuses its root window (BadMatch): the session is
+		   Wayland underneath, so the portal is the way there. */
+	if (!im) return shell_portal_grab_screen(x, y, w, h, bits, stride);
 	for (r = 0; r < h; r++) {
 		unsigned char *row = (unsigned char *)bits + (size_t)r * (size_t)stride;
 		for (c = 0; c < w; c++) {
@@ -2956,6 +2958,45 @@ static int shell_portal_grab_screen(int x, int y, int w, int h, void *bits, int 
 	g_variant_unref(l_res);
 	return ok;
 }
+
+/* Does portal interface `a_iface' answer on the session bus (its version is read)? Asks the
+   user nothing and starts no portal, as the portal calls themselves start none. */
+static int shell_portal_offers(const char *a_iface)
+{
+	GDBusConnection *b;
+	GVariant *r;
+	b = shell_portal_bus();
+	if (!b) return 0;
+	r = g_dbus_connection_call_sync(b, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+		"org.freedesktop.DBus.Properties", "Get", g_variant_new("(ss)", a_iface, "version"),
+		G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 2000, NULL, NULL);
+	if (!r) return 0;
+	g_variant_unref(r);
+	return 1;
+}
+/* Does the X server give up a pixel of its root window? A real X session does; a rootless
+   XWayland server (a Wayland session reached through GDK_BACKEND=x11) answers BadMatch. */
+static int shell_x11_root_readable(void)
+{
+#ifdef GDK_WINDOWING_X11
+	Display *d = shell_x11();
+	XImage *im;
+	if (!d) return 0;
+	gdk_x11_display_error_trap_push(gdk_display_get_default());
+	im = XGetImage(d, DefaultRootWindow(d), 0, 0, 1, 1, AllPlanes, ZPixmap);
+	gdk_x11_display_error_trap_pop_ignored(gdk_display_get_default());
+	if (!im) return 0;
+	XDestroyImage(im);
+	return 1;
+#else
+	return 0;
+#endif
+}
+/* The three things Wayland keeps from a program unless a portal grants them. An X display is
+   a way to send input and hold chords; for the screen, only when its root can be read. */
+int shell_can_grab_screen(void) { return shell_x11_root_readable() || shell_portal_offers("org.freedesktop.portal.Screenshot"); }
+int shell_input_can_send(void) { return shell_x11() != NULL || shell_portal_offers("org.freedesktop.portal.RemoteDesktop"); }
+int shell_hotkey_can_register(void) { return shell_x11() != NULL || shell_portal_offers("org.freedesktop.portal.GlobalShortcuts"); }
 
 /* Hotkeys through the GlobalShortcuts portal: one session, a shortcut per id, its trigger
    offered in the portal's form ("CTRL+ALT+SHIFT+F20"); the desktop may ask the user, or bind

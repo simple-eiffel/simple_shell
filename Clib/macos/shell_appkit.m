@@ -1990,6 +1990,10 @@ void shell_hotkey_unregister(int l_id)
 		if (s_hotkey[i].used && s_hotkey[i].id == l_id) { UnregisterEventHotKey(s_hotkey[i].ref); s_hotkey[i].used = 0; }
 }
 
+/* Does this session offer a way to hold a system-wide chord? Always: Carbon's hotkeys need no
+   permission. */
+int shell_hotkey_can_register(void) { return 1; }
+
 int shell_hotkey_register(int l_id, int l_mods, int l_vk)
 {
 	shell_app();
@@ -2027,6 +2031,9 @@ static int shell_input_allowed(void)
 	return 0;
 }
 int shell_input_last_error(void) { return s_input_error; }
+/* Does this session offer a way to send input: only with the Accessibility permission. Asks
+   the user nothing and leaves the last error alone. */
+int shell_input_can_send(void) { return AXIsProcessTrusted() ? 1 : 0; }
 
 /* A pixel point of the virtual desktop as a global display point (points, from the main
    screen's top-left). */
@@ -2126,6 +2133,13 @@ int shell_input_chord(int ctrl, int shift, int alt, int vk)
 }
 
 /* ------------------------------------------------------------------ the screen grab */
+
+/* Does this session offer a way to read the desktop: only with the Screen Recording
+   permission. Asks the user nothing. */
+int shell_can_grab_screen(void)
+{
+	return CGPreflightScreenCaptureAccess() ? 1 : 0;
+}
 
 /* A region of the desktop, in pixels, into the caller's ARGB32 rows, opaque, as BitBlt from
    the screen. macOS shows other applications' windows only with the Screen Recording

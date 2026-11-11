@@ -844,6 +844,9 @@ static void shell_set_caption(const wchar_t* l_title) {
 #define MOD_NOREPEAT 0x4000
 #endif
 
+/* Does this session offer a way to hold a system-wide chord? Always here. */
+static int shell_hotkey_can_register(void) { return 1; }
+
 static int shell_hotkey_register(int l_id, int l_mods, int l_vk) {
     return RegisterHotKey(0, l_id, (UINT)l_mods | MOD_NOREPEAT, (UINT)l_vk) ? 1 : 0;
 }
@@ -1002,6 +1005,10 @@ static int shell_screen_x(void) { return GetSystemMetrics(SM_XVIRTUALSCREEN); }
 static int shell_screen_y(void) { return GetSystemMetrics(SM_YVIRTUALSCREEN); }
 static int shell_screen_w(void) { return GetSystemMetrics(SM_CXVIRTUALSCREEN); }
 static int shell_screen_h(void) { return GetSystemMetrics(SM_CYVIRTUALSCREEN); }
+
+/* Does this session offer a way to read the desktop? Always here; a locked session or
+   the secure screen still fails the grab itself. */
+static int shell_can_grab_screen(void) { return 1; }
 
 /* ---- pure screen grab: BitBlt the desktop region into a caller-supplied
    cairo ARGB32 buffer (bits/stride), alpha forced opaque. Replaces
@@ -2571,6 +2578,10 @@ static int shell_clip_get_image (void *bits, int w, int h, int stride) {
 /* Last OS error after SendInput - SHELL_SHARED per the shared-state law
    above, one instance however many generated files include this header. */
 SHELL_SHARED DWORD s_shell_input_error = 0;
+
+/* Does this session offer a way to send input? Always here; a locked session or a window
+   of higher integrity still refuses the injection itself. */
+static int shell_input_can_send(void) { return 1; }
 
 static int shell_input_last_error (void) { return (int)s_shell_input_error; }
 

@@ -85,10 +85,18 @@ feature -- Desktop
 		do
 			create d
 			create buf.make (64)
-			assert ("the desktop can be read",
-				d.grab_into (d.virtual_x, d.virtual_y, 4, 4, buf.item, 16))
-			assert_integers_equal ("alpha forced opaque", 255,
-				buf.read_natural_8 (3).to_integer_32)
+			assert ("Windows always offers a way", not {PLATFORM}.is_windows or d.can_grab)
+			if d.can_grab then
+				assert ("the desktop can be read",
+					d.grab_into (d.virtual_x, d.virtual_y, 4, 4, buf.item, 16))
+				assert_integers_equal ("alpha forced opaque", 255,
+					buf.read_natural_8 (3).to_integer_32)
+			else
+					-- A Wayland session without a Screenshot portal (WSLg), or a Mac without
+					-- the Screen Recording permission: no way, so no grab.
+				assert ("no way to read the desktop, so no grab",
+					not d.grab_into (d.virtual_x, d.virtual_y, 4, 4, buf.item, 16))
+			end
 		end
 
 	test_clock
@@ -495,13 +503,19 @@ feature -- Hotkeys (1.11.0)
 			create d
 			create w
 			l_mods := k.Mod_control | k.Mod_alt | k.Mod_shift
+			assert ("Windows always offers a way", not {PLATFORM}.is_windows or k.can_register)
 			k.register (9001, l_mods, 0x83)
-			assert ("registered", k.last_succeeded and k.is_registered (9001) and k.count = 1)
+				-- A Wayland session without a GlobalShortcuts portal (WSLg) offers no way to
+				-- hold a chord, and `register' says so; delivery is proved either way.
+			assert ("held exactly where there is a way", k.last_succeeded = k.can_register
+				and k.is_registered (9001) = k.can_register and k.count = k.can_register.to_integer)
 			k.simulate (9001, l_mods, 0x83)
 			d.pump_for (30)
 			assert ("delivered as event 51", w.drain_event (k.Event_hotkey, 9001))
 			assert ("key and modifiers carried", w.last_second = 0x83 and w.last_extra = l_mods)
-			k.unregister (9001)
+			if k.is_registered (9001) then
+				k.unregister (9001)
+			end
 			assert ("released", not k.is_registered (9001) and k.count = 0)
 		end
 
@@ -515,7 +529,8 @@ feature -- Hotkeys (1.11.0)
 			create k.make
 			l_mods := k.Mod_control | k.Mod_alt | k.Mod_shift
 			k.register (9002, l_mods, 0x82)
-			assert ("first holder", k.last_succeeded)
+				-- Where the session offers no way to hold a chord, the first is refused too.
+			assert ("first holder, where there is a way", k.last_succeeded = k.can_register)
 			k.register (9003, l_mods, 0x82)
 			assert ("second refused", not k.last_succeeded and not k.is_registered (9003))
 			k.unregister_all
@@ -1378,7 +1393,14 @@ feature -- Input synthesis
 					+ i.last_accepted.out + " of 2, OS error " + i.last_os_error.out
 					+ " - locked session or UIPI boundary)%N")
 			end
-			assert ("and both accepted", i.was_accepted)
+			assert ("Windows always offers a way", not {PLATFORM}.is_windows or i.can_send)
+			if i.can_send then
+				assert ("and both accepted", i.was_accepted)
+			else
+					-- A Wayland session without a RemoteDesktop portal (WSLg), or a Mac
+					-- without the Accessibility permission: no way, so nothing accepted.
+				assert ("no way to send input, so none accepted", not i.was_accepted)
+			end
 		end
 
 feature -- The Alt door

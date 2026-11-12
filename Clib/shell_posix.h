@@ -219,6 +219,10 @@ int shell_uia_row_text_of(void* l_hwnd, int l_i, int l_which, void* l_out, int l
 int shell_uia_served_focus_of(void* l_hwnd);
 int shell_uia_window_count(void);
 int shell_wake(void);
+int shell_start_frame_ticks(void);
+void shell_stop_frame_ticks(void);
+int shell_frame_tick_source(void);
+void shell_frame_ticks_force_timer(int l_on);
 int shell_is_pump_thread(void);
 int shell_uia_describe_last(const void* l_text);
 

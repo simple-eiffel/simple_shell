@@ -13,9 +13,10 @@
 #include <wchar.h>
 static int s_uia_client_hr = 0;
 static int shell_uia_client_read(void* l_hwnd, wchar_t* l_out, int l_cap) { (void)l_hwnd; if (l_out && l_cap > 0) l_out[0] = 0; return -2; }
-static int shell_uia_focus_from_worker(int l_id) { (void)l_id; return -1; }
+static int shell_uia_focus_from_worker(void* l_hwnd, int l_id) { (void)l_hwnd; (void)l_id; return -1; }
 static int shell_uia_focus_pushed_on_this_thread(void) { return 0; }
 static void* shell_uia_probe_window(void) { return 0; }
+static void* shell_uia_probe_panel(int l_slot) { (void)l_slot; return 0; }
 static void shell_uia_probe_close(void* l_hwnd) { (void)l_hwnd; }
 #else
 
@@ -139,11 +140,11 @@ static int shell_uia_client_read(void* l_hwnd, wchar_t* l_out, int l_cap) {
 
 /* Call node `l_id''s SetFocus from a worker thread, as UI Automation would,
    pumping meanwhile; answers 1 when the call returned S_OK. */
-typedef struct shell_uia_focus_job_s { int l_id; HRESULT l_hr; volatile LONG l_step; } shell_uia_focus_job;
+typedef struct shell_uia_focus_job_s { HWND l_hwnd; int l_id; HRESULT l_hr; volatile LONG l_step; } shell_uia_focus_job;
 
 static DWORD WINAPI shell_uia_focus_main(LPVOID l_arg) {
     shell_uia_focus_job* l_job = (shell_uia_focus_job*)l_arg;
-    shell_uia_el* l_el = shell_uia_new(l_job->l_id);
+    shell_uia_el* l_el = shell_uia_new(l_job->l_hwnd, l_job->l_id);
     IRawElementProviderFragment* l_f;
     l_job->l_step = 1;
     if (!l_el) { l_job->l_hr = E_OUTOFMEMORY; return 0; }
@@ -156,11 +157,12 @@ static DWORD WINAPI shell_uia_focus_main(LPVOID l_arg) {
     return 0;
 }
 
-static int shell_uia_focus_from_worker(int l_id) {
+static int shell_uia_focus_from_worker(void* l_hwnd, int l_id) {
     shell_uia_focus_job l_job;
     HANDLE l_thread;
     MSG l_msg;
     DWORD l_start;
+    l_job.l_hwnd = (HWND)l_hwnd;
     l_job.l_id = l_id;
     l_job.l_hr = E_FAIL;
     l_job.l_step = 0;
@@ -201,6 +203,24 @@ static void* shell_uia_probe_window(void) {
     RegisterClassExW(&l_wc);
     return CreateWindowExW(WS_EX_TOOLWINDOW, L"SimpleShellUiaProbe", L"uia probe", WS_POPUP,
         -3000, -3000, 400, 300, 0, 0, GetModuleHandleW(0), 0);
+}
+
+/* A hidden, offscreen probe of a SECOND window: the shipped second-window
+   procedure (shell_panel_proc), carrying panel slot `l_slot' as the real
+   ones do (simple_shell#48). */
+static void* shell_uia_probe_panel(int l_slot) {
+    WNDCLASSEXW l_wc;
+    HWND l_h;
+    ZeroMemory(&l_wc, sizeof(l_wc));
+    l_wc.cbSize = sizeof(l_wc);
+    l_wc.lpfnWndProc = shell_panel_proc;
+    l_wc.hInstance = GetModuleHandleW(0);
+    l_wc.lpszClassName = L"SimpleShellUiaPanelProbe";
+    RegisterClassExW(&l_wc);
+    l_h = CreateWindowExW(WS_EX_TOOLWINDOW, L"SimpleShellUiaPanelProbe", L"uia panel probe", WS_POPUP,
+        -3000, -3000, 300, 200, 0, 0, GetModuleHandleW(0), 0);
+    if (l_h) SetWindowLongPtrW(l_h, GWLP_USERDATA, (LONG_PTR)l_slot);
+    return l_h;
 }
 
 /* Close it; shell_wndproc posts WM_QUIT on WM_DESTROY, which must not

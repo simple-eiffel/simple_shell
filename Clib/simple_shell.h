@@ -404,8 +404,9 @@ static void shell_set_heartbeat(int l_ms) {
 
 /* UI Automation (1.22.0, GW-14): WM_GETOBJECT is answered by the bridge in
    simple_shell_uia.h when it is on - it sets this pointer. A pointer, so no
-   COM header ever enters this file (the 1.9.1 SDK-macro lesson). */
-typedef int (*shell_getobject_fn)(HWND, WPARAM, LPARAM, LRESULT*);
+   COM header ever enters this file (the 1.9.1 SDK-macro lesson). The last
+   argument is a second window's panel slot, -1 for the main window (#48). */
+typedef int (*shell_getobject_fn)(HWND, WPARAM, LPARAM, LRESULT*, int);
 SHELL_SHARED shell_getobject_fn s_shell_getobject_hook = 0;
 /* ...and is told when its window is destroyed (scan 13: the table outlived
    the window). */
@@ -589,7 +590,7 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_GETOBJECT:
             if (s_shell_getobject_hook) {
                 LRESULT l_answer = 0;
-                if (s_shell_getobject_hook(h, w, l, &l_answer)) return l_answer;
+                if (s_shell_getobject_hook(h, w, l, &l_answer, -1)) return l_answer;
             }
             break;
         case WM_CLOSE:
@@ -1502,6 +1503,22 @@ static LRESULT CALLBACK shell_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             shell_push(50, (int)l_dp.x, (int)l_dp.y, l_slot);
             return 0;
         }
+        case SHELL_WM_UIA_FOCUS:
+            /* a UI Automation client's focus request for this second window:
+               event 58 with 1 and the slot, so it reaches this window (#48) */
+            s_uia_focus_push_thread = GetCurrentThreadId();
+            shell_push(58, (int)w, 1, l_slot);
+            return 0;
+        case WM_GETOBJECT:
+            /* a second window serves its own table to UI Automation (#48) */
+            if (s_shell_getobject_hook) {
+                LRESULT l_answer = 0;
+                if (s_shell_getobject_hook(h, w, l, &l_answer, l_slot)) return l_answer;
+            }
+            break;
+        case WM_DESTROY:
+            if (s_shell_destroy_hook) s_shell_destroy_hook(h);
+            break;
         case WM_NCDESTROY:
             /* scan 19: destroyed by `close' or behind its back (its owner's
                destruction takes owned panels first) - either way the slot

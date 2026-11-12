@@ -1052,12 +1052,97 @@ feature -- Appearance (1.16.0, GW-27)
 			acc.add_node (3, 0, acc.Role_edit, "Notes", "x", 10.0, 10.0, 100.0, 30.0, True, True)
 			acc.commit (h)
 			create w
-			l_hr := uia_focus_from_worker (3)
+			l_hr := uia_focus_from_worker (h, 3)
 			assert_integers_equal ("SetFocus answered S_OK, not " + l_hr.to_hex_string, 0, l_hr)
 			assert_true ("pushed on the pump thread", uia_focus_pushed_here)
 			assert_true ("event 58 names the node", w.drain_event (acc.Event_focus_request, 3))
 			acc.disable
 			uia_probe_close (h)
+		end
+
+	test_every_window_serves_its_own_tree
+			-- simple_shell#48: a second window (the second-window procedure, as a
+			-- print preview's) serves its own tree, and publishing it leaves the
+			-- main window's alone. A UI Automation client reads each window's own
+			-- buttons; a focus request in the second window reaches the queue
+			-- with 1 and its slot; disabling one window's table keeps the other's.
+		local
+			acc_main, acc_second: SHELL_ACCESSIBILITY
+			h_main, h_second: POINTER
+			l_main_seen, l_second_seen: STRING_32
+			w: SHELL_TEST_WINDOW
+			l_hr: INTEGER
+		do
+			h_main := uia_probe_window
+			h_second := uia_probe_panel (7)
+			assert ("two probe windows", h_main /= default_pointer and h_second /= default_pointer)
+			create acc_main
+			acc_main.begin_tree (2)
+			acc_main.add_node (0, 0, acc_main.Role_pane, "main", Void, 0.0, 0.0, 400.0, 300.0, False, True)
+			acc_main.add_node (1, 0, acc_main.Role_button, "Preview", Void, 10.0, 10.0, 80.0, 30.0, True, True)
+			acc_main.commit (h_main)
+			create acc_second
+			acc_second.begin_tree (3)
+			acc_second.add_node (0, 0, acc_second.Role_pane, "second", Void, 0.0, 0.0, 300.0, 200.0, False, True)
+			acc_second.add_node (1, 0, acc_second.Role_button, "Previous", Void, 10.0, 10.0, 80.0, 30.0, True, True)
+			acc_second.add_node (2, 0, acc_second.Role_button, "Close", Void, 100.0, 10.0, 80.0, 30.0, True, True)
+			acc_second.commit (h_second)
+			assert ("two windows serve", acc_main.serving_windows >= 2)
+			assert_integers_equal ("the main window keeps its two rows", 2, acc_main.served_rows)
+			assert_integers_equal ("the second window serves its three", 3, acc_second.served_rows)
+			assert ("each names its own window", acc_main.served_window = h_main and acc_second.served_window = h_second)
+			l_second_seen := uia_read (h_second)
+			print ("    the second window, read by a UI Automation client:%N" + utf8 (l_second_seen))
+			assert ("the client finished: " + utf8 (l_second_seen), not l_second_seen.starts_with ("!"))
+			assert ("the second window's buttons: " + utf8 (l_second_seen),
+				l_second_seen.has_substring ("Previous|50000") and l_second_seen.has_substring ("Close|50000"))
+			assert ("not the main window's: " + utf8 (l_second_seen), not l_second_seen.has_substring ("Preview|"))
+			l_main_seen := uia_read (h_main)
+			assert ("the main window's own button: " + utf8 (l_main_seen), l_main_seen.has_substring ("Preview|50000"))
+			assert ("not the second window's: " + utf8 (l_main_seen), not l_main_seen.has_substring ("Close|"))
+			create w
+			l_hr := uia_focus_from_worker (h_second, 2)
+			assert_integers_equal ("SetFocus in the second window answered S_OK, not " + l_hr.to_hex_string, 0, l_hr)
+			assert_true ("event 58 names the node", w.drain_event (acc_second.Event_focus_request, 2))
+			assert_integers_equal ("marked as a second window's", 1, w.last_second)
+			assert_integers_equal ("with its slot", 7, w.last_extra)
+			acc_second.disable
+			assert_false ("the second window's table is gone", acc_second.is_serving)
+			assert_true ("the main window's is kept", acc_main.is_serving and acc_main.served_rows = 2)
+			uia_probe_close (h_second)
+			acc_main.disable
+			uia_probe_close (h_main)
+		end
+
+	test_forty_windows_serve_at_once
+			-- More windows than the first records hold each serve their own table
+			-- (simple_shell#48: a fixed 32 ran out in simple_gui's suite).
+		local
+			l_accs: ARRAYED_LIST [SHELL_ACCESSIBILITY]
+			l_hwnds: ARRAYED_LIST [POINTER]
+			acc: SHELL_ACCESSIBILITY
+			h: POINTER
+			i: INTEGER
+		do
+			create l_accs.make (40)
+			create l_hwnds.make (40)
+			from i := 1 until i > 40 loop
+				h := uia_probe_panel (100 + i)
+				l_hwnds.extend (h)
+				create acc
+				acc.begin_tree (1)
+				acc.add_node (0, 0, acc.Role_pane, "window " + i.out, Void, 0.0, 0.0, 100.0, 100.0, False, True)
+				acc.commit (h)
+				l_accs.extend (acc)
+				i := i + 1
+			end
+			assert ("forty windows serve", l_accs.first.serving_windows >= 40)
+			assert ("each its own", across l_accs as ic all ic.is_serving and ic.served_rows = 1 end)
+			assert ("the first is still the first", l_accs.first.served_name (1).same_string ("window 1"))
+			across l_hwnds as ic loop
+				uia_probe_close (ic)
+			end
+			assert ("all gone with their windows", across l_accs as ic all not ic.is_serving end)
 		end
 
 	test_scan13_destroying_the_window_stops_serving
@@ -1151,13 +1236,22 @@ feature {NONE} -- Appearance helpers
 			end
 		end
 
-	uia_focus_from_worker (a_id: INTEGER): INTEGER
-			-- The HRESULT of node `a_id''s SetFocus called from a worker; -1 no
-			-- thread, -2 it did not finish.
+	uia_focus_from_worker (a_hwnd: POINTER; a_id: INTEGER): INTEGER
+			-- The HRESULT of node `a_id''s SetFocus, in window `a_hwnd''s tree,
+			-- called from a worker; -1 no thread, -2 it did not finish.
 		external
 			"C inline use %"shell_uia_client.h%""
 		alias
-			"return (EIF_INTEGER)shell_uia_focus_from_worker((int)$a_id);"
+			"return (EIF_INTEGER)shell_uia_focus_from_worker($a_hwnd, (int)$a_id);"
+		end
+
+	uia_probe_panel (a_slot: INTEGER): POINTER
+			-- A hidden probe of a second window, on the shipped second-window
+			-- procedure, in panel slot `a_slot'.
+		external
+			"C inline use %"shell_uia_client.h%""
+		alias
+			"return shell_uia_probe_panel((int)$a_slot);"
 		end
 
 	uia_focus_pushed_here: BOOLEAN

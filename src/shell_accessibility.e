@@ -14,6 +14,13 @@ note
 		reaches the queue as `Event_focus_request' (58) carrying the node
 		id. The table is served from C under a lock, so UI Automation's
 		own threads never touch Eiffel objects.
+
+		Every window serves its own table (simple_shell#48): a table is
+		filed under the window `commit' names, and the readers below read
+		the table of `served_window', the window this object last
+		committed for. Give each top-level window its own
+		SHELL_ACCESSIBILITY. A second window's events 58 and 59 carry 1
+		(in the second field for 58, the first for 59) and its panel slot.
 	]"
 
 class
@@ -94,10 +101,18 @@ feature -- Publishing
 			building: is_building
 			has_root: rows_added >= 1
 		do
+			if has_window and then committed_window /= a_hwnd then
+					-- published again for another window (first before its
+					-- window opened, then for it): the earlier table goes
+				c_disable (committed_window)
+			end
 			c_commit (a_hwnd)
+			committed_window := a_hwnd
+			has_window := True
 			is_building := False
 		ensure
 			served: is_serving
+			for_the_window: served_window = a_hwnd
 			not_building: not is_building
 		end
 
@@ -107,13 +122,18 @@ feature -- Publishing
 		require
 			serving: is_serving
 		do
-			c_focus_changed (a_id)
+			c_focus_changed (committed_window, a_id)
 		end
 
 	disable
-			-- Stop answering; clients see the bare window again.
+			-- Stop answering for `served_window'; clients see that bare window
+			-- again (other windows' tables keep serving).
 		do
-			c_disable
+			if has_window then
+				c_disable (committed_window)
+			end
+			has_window := False
+			committed_window := default_pointer
 			is_building := False
 		ensure
 			stopped: not is_serving
@@ -131,15 +151,23 @@ feature -- Status
 			-- Rows the table being built can hold.
 
 	is_serving: BOOLEAN
-			-- Is a table being served?
+			-- Is a table being served for the window `commit' last named?
 		do
-			Result := c_row_count > 0
+			Result := has_window and then c_row_count (committed_window) > 0
 		end
 
 	served_rows: INTEGER
-			-- Rows in the table being served.
+			-- Rows in the table being served for the window `commit' last named.
 		do
-			Result := c_row_count
+			if has_window then
+				Result := c_row_count (committed_window)
+			end
+		end
+
+	serving_windows: INTEGER
+			-- How many windows of the program serve a table now.
+		do
+			Result := c_window_count
 		end
 
 	clients_listening: BOOLEAN
@@ -150,16 +178,21 @@ feature -- Status
 		end
 
 	served_window: POINTER
-			-- The window the table is served for; `default_pointer' when none
-			-- (published before the window opened, or never).
+			-- The window this object's table is served for; `default_pointer'
+			-- when none (published before the window opened, never, or the
+			-- window since destroyed).
 		do
-			Result := c_served_window
+			if is_serving then
+				Result := committed_window
+			end
 		end
 
 	served_focus: INTEGER
-			-- The node last told to hold the focus.
+			-- The node last told to hold the focus in `served_window'.
 		do
-			Result := c_served_focus
+			if has_window then
+				Result := c_served_focus (committed_window)
+			end
 		end
 
 feature -- Reading the served table (tests and tools)
@@ -169,35 +202,35 @@ feature -- Reading the served table (tests and tools)
 		require
 			in_range: a_row >= 1 and a_row <= served_rows
 		do
-			Result := c_row_int (a_row - 1, 0)
+			Result := c_row_int (committed_window, a_row - 1, 0)
 		end
 
 	served_parent (a_row: INTEGER): INTEGER
 		require
 			in_range: a_row >= 1 and a_row <= served_rows
 		do
-			Result := c_row_int (a_row - 1, 1)
+			Result := c_row_int (committed_window, a_row - 1, 1)
 		end
 
 	served_role (a_row: INTEGER): INTEGER
 		require
 			in_range: a_row >= 1 and a_row <= served_rows
 		do
-			Result := c_row_int (a_row - 1, 2)
+			Result := c_row_int (committed_window, a_row - 1, 2)
 		end
 
 	served_focusable (a_row: INTEGER): BOOLEAN
 		require
 			in_range: a_row >= 1 and a_row <= served_rows
 		do
-			Result := c_row_int (a_row - 1, 3) = 1
+			Result := c_row_int (committed_window, a_row - 1, 3) = 1
 		end
 
 	served_has_value (a_row: INTEGER): BOOLEAN
 		require
 			in_range: a_row >= 1 and a_row <= served_rows
 		do
-			Result := c_row_int (a_row - 1, 5) = 1
+			Result := c_row_int (committed_window, a_row - 1, 5) = 1
 		end
 
 	served_name (a_row: INTEGER): STRING_32
@@ -299,6 +332,15 @@ feature -- Control types (UI Automation's UIA_*ControlTypeId)
 	Role_table: INTEGER = 50036
 	Role_separator: INTEGER = 50038
 
+feature {NONE} -- Implementation
+
+	has_window: BOOLEAN
+			-- Has `commit' named a window (`committed_window', perhaps none
+			-- yet) since `disable'?
+
+	committed_window: POINTER
+			-- The window `commit' last named.
+
 feature {NONE} -- Externals
 
 	row_text (a_row, a_which: INTEGER): STRING_32
@@ -306,37 +348,37 @@ feature {NONE} -- Externals
 			l_buf: MANAGED_POINTER
 		do
 			create l_buf.make (1024 * 2)
-			if c_row_text (a_row - 1, a_which, l_buf.item, 1024) >= 0 then
+			if c_row_text (committed_window, a_row - 1, a_which, l_buf.item, 1024) >= 0 then
 			end
 			Result := (create {NATIVE_STRING}.make_from_pointer (l_buf.item)).string
 		end
 
-	c_row_int (a_i, a_field: INTEGER): INTEGER
+	c_row_int (a_window: POINTER; a_i, a_field: INTEGER): INTEGER
 		external
 			"C inline use %"simple_shell_uia.h%""
 		alias
-			"return shell_uia_row_int((int)$a_i, (int)$a_field);"
+			"return shell_uia_row_int_of($a_window, (int)$a_i, (int)$a_field);"
 		end
 
-	c_row_text (a_i, a_which: INTEGER; a_out: POINTER; a_cap: INTEGER): INTEGER
+	c_row_text (a_window: POINTER; a_i, a_which: INTEGER; a_out: POINTER; a_cap: INTEGER): INTEGER
 		external
 			"C inline use %"simple_shell_uia.h%""
 		alias
-			"return shell_uia_row_text((int)$a_i, (int)$a_which, (wchar_t*)$a_out, (int)$a_cap);"
+			"return shell_uia_row_text_of($a_window, (int)$a_i, (int)$a_which, (wchar_t*)$a_out, (int)$a_cap);"
 		end
 
-	c_served_window: POINTER
+	c_served_focus (a_window: POINTER): INTEGER
 		external
 			"C inline use %"simple_shell_uia.h%""
 		alias
-			"return shell_uia_served_window();"
+			"return shell_uia_served_focus_of($a_window);"
 		end
 
-	c_served_focus: INTEGER
+	c_window_count: INTEGER
 		external
 			"C inline use %"simple_shell_uia.h%""
 		alias
-			"return shell_uia_served_focus();"
+			"return shell_uia_window_count();"
 		end
 
 	c_clients_listening: INTEGER
@@ -374,28 +416,29 @@ feature {NONE} -- Externals
 			"shell_uia_commit($a_hwnd);"
 		end
 
-	c_focus_changed (a_id: INTEGER)
+	c_focus_changed (a_window: POINTER; a_id: INTEGER)
 		external
 			"C inline use %"simple_shell_uia.h%""
 		alias
-			"shell_uia_focus_changed((int)$a_id);"
+			"shell_uia_focus_changed_in($a_window, (int)$a_id);"
 		end
 
-	c_disable
+	c_disable (a_window: POINTER)
 		external
 			"C inline use %"simple_shell_uia.h%""
 		alias
-			"shell_uia_disable();"
+			"shell_uia_disable_window($a_window);"
 		end
 
-	c_row_count: INTEGER
+	c_row_count (a_window: POINTER): INTEGER
 		external
 			"C inline use %"simple_shell_uia.h%""
 		alias
-			"return shell_uia_row_count();"
+			"return shell_uia_row_count_of($a_window);"
 		end
 
 invariant
 	rows_within_capacity: rows_added <= capacity
+	no_window_no_handle: not has_window implies committed_window = default_pointer
 
 end

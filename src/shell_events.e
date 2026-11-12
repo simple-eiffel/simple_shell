@@ -43,6 +43,9 @@ feature -- The main window
 			-- `take_dropped_text' (1.40.0, `SHELL_WINDOW.set_accepts_text').
 	Event_fast_tick: INTEGER = 25
 			-- The app-settable fast tick.
+	Event_frame_tick: INTEGER = 69
+			-- A frame tick (1x, `SHELL_FRAME_TICKS'): first field the milliseconds since
+			-- the tick before; coalesced, at the display's rate while started.
 
 feature -- The status strip
 
@@ -152,9 +155,9 @@ feature -- The registry
 				Event_panel_double, Event_panel_leave,
 				Event_hotkey, Event_tray_click, Event_appearance_changed, Event_wake, Event_dwell,
 				Event_contrast_changed, Event_motion_changed, Event_focus_request, Event_refresh_request,
-				Event_window_close_request>>
+				Event_window_close_request, Event_frame_tick>>
 		ensure
-			every_event: Result.count = 55
+			every_event: Result.count = 56
 		end
 
 	next_free_event: INTEGER

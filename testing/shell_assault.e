@@ -630,6 +630,60 @@ feature -- Wake and heartbeat (1.18.0, GW-26)
 			assert_integers_equal ("the window names the same event", k.Event_wake, w.Event_wake)
 		end
 
+	test_frame_ticks_pace_coalesce_fall_back_and_stop
+			-- 1x (1.53.0): frame ticks reach a windowless pump at the display's rate, paced
+			-- by the compositor; they coalesce (one waits at a time); forced onto the timer
+			-- (as when the compositor gives no frame) they keep coming; stopped, none come.
+		local
+			t: SHELL_FRAME_TICKS
+			k: SHELL_WAKE
+			d: SHELL_DESKTOP
+			w: SHELL_TEST_WINDOW
+			i, l_ticks, l_ms: INTEGER
+		do
+			create t
+			create k
+			create d
+			create w
+			k.claim_pump_thread
+			from until not w.drain_type (t.Event_frame_tick) loop end
+			t.start
+			assert_true ("started", t.last_started)
+			from i := 1 until i > 40 loop
+				d.pump_for (10)
+				if w.drain_type (t.Event_frame_tick) then
+					l_ticks := l_ticks + 1
+					l_ms := l_ms + w.last_first
+				end
+				i := i + 1
+			end
+			print ("    compositor: " + l_ticks.out + " ticks, " + l_ms.out + " ms%N")
+			assert_true ("ticked through 400 ms: " + l_ticks.out, l_ticks >= 15)
+			assert_integers_equal ("paced by the compositor", t.Source_compositor, t.source)
+			d.pump_for (50)
+			assert_true ("one tick waiting", w.drain_type (t.Event_frame_tick))
+			assert_false ("and only one: they coalesce", w.drain_type (t.Event_frame_tick))
+			t.set_paced_by_timer (True)
+			l_ticks := 0
+			from i := 1 until i > 30 loop
+				d.pump_for (10)
+				if w.drain_type (t.Event_frame_tick) then
+					l_ticks := l_ticks + 1
+				end
+				i := i + 1
+			end
+			print ("    timer: " + l_ticks.out + " ticks in 300 ms%N")
+			assert_true ("the timer keeps them coming: " + l_ticks.out, l_ticks >= 10)
+			assert_integers_equal ("paced by the timer", t.Source_timer, t.source)
+			t.set_paced_by_timer (False)
+			t.stop
+			d.pump_for (60)
+			from until not w.drain_type (t.Event_frame_tick) loop end
+			d.pump_for (100)
+			assert_false ("stopped: none come", w.drain_type (t.Event_frame_tick))
+			k.release_pump_thread
+		end
+
 	test_stepwise_turns_return_early_and_report_close
 			-- 1.28.0 (W1): a long turn returns as soon as an event is queued (a wake),
 			-- an idle turn returns on its deadline, and a destroyed window is reported.
@@ -1883,7 +1937,7 @@ feature -- The event registry (2026-10-25)
 				assert_false ("event " + ic_event.out + " numbered once", l_seen.has (ic_event))
 				l_seen.extend (ic_event)
 			end
-			assert_integers_equal ("the next free number follows the last", 69, l_events.next_free_event)
+			assert_integers_equal ("the next free number follows the last", 70, l_events.next_free_event)
 			assert_integers_equal ("panel press", {SHELL_EVENTS}.Event_panel_press, {SHELL_PANEL}.Event_press)
 			assert_integers_equal ("tray click", {SHELL_EVENTS}.Event_tray_click, {SHELL_TRAY}.Event_click)
 			assert_integers_equal ("appearance", {SHELL_EVENTS}.Event_appearance_changed, {SHELL_APPEARANCE}.Event_changed)

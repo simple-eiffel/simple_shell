@@ -53,6 +53,7 @@ feature {NONE} -- Initialization
 			run_windows_test (agent t.test_uia_bridge_serves_the_published_tree, "uia_bridge_serves_the_published_tree")
 			run_windows_test (agent t.test_every_window_serves_its_own_tree, "every_window_serves_its_own_tree")
 			run_windows_test (agent t.test_forty_windows_serve_at_once, "forty_windows_serve_at_once")
+			run_windows_test (agent t.test_frame_ticks_pace_coalesce_fall_back_and_stop, "frame_ticks_pace_coalesce_fall_back_and_stop")
 			run_windows_test (agent t.test_scan13_focus_request_is_pushed_on_the_pump_thread, "scan13_focus_request_is_pushed_on_the_pump_thread")
 			run_windows_test (agent t.test_scan13_destroying_the_window_stops_serving, "scan13_destroying_the_window_stops_serving")
 			run_windows_test (agent t.test_scan13_a_client_request_asks_for_a_republish, "scan13_a_client_request_asks_for_a_republish")

@@ -416,6 +416,14 @@ SHELL_SHARED shell_destroy_fn s_shell_destroy_hook = 0;
    thread and pushed as event 58 here, on the pump thread (scan 13: the
    queue is not synchronized). */
 #define SHELL_WM_UIA_FOCUS (WM_APP + 0x52)
+/* Frame ticks (1x, 1.53.0): see shell_start_frame_ticks below. */
+#define SHELL_WM_FRAME (WM_APP + 0x53)
+SHELL_SHARED volatile LONG s_frame_generation = 0;   /* the thread whose generation matches runs */
+SHELL_SHARED volatile LONG s_frame_unread = 0;       /* a tick posted and not yet handed over */
+SHELL_SHARED volatile LONG s_frame_force_timer = 0;  /* tests: pace by the timer, not the compositor */
+SHELL_SHARED volatile LONG s_frame_source = 0;       /* 1 the compositor, 2 the timer: the last tick's pace */
+SHELL_SHARED double s_frame_last_ms = 0.0;           /* when the last tick was pushed */
+static void shell_frame_arrived(void);
 SHELL_SHARED DWORD s_uia_focus_push_thread = 0;
 
 static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -552,6 +560,9 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case SHELL_WM_WAKE:
             shell_wake_arrived();
+            return 0;
+        case SHELL_WM_FRAME:
+            shell_frame_arrived();
             return 0;
         case WM_PAINT: {
             PAINTSTRUCT ps;
@@ -893,6 +904,8 @@ static void shell_thread_message(MSG* l_msg) {
         shell_push(51, (int)l_msg->wParam, (int)HIWORD(l_msg->lParam), (int)LOWORD(l_msg->lParam));
     else if (l_msg->hwnd == 0 && l_msg->message == SHELL_WM_WAKE)
         shell_wake_arrived();
+    else if (l_msg->hwnd == 0 && l_msg->message == SHELL_WM_FRAME)
+        shell_frame_arrived();
     else if (l_msg->hwnd == 0 && l_msg->message == WM_TIMER
              && s_shell_dwell_id && l_msg->wParam == s_shell_dwell_id) {
         shell_cancel_dwell_timer();
@@ -984,6 +997,7 @@ static int shell_next_event(int* out4) {
     out4[2] = s_shell_q[s_shell_qhead][2];
     out4[3] = s_shell_q[s_shell_qhead][3];
     s_shell_qhead = (s_shell_qhead + 1) % SHELL_QCAP;
+    if (out4[0] == 69) InterlockedExchange(&s_frame_unread, 0);   /* frame ticks coalesce */
     return out4[0];
 }
 
@@ -996,6 +1010,112 @@ static double shell_now_ms(void) {
     QueryPerformanceCounter(&c);
     return (double)c.QuadPart * 1000.0 / (double)f.QuadPart;
 }
+
+/* ---- FRAME TICKS (1x, 1.53.0, 2026-11-12): simple_gui's animation clock on Windows.
+   Event 69, `a' the milliseconds since the tick pushed last, at the display's rate while
+   started. A helper thread waits on DwmFlush (the compositor's frame) and posts
+   SHELL_WM_FRAME to the main window (or, with none, to the claimed pump thread), so the GUI
+   thread never blocks on it. Ticks coalesce: the thread posts only while no tick is unread,
+   and shell_next_event clears that when it hands event 69 over.
+   FALLBACK: when DWM gives no frame - the window minimized, DwmFlush failing, or returning
+   in under 2 ms twice in a row (a covered window, Remote Desktop) - the thread waits on a
+   high-resolution waitable timer (16.67 ms) for that turn instead.
+   STOP never waits: it moves the generation on, and the old thread ends at its next turn
+   without posting. Measured (1x spike): SetTimer(16) ticks at 31 ms; DwmFlush holds 17.2 ms
+   median, 17.7 ms p95 with every core busy. */
+typedef HRESULT (WINAPI *shell_dwm_flush_fn)(void);
+/* CreateWaitableTimerExW and its high-resolution flag are Vista and Windows 10 1803, past
+   the _WIN32_WINNT=0x0500 ISE compiles for: looked up at run time, with an ordinary
+   waitable timer where they are missing. */
+#define SHELL_TIMER_HIGH_RESOLUTION 0x00000002
+typedef HANDLE (WINAPI *shell_create_timer_ex_fn)(void*, LPCWSTR, DWORD, DWORD);
+static HANDLE shell_frame_timer(void) {
+    shell_create_timer_ex_fn l_create = (shell_create_timer_ex_fn)(void*)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "CreateWaitableTimerExW");
+    HANDLE l_timer = 0;
+    if (l_create) l_timer = l_create(NULL, NULL, SHELL_TIMER_HIGH_RESOLUTION, 0x1F0003 /* TIMER_ALL_ACCESS */);
+    if (!l_timer) l_timer = CreateWaitableTimerW(NULL, FALSE, NULL);
+    return l_timer;
+}
+static DWORD WINAPI shell_frame_thread(LPVOID p) {
+    LONG l_gen = (LONG)(LONG_PTR)p;
+    HANDLE l_timer = shell_frame_timer();
+    LARGE_INTEGER l_freq, l_t0, l_t1, l_due;
+    int l_quick = 0, l_compositor;
+    /* dwmapi at run time, as the dark title bar does (the ISE target predates it) */
+    HMODULE l_dwm_lib = LoadLibraryW(L"dwmapi.dll");
+    shell_dwm_flush_fn l_flush = l_dwm_lib ? (shell_dwm_flush_fn)(void*)GetProcAddress(l_dwm_lib, "DwmFlush") : 0;
+    QueryPerformanceFrequency(&l_freq);
+    while (s_frame_generation == l_gen) {
+        l_compositor = 0;
+        if (l_flush && !s_frame_force_timer && !(s_shell_hwnd && IsIconic(s_shell_hwnd))) {
+            QueryPerformanceCounter(&l_t0);
+            if (SUCCEEDED(l_flush())) {
+                QueryPerformanceCounter(&l_t1);
+                if ((double)(l_t1.QuadPart - l_t0.QuadPart) * 1000.0 / (double)l_freq.QuadPart >= 2.0) l_quick = 0;
+                else l_quick++;
+                l_compositor = l_quick < 2;   /* one quick return is a frame just ending */
+            }
+        }
+        if (!l_compositor) {
+            if (l_timer) {
+                l_due.QuadPart = -166667;
+                SetWaitableTimer(l_timer, &l_due, 0, NULL, NULL, FALSE);
+                WaitForSingleObject(l_timer, 100);
+            } else {
+                Sleep(16);
+            }
+        }
+        InterlockedExchange(&s_frame_source, l_compositor ? 1 : 2);
+        if (s_frame_generation != l_gen) break;
+        if (InterlockedCompareExchange(&s_frame_unread, 1, 0) == 0) {
+            int l_posted = 0;
+            if (s_shell_hwnd) l_posted = PostMessageW(s_shell_hwnd, SHELL_WM_FRAME, 0, 0) ? 1 : 0;
+            else if (s_shell_pump_thread) l_posted = PostThreadMessageW(s_shell_pump_thread, SHELL_WM_FRAME, 0, 0) ? 1 : 0;
+            if (!l_posted) InterlockedExchange(&s_frame_unread, 0);
+        }
+    }
+    if (l_timer) CloseHandle(l_timer);
+    if (l_dwm_lib) FreeLibrary(l_dwm_lib);
+    return 0;
+}
+
+/* On the pump thread: push event 69 with the milliseconds since the last tick pushed. */
+static void shell_frame_arrived(void) {
+    double l_now = shell_now_ms();
+    int l_ms = (int)(l_now - s_frame_last_ms);
+    s_frame_last_ms = l_now;
+    if (l_ms < 0) l_ms = 0;
+    shell_push(69, l_ms, 0, 0);
+}
+
+/* Start frame ticks (a running thread keeps running). Answers 1 started or running. */
+static int shell_start_frame_ticks(void) {
+    static volatile LONG s_running_gen = 0;
+    HANDLE l_thread;
+    LONG l_gen;
+    if (s_running_gen != 0 && s_running_gen == s_frame_generation) return 1;
+    l_gen = InterlockedIncrement(&s_frame_generation);
+    InterlockedExchange(&s_frame_unread, 0);
+    s_frame_last_ms = shell_now_ms();
+    l_thread = CreateThread(NULL, 0, shell_frame_thread, (LPVOID)(LONG_PTR)l_gen, 0, NULL);
+    if (!l_thread) return 0;
+    CloseHandle(l_thread);
+    s_running_gen = l_gen;
+    return 1;
+}
+
+/* Stop frame ticks without waiting: the thread ends at its next turn, posting nothing. */
+static void shell_stop_frame_ticks(void) {
+    InterlockedIncrement(&s_frame_generation);
+    InterlockedExchange(&s_frame_unread, 0);
+}
+
+/* Tests: pace by the high-resolution timer (1), as when DWM gives no frame, or let the
+   compositor pace again (0). */
+static void shell_frame_ticks_force_timer(int l_on) { InterlockedExchange(&s_frame_force_timer, l_on ? 1 : 0); }
+
+/* What paced the last tick: 1 the compositor, 2 the timer, 0 none yet. */
+static int shell_frame_tick_source(void) { return (int)s_frame_source; }
 
 static int shell_shell_open(const wchar_t* path) {
     return (int)(INT_PTR)ShellExecuteW(0, L"open", path, 0, 0, SW_SHOWNORMAL) > 32 ? 1 : 0;

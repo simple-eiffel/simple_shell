@@ -1674,7 +1674,11 @@ int shell_monitors_refresh(void)
 		m[4] = (int)lround(v.origin.x * k); m[5] = (int)lround((l_top - NSMaxY(v)) * k);
 		m[6] = (int)lround(NSMaxX(v) * k); m[7] = (int)lround((l_top - v.origin.y) * k);
 		m[8] = c == l_main ? 1 : 0;
-		NSString *n = [c localizedName] ?: @"";
+		/* Every screen has a name, as on Windows (\\.\DISPLAY1): a Mac with no physical
+		   display runs a virtual one whose localizedName is empty, so then "Display" and its
+		   CGDirectDisplayID. */
+		NSString *n = [c localizedName];
+		if (![n length]) n = [NSString stringWithFormat:@"Display %u", [[[c deviceDescription] objectForKey:@"NSScreenNumber"] unsignedIntValue]];
 		NSUInteger l_len = MIN([n length], (NSUInteger)31);
 		[n getCharacters:s_mon_name[s_mon_count] range:NSMakeRange(0, l_len)];
 		s_mon_name[s_mon_count][l_len] = 0;

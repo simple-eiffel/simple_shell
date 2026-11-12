@@ -1601,6 +1601,82 @@ feature -- Framed panels (GW-22, 1.23.0)
 
 feature -- Printing (GW-20, 1.24.0)
 
+	test_save_dialog_answers_cancels_and_adds_the_extension
+			-- 2026-11-11: the system's Save dialog (Windows; the test answers it from a thread). A
+			-- path with spaces and characters beyond ASCII comes back whole; a bare name gets the
+			-- filter's extension; Cancel gives an empty answer.
+		local
+			l_dialog: SHELL_FILE_DIALOG
+			l_dir, l_path: STRING_32
+			l_folder: DIRECTORY
+		do
+			if {PLATFORM}.is_windows then
+				l_dir := dialog_test_folder
+				create l_folder.make (l_dir)
+				if not l_folder.exists then
+					l_folder.recursive_create_dir
+				end
+				l_path := l_dir + {STRING_32} "\psalm 23 %/233/t%/233/.pdf"
+				create l_dialog.make
+				answer_next_dialog (True, "")
+				l_dialog.choose_save_file (default_pointer, "Save test", "PDF files|*.pdf", l_dir, {STRING_32} "psalm 23 %/233/t%/233/.pdf")
+				assert ("the path comes back whole: " + {UTF_CONVERTER}.string_32_to_utf_8_string_8 (l_dialog.chosen_path), l_dialog.chosen_path.same_string (l_path))
+				answer_next_dialog (True, "")
+				l_dialog.choose_save_file (default_pointer, "Save test", "PDF files|*.pdf", l_dir, "bare name")
+				assert ("the filter's extension added: " + {UTF_CONVERTER}.string_32_to_utf_8_string_8 (l_dialog.chosen_path), l_dialog.chosen_path.ends_with ({STRING_32} "bare name.pdf"))
+				answer_next_dialog (False, "")
+				l_dialog.choose_save_file (default_pointer, "Save test", "PDF files|*.pdf", l_dir, "suggested.pdf")
+				assert ("cancel answers nothing", not l_dialog.has_choice)
+			end
+		end
+
+	test_folder_dialog_answers_and_cancels
+			-- 2026-11-11: the system's folder dialog (Windows; answered from a thread).
+		local
+			l_dialog: SHELL_FILE_DIALOG
+			l_dir: STRING_32
+			l_folder: DIRECTORY
+		do
+			if {PLATFORM}.is_windows then
+				l_dir := dialog_test_folder
+				create l_folder.make (l_dir)
+				if not l_folder.exists then
+					l_folder.recursive_create_dir
+				end
+				create l_dialog.make
+				answer_next_dialog (True, "")
+				l_dialog.choose_folder (default_pointer, "Folder test", l_dir)
+				assert ("the folder comes back: " + {UTF_CONVERTER}.string_32_to_utf_8_string_8 (l_dialog.chosen_path), l_dialog.chosen_path.same_string (l_dir))
+				answer_next_dialog (False, "")
+				l_dialog.choose_folder (default_pointer, "Folder test", l_dir)
+				assert ("cancel answers nothing", not l_dialog.has_choice)
+			end
+		end
+
+	dialog_test_folder: STRING_32
+			-- A folder under TEMP whose name has a space and a character beyond ASCII.
+		do
+			if attached (create {EXECUTION_ENVIRONMENT}).item ("TEMP") as al_t then
+				Result := al_t + {STRING_32} "\simple shell %/233/t%/233/"
+			else
+				Result := {STRING_32} "C:\simple shell %/233/t%/233/"
+			end
+		end
+
+	answer_next_dialog (a_ok: BOOLEAN; a_text: READABLE_STRING_GENERAL)
+			-- Have a thread answer the next system file dialog: type `a_text' and OK, or Cancel.
+		local
+			l_text: NATIVE_STRING
+		do
+			create l_text.make (a_text)
+			c_answer_next (if a_ok then 1 else 0 end, l_text.item)
+		end
+
+	c_answer_next (a_action: INTEGER; a_text: POINTER)
+		external "C inline use %"shell_dialog_autoanswer.h%""
+		alias "sda_answer_next ($a_action, (void *) $a_text);"
+		end
+
 	test_print_dialog_starts_with_nothing_chosen
 			-- 1v-c (2026-11-11): the Windows print dialog's answers before any `show': no printer,
 			-- one copy, every page. (The dialog itself needs a person and is never run in a suite.)

@@ -1500,6 +1500,81 @@ int shell_open_file_dialog(const void *l_title, const void *l_filter, const void
 	return 1;
 }
 
+/* The window a dialog belongs to: `a_owner' when it is a window, else the shell's own; nil
+   when neither is shown (the dialog is then app-modal). */
+static NSWindow *shell_dialog_owner(void *a_owner)
+{
+	id w = a_owner ? (__bridge id)a_owner : s_window;
+	return [w isKindOfClass:[NSWindow class]] && [w isVisible] && ![w attachedSheet] ? w : nil;
+}
+
+/* Runs `p' as a sheet on `w' (turning the run loop until it ends), or app-modal without `w'. */
+static NSModalResponse shell_run_panel(NSSavePanel *p, NSWindow *w)
+{
+	if (!w) return [p runModal];
+	__block NSModalResponse l_answer = NSModalResponseCancel;
+	__block BOOL l_done = NO;
+	[p beginSheetModalForWindow:w completionHandler:^(NSModalResponse r) { l_answer = r; l_done = YES; }];
+	while (!l_done) {
+		NSEvent *e = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate dateWithTimeIntervalSinceNow:0.05] inMode:NSDefaultRunLoopMode dequeue:YES];
+		if (e) [NSApp sendEvent:e];
+	}
+	return l_answer;
+}
+
+/* The chosen URL's path, UTF-8, into `l_out' (2 * l_cap bytes); 1 when it fits. */
+static int shell_put_path(NSURL *u, void *l_out, int l_cap)
+{
+	const char *l_path = [[u path] fileSystemRepresentation];
+	size_t l_len = strlen(l_path), l_room = (size_t)l_cap * 2 - 1;
+	if (l_len > l_room) return 0;
+	memcpy(l_out, l_path, l_len + 1);
+	return 1;
+}
+
+/* The system's Save panel (EIF-GROUP's ruling c, 2026-11-11): a sheet on `a_owner' (the shell's
+   own window when null), starting in `l_initial_dir' (forced) with `l_name' in the name field;
+   the filter's types are the ones allowed, so a bare name takes the first one's extension; the
+   panel itself asks before replacing a file. The path, UTF-8, into `l_out'; 1 when chosen. */
+int shell_save_file_dialog(void *a_owner, const void *l_title, const void *l_filter, const void *l_initial_dir, const void *l_name, void *l_out, int l_cap)
+{
+	if (!l_out || l_cap <= 1) return 0;
+	((char *)l_out)[0] = 0;
+	shell_app();
+	NSSavePanel *p = [NSSavePanel savePanel];
+	NSString *t = shell_text(l_title);
+	if ([t length]) { [p setTitle:t]; [p setMessage:t]; }
+	NSArray<UTType *> *l_types = shell_filter_types(shell_text(l_filter));
+	if (l_types) [p setAllowedContentTypes:l_types];
+	[p setCanCreateDirectories:YES];
+	NSString *d = shell_text(l_initial_dir);
+	if ([d length]) [p setDirectoryURL:[NSURL fileURLWithPath:[d stringByExpandingTildeInPath] isDirectory:YES]];
+	NSString *n = shell_text(l_name);
+	if ([n length]) [p setNameFieldStringValue:n];
+	if (shell_run_panel(p, shell_dialog_owner(a_owner)) != NSModalResponseOK || ![p URL]) return 0;
+	return shell_put_path([p URL], l_out, l_cap);
+}
+
+/* The system's folder chooser: an open panel that picks folders only, a sheet on `a_owner' (the
+   shell's own window when null), starting in `l_initial_dir' (forced). 1 when chosen. */
+int shell_choose_folder_dialog(void *a_owner, const void *l_title, const void *l_initial_dir, void *l_out, int l_cap)
+{
+	if (!l_out || l_cap <= 1) return 0;
+	((char *)l_out)[0] = 0;
+	shell_app();
+	NSOpenPanel *o = [NSOpenPanel openPanel];
+	[o setCanChooseFiles:NO];
+	[o setCanChooseDirectories:YES];
+	[o setAllowsMultipleSelection:NO];
+	[o setCanCreateDirectories:YES];
+	NSString *t = shell_text(l_title);
+	if ([t length]) { [o setTitle:t]; [o setMessage:t]; }
+	NSString *d = shell_text(l_initial_dir);
+	if ([d length]) [o setDirectoryURL:[NSURL fileURLWithPath:[d stringByExpandingTildeInPath] isDirectory:YES]];
+	if (shell_run_panel(o, shell_dialog_owner(a_owner)) != NSModalResponseOK || ![o URL]) return 0;
+	return shell_put_path([o URL], l_out, l_cap);
+}
+
 /* ------------------------------------------------------------------ spelling */
 
 /* NSSpellChecker in American English, as the Windows half's ISpellChecker ("en-US"). Ranges

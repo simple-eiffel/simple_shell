@@ -66,7 +66,71 @@ feature -- Commands
 			end
 		end
 
+	choose_save_file (a_owner: POINTER; a_title, a_filter, a_initial_dir, a_name: READABLE_STRING_GENERAL)
+			-- The system's Save dialog titled `a_title', owned by window `a_owner' (an HWND, a
+			-- GtkWindow or an NSWindow; default_pointer: the shell's own window), filter
+			-- `a_filter' as `choose_file' takes it (its first extension is added to a bare name),
+			-- starting in `a_initial_dir' (empty: wherever the system was) and offering `a_name'.
+			-- It asks before replacing a file. Read the answer from `chosen_path', empty when the
+			-- user cancelled.
+		require
+			title_present: not a_title.is_empty
+			filter_paired: a_filter.has ('|')
+		local
+			l_title, l_filter, l_dir, l_name, l_answer: NATIVE_STRING
+			l_buffer: MANAGED_POINTER
+		do
+			create l_title.make (a_title)
+			create l_filter.make (a_filter)
+			create l_dir.make (a_initial_dir)
+			create l_name.make (a_name)
+			create l_buffer.make ((Max_path_chars + 1) * 2)
+			if c_save_dialog (a_owner, l_title.item, l_filter.item, l_dir.item, l_name.item, l_buffer.item, Max_path_chars) = 1 then
+				create l_answer.make_from_pointer (l_buffer.item)
+				chosen_path := l_answer.string
+			else
+				create chosen_path.make_empty
+			end
+		end
+
+	choose_folder (a_owner: POINTER; a_title, a_initial_dir: READABLE_STRING_GENERAL)
+			-- The system's folder dialog titled `a_title', owned by window `a_owner'
+			-- (default_pointer: the shell's own window), starting in `a_initial_dir' (empty:
+			-- wherever the system was). Read the answer from `chosen_path', empty when the user
+			-- cancelled.
+		require
+			title_present: not a_title.is_empty
+		local
+			l_title, l_dir, l_answer: NATIVE_STRING
+			l_buffer: MANAGED_POINTER
+		do
+			create l_title.make (a_title)
+			create l_dir.make (a_initial_dir)
+			create l_buffer.make ((Max_path_chars + 1) * 2)
+			if c_folder_dialog (a_owner, l_title.item, l_dir.item, l_buffer.item, Max_path_chars) = 1 then
+				create l_answer.make_from_pointer (l_buffer.item)
+				chosen_path := l_answer.string
+			else
+				create chosen_path.make_empty
+			end
+		end
+
 feature {NONE} -- Externals
+
+	c_save_dialog (a_owner, a_title, a_filter, a_dir, a_name, a_out: POINTER; a_cap: INTEGER): INTEGER
+		external
+			"C blocking inline use %"simple_shell_file_dialogs.h%""
+		alias
+			"return shell_save_file_dialog((void*)$a_owner, (void*)$a_title, (void*)$a_filter, (void*)$a_dir, (void*)$a_name, (void*)$a_out, $a_cap);"
+		end
+
+	c_folder_dialog (a_owner, a_title, a_dir, a_out: POINTER; a_cap: INTEGER): INTEGER
+		external
+			"C blocking inline use %"simple_shell_file_dialogs.h%""
+		alias
+			"return shell_choose_folder_dialog((void*)$a_owner, (void*)$a_title, (void*)$a_dir, (void*)$a_out, $a_cap);"
+		end
+
 
 	c_open_dialog (a_title, a_filter, a_dir, a_out: POINTER; a_cap: INTEGER): INTEGER
 		external

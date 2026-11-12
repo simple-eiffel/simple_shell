@@ -58,6 +58,8 @@ feature {NONE} -- Initialization
 			run_test (agent t.test_gw22_framed_panel_is_a_floating_window, "gw22_framed_panel_is_a_floating_window")
 			run_test (agent t.test_scan19_a_panel_destroyed_behind_its_back_is_closed, "scan19_a_panel_destroyed_behind_its_back_is_closed")
 			run_test (agent t.test_print_dialog_starts_with_nothing_chosen, "print_dialog_starts_with_nothing_chosen")
+			run_test (agent t.test_save_dialog_answers_cancels_and_adds_the_extension, "save_dialog_answers_cancels_and_adds_the_extension")
+			run_test (agent t.test_folder_dialog_answers_and_cancels, "folder_dialog_answers_and_cancels")
 			run_test (agent t.test_gw20_printers_and_a_document_written_to_a_file, "gw20_printers_and_a_document_written_to_a_file")
 			run_test (agent t.test_scan20_a_printer_owns_only_its_own_document, "scan20_a_printer_owns_only_its_own_document")
 			run_test (agent t.test_dark_title_bar_on_a_real_window, "dark_title_bar_on_a_real_window")

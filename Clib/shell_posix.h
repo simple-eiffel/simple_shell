@@ -98,6 +98,8 @@ int shell_motion_changed(unsigned int l_spi);
 int shell_next_event(int* out4);
 double shell_now_ms(void);
 int shell_open_file_dialog(const void* l_title, const void* l_filter, const void* l_initial_dir, void* l_out, int l_cap);
+int shell_save_file_dialog(void* a_owner, const void* l_title, const void* l_filter, const void* l_initial_dir, const void* l_name, void* l_out, int l_cap);
+int shell_choose_folder_dialog(void* a_owner, const void* l_title, const void* l_initial_dir, void* l_out, int l_cap);
 void shell_outline_hide(int slot);
 void shell_outline_show(int slot, int x, int y, int w, int h, int thick, int rgb);
 void* shell_overlay_dc(void);

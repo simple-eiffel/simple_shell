@@ -1587,6 +1587,82 @@ int shell_open_file_dialog(const void *l_title, const void *l_filter, const void
 	return 1;
 }
 
+static void shell_file_saved(GObject *o, GAsyncResult *r, gpointer d)
+{
+	ShellFileChoice *c = d;
+	c->file = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(o), r, NULL);
+	c->done = 1;
+}
+static void shell_folder_chosen(GObject *o, GAsyncResult *r, gpointer d)
+{
+	ShellFileChoice *c = d;
+	c->file = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(o), r, NULL);
+	c->done = 1;
+}
+/* The chosen file's path, UTF-8, into `l_out' (2 * l_cap bytes); 1 when it fits. */
+static int shell_file_path_out(GFile *a_file, void *l_out, int l_cap)
+{
+	char *l_path;
+	size_t l_len;
+	if (!a_file) return 0;
+	l_path = g_file_get_path(a_file);
+	g_object_unref(a_file);
+	if (!l_path) return 0;
+	l_len = strlen(l_path);
+	if (l_len > (size_t)l_cap * 2 - 1) { g_free(l_path); return 0; }
+	memcpy(l_out, l_path, l_len + 1);
+	g_free(l_path);
+	return 1;
+}
+
+/* Ask where to save, offering `l_name' (UTF-8), owned by `a_owner' (a GtkWindow, or null:
+   the shell's own window). 1 and the path in `l_out' when the user chose. */
+int shell_save_file_dialog(void *a_owner, const void *l_title, const void *l_filter, const void *l_initial_dir,
+	const void *l_name, void *l_out, int l_cap)
+{
+	GtkFileDialog *g;
+	GListModel *l_filters;
+	ShellFileChoice c = {0, NULL};
+	if (!l_out || l_cap <= 1) return 0;
+	((char *)l_out)[0] = 0;
+	shell_app();
+	g = gtk_file_dialog_new();
+	if (l_title && *(const char *)l_title) gtk_file_dialog_set_title(g, (const char *)l_title);
+	l_filters = shell_filters((const char *)l_filter);
+	if (l_filters) { gtk_file_dialog_set_filters(g, l_filters); g_object_unref(l_filters); }
+	if (l_initial_dir && *(const char *)l_initial_dir) {
+		GFile *dir = g_file_new_for_path((const char *)l_initial_dir);
+		gtk_file_dialog_set_initial_folder(g, dir);
+		g_object_unref(dir);
+	}
+	if (l_name && *(const char *)l_name) gtk_file_dialog_set_initial_name(g, (const char *)l_name);
+	gtk_file_dialog_save(g, a_owner ? GTK_WINDOW(a_owner) : (s_window ? GTK_WINDOW(s_window) : NULL), NULL, shell_file_saved, &c);
+	while (!c.done) g_main_context_iteration(NULL, TRUE);
+	g_object_unref(g);
+	return shell_file_path_out(c.file, l_out, l_cap);
+}
+
+/* Choose a folder, owned by `a_owner' (or the shell's own window). */
+int shell_choose_folder_dialog(void *a_owner, const void *l_title, const void *l_initial_dir, void *l_out, int l_cap)
+{
+	GtkFileDialog *g;
+	ShellFileChoice c = {0, NULL};
+	if (!l_out || l_cap <= 1) return 0;
+	((char *)l_out)[0] = 0;
+	shell_app();
+	g = gtk_file_dialog_new();
+	if (l_title && *(const char *)l_title) gtk_file_dialog_set_title(g, (const char *)l_title);
+	if (l_initial_dir && *(const char *)l_initial_dir) {
+		GFile *dir = g_file_new_for_path((const char *)l_initial_dir);
+		gtk_file_dialog_set_initial_folder(g, dir);
+		g_object_unref(dir);
+	}
+	gtk_file_dialog_select_folder(g, a_owner ? GTK_WINDOW(a_owner) : (s_window ? GTK_WINDOW(s_window) : NULL), NULL, shell_folder_chosen, &c);
+	while (!c.done) g_main_context_iteration(NULL, TRUE);
+	g_object_unref(g);
+	return shell_file_path_out(c.file, l_out, l_cap);
+}
+
 /* ------------------------------------------------------------------ monitors */
 
 /* Each monitor as Windows' GetMonitorInfo answers it, in pixels: the monitor (0-3: left, top,

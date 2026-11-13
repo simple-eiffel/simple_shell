@@ -615,6 +615,10 @@ static LRESULT CALLBACK shell_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             shell_panel_drop_ole(-1);
             KillTimer(h, 1);
             s_shell_close_requests = 0;
+            /* The handle dies with the window, as GTK's and AppKit's main-window
+               pointers do (2026-11-13): kept, a floating panel opened later named
+               the dead window as its owner and CreateWindowExW refused it. */
+            if (h == s_shell_hwnd) s_shell_hwnd = 0;
             PostQuitMessage(0);
             return 0;
     }

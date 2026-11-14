@@ -2363,21 +2363,26 @@ int shell_reveal(const void *path)
    answers)? A cached answer, kept by an nw_path_monitor on its own queue that starts with the
    first question; until its first report (milliseconds) it answers 1. `test_report' feeds the
    same cache, which the monitor changes only on a real change of path. No shell_app. */
-static atomic_int s_online = 1;
+static atomic_int s_online = 1, s_network_reported = 0;
 static nw_path_monitor_t s_path_monitor;
 int shell_network_online(void)
 {
 	if (!s_path_monitor) {
 		s_path_monitor = nw_path_monitor_create();
 		nw_path_monitor_set_queue(s_path_monitor, dispatch_queue_create("simple_shell.network", DISPATCH_QUEUE_SERIAL));
+		/* the monitor's first update only states the path; it must not undo an earlier test report
+		   (as on Windows and Linux). Later updates are real changes and always count. */
+		__block int l_first = 1;
 		nw_path_monitor_set_update_handler(s_path_monitor, ^(nw_path_t p) {
-			atomic_store(&s_online, nw_path_get_status(p) == nw_path_status_satisfied ? 1 : 0);
+			if (!l_first || !atomic_load(&s_network_reported))
+				atomic_store(&s_online, nw_path_get_status(p) == nw_path_status_satisfied ? 1 : 0);
+			l_first = 0;
 		});
 		nw_path_monitor_start(s_path_monitor);
 	}
 	return atomic_load(&s_online);
 }
-void shell_network_test_report(int l_online) { atomic_store(&s_online, l_online ? 1 : 0); }
+void shell_network_test_report(int l_online) { atomic_store(&s_network_reported, 1); atomic_store(&s_online, l_online ? 1 : 0); }
 
 /* The application's icon (the Dock's), where Windows answers the main window's HICON. */
 void *shell_main_icon(void) { shell_app(); return (__bridge void *)[NSApp applicationIconImage]; }

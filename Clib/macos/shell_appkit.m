@@ -699,11 +699,30 @@ static NSTimer *shell_timer(double a_ms, SEL a_selector, BOOL a_repeats)
 	return t;
 }
 
+/* AppKit autoreleases objects in the calls the program makes between pumps: a window's or a
+   panel's creation, showing and closing among them, the window and its view with their back
+   buffers included. With no pool in place on the program's own thread they were never freed
+   (measured: a hidden 1200 by 800 window with a floating panel kept about 14 MB each time it
+   opened and closed). So the shell keeps an outer pool from its first call, and drains it as
+   each pump starts at the top level: never inside a pump, where pools of its own are open. */
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *a_pool);
+static void *s_outer_pool;
+static int s_pump_depth;
+static void shell_pump_enter(void)
+{
+	if (s_pump_depth++ > 0) return;
+	if (s_outer_pool) objc_autoreleasePoolPop(s_outer_pool);
+	s_outer_pool = objc_autoreleasePoolPush();
+}
+static void shell_pump_leave(void) { s_pump_depth--; }
+
 /* The application, once: a regular app with the Mac's application menu (Hide, Quit). The
    window's own menus are drawn by simple_widgets inside it. */
 static void shell_app(void)
 {
 	if (s_target) return;
+	if (!s_outer_pool) s_outer_pool = objc_autoreleasePoolPush();   /* see shell_pump_enter */
 	[NSApplication sharedApplication];
 	[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 	s_target = [[SSTarget alloc] init];
@@ -1174,10 +1193,12 @@ static void shell_send(NSEvent *e)
 int shell_pump(void)
 {
 	if (s_quit || !NSApp) return 0;
+	shell_pump_enter();
 	@autoreleasepool {
 		NSEvent *e = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate distantFuture] inMode:NSDefaultRunLoopMode dequeue:YES];
 		if (e) shell_send(e);
 	}
+	shell_pump_leave();
 	return s_quit ? 0 : 1;
 }
 
@@ -1185,11 +1206,13 @@ int shell_pump(void)
 int shell_pump_pending(void)
 {
 	if (!NSApp) return s_quit ? 0 : 1;
+	shell_pump_enter();
 	@autoreleasepool {
 		NSEvent *e;
 		while (!s_quit && (e = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate distantPast] inMode:NSDefaultRunLoopMode dequeue:YES]))
 			shell_send(e);
 	}
+	shell_pump_leave();
 	return s_quit ? 0 : 1;
 }
 
@@ -1197,17 +1220,21 @@ int shell_pump_pending(void)
 int shell_pump_until(int ms)
 {
 	if (!NSApp) return s_quit ? 0 : 1;
+	shell_pump_enter();
 	NSDate *l_end = [NSDate dateWithTimeIntervalSinceNow:ms / 1000.0];
+	int l_result = 1;
 	for (;;) {
-		if (!shell_pump_pending()) return 0;
-		if (s_qhead != s_qtail) return 1;
-		if ([l_end timeIntervalSinceNow] <= 0) return 1;
+		if (!shell_pump_pending()) { l_result = 0; break; }
+		if (s_qhead != s_qtail) break;
+		if ([l_end timeIntervalSinceNow] <= 0) break;
 		@autoreleasepool {
 			NSEvent *e = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:l_end inMode:NSDefaultRunLoopMode dequeue:YES];
 			if (e) shell_send(e);
 		}
-		if (s_quit) return 0;
+		if (s_quit) { l_result = 0; break; }
 	}
+	shell_pump_leave();
+	return l_result;
 }
 
 /* ------------------------------------------------------------------ the wake */
@@ -2383,6 +2410,7 @@ int shell_text_menu(int can_cut, int can_copy, int can_paste, int can_select)
 void shell_pump_for(int ms)
 {
 	shell_app();
+	shell_pump_enter();
 	NSDate *l_end = [NSDate dateWithTimeIntervalSinceNow:ms / 1000.0];
 	while ([l_end timeIntervalSinceNow] > 0) {
 		@autoreleasepool {
@@ -2390,6 +2418,7 @@ void shell_pump_for(int ms)
 			if (e) shell_send(e);
 		}
 	}
+	shell_pump_leave();
 }
 
 /* Windows message plumbing, kept for the code that calls it. The Mac reports these changes

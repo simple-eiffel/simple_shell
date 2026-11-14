@@ -1667,11 +1667,26 @@ int shell_choose_folder_dialog(void *a_owner, const void *l_title, const void *l
 
 /* Each monitor as Windows' GetMonitorInfo answers it, in pixels: the monitor (0-3: left, top,
    right, bottom), its work area (4-7; GTK 4 has no work-area query, so the monitor again),
-   and whether it is the primary one (8: the first GDK lists). */
+   and whether it is the primary one (8: the first GDK lists). Field 9 (1z-c) is the monitor's
+   own scale x 100, fractional scales included (gdk_monitor_get_scale); fields 0-7 are its
+   logical geometry times its whole scale factor, as before. */
 #define SHELL_MONITOR_CAP 16
-static int s_mon[SHELL_MONITOR_CAP][9];
+#define SHELL_MONITOR_FIELDS 10
+static int s_mon[SHELL_MONITOR_CAP][SHELL_MONITOR_FIELDS];
 static gunichar2 s_mon_name[SHELL_MONITOR_CAP][32];
 static int s_mon_count = 0;
+
+/* One monitor's fields into `m' (SHELL_MONITOR_FIELDS of them); `a_first': it is the first GDK lists. */
+static void shell_monitor_describe(GdkMonitor *c, int a_first, int *m)
+{
+	GdkRectangle g;
+	int k = gdk_monitor_get_scale_factor(c);
+	gdk_monitor_get_geometry(c, &g);
+	m[0] = g.x * k; m[1] = g.y * k; m[2] = (g.x + g.width) * k; m[3] = (g.y + g.height) * k;
+	m[4] = m[0]; m[5] = m[1]; m[6] = m[2]; m[7] = m[3];
+	m[8] = a_first ? 1 : 0;
+	m[9] = (int)(gdk_monitor_get_scale(c) * 100 + 0.5);
+}
 
 int shell_monitors_refresh(void)
 {
@@ -1685,15 +1700,10 @@ int shell_monitors_refresh(void)
 	s_mon_count = 0;
 	for (i = 0; i < n && s_mon_count < SHELL_MONITOR_CAP; i++) {
 		GdkMonitor *c = g_list_model_get_item(l_all, i);
-		GdkRectangle g;
-		int k = gdk_monitor_get_scale_factor(c), *m = s_mon[s_mon_count];
 		const char *l_name = gdk_monitor_get_description(c);
 		gunichar2 *u;
 		glong l_len = 0;
-		gdk_monitor_get_geometry(c, &g);
-		m[0] = g.x * k; m[1] = g.y * k; m[2] = (g.x + g.width) * k; m[3] = (g.y + g.height) * k;
-		m[4] = m[0]; m[5] = m[1]; m[6] = m[2]; m[7] = m[3];
-		m[8] = i == 0 ? 1 : 0;
+		shell_monitor_describe(c, i == 0, s_mon[s_mon_count]);
 		if (!l_name) l_name = gdk_monitor_get_connector(c);
 		u = g_utf8_to_utf16(l_name ? l_name : "", -1, NULL, &l_len, NULL);
 		if (l_len > 31) l_len = 31;
@@ -1705,7 +1715,38 @@ int shell_monitors_refresh(void)
 	}
 	return s_mon_count;
 }
-int shell_monitor_field(int l_i, int l_f) { return (l_i >= 0 && l_i < s_mon_count && l_f >= 0 && l_f <= 8) ? s_mon[l_i][l_f] : 0; }
+int shell_monitor_field(int l_i, int l_f) { return (l_i >= 0 && l_i < s_mon_count && l_f >= 0 && l_f < SHELL_MONITOR_FIELDS) ? s_mon[l_i][l_f] : 0; }
+
+/* 1z-c: how many times the monitors changed (plugged, unplugged, rearranged, rescaled), for a
+   program to notice by polling, as on Windows: each call compares the monitors GDK lists now
+   with the last call's (GDK keeps its list current as the main loop turns); the first call only
+   takes the first look. The `shell_monitors_refresh' snapshot is left alone. */
+static int s_mon_changes = 0, s_mon_looked = 0, s_mon_last_count = 0;
+static int s_mon_last[SHELL_MONITOR_CAP][SHELL_MONITOR_FIELDS];
+int shell_monitors_change_count(void)
+{
+	GdkDisplay *l_display;
+	GListModel *l_all;
+	int l_now[SHELL_MONITOR_CAP][SHELL_MONITOR_FIELDS];
+	guint i, n;
+	int l_count = 0;
+	shell_app();
+	memset(l_now, 0, sizeof(l_now));
+	l_display = gdk_display_get_default();
+	l_all = l_display ? gdk_display_get_monitors(l_display) : NULL;
+	n = l_all ? g_list_model_get_n_items(l_all) : 0;
+	for (i = 0; i < n && l_count < SHELL_MONITOR_CAP; i++) {
+		GdkMonitor *c = g_list_model_get_item(l_all, i);
+		shell_monitor_describe(c, i == 0, l_now[l_count]);
+		g_object_unref(c);
+		l_count++;
+	}
+	if (s_mon_looked && (l_count != s_mon_last_count || memcmp(l_now, s_mon_last, sizeof(l_now)) != 0)) s_mon_changes++;
+	memcpy(s_mon_last, l_now, sizeof(l_now));
+	s_mon_last_count = l_count;
+	s_mon_looked = 1;
+	return s_mon_changes;
+}
 /* The monitor's name, UTF-16 into `l_buf' (the caller reads 16-bit units). */
 int shell_monitor_name(int l_i, void *l_buf, int l_cap)
 {
@@ -1738,6 +1779,78 @@ int shell_shell_open(const void *path)
 	g_free(l_uri);
 	return ok ? 1 : 0;
 }
+
+/* 1z-c: show the file or folder at `path' selected in the file manager, through the session bus's
+   org.freedesktop.FileManager1 ShowItems (Files, Dolphin, Nemo, Caja and Thunar answer it; the bus
+   starts one that is installed but not running). Where none answers, the folder that holds it
+   opens with the default application instead: the named deviation, the item shown but not
+   selected. 1 when it exists and one of the two was handed over. No shell_app. */
+int shell_reveal(const void *path)
+{
+	const char *t = (const char *)path;
+	GFile *l_file, *l_parent;
+	GDBusConnection *l_bus;
+	GVariant *l_reply = NULL;
+	char *l_uri, *l_folder;
+	const char *l_uris[2];
+	int ok = 0;
+	if (!t || !*t || !g_file_test(t, G_FILE_TEST_EXISTS)) return 0;
+	l_file = g_file_new_for_path(t);
+	l_uri = g_file_get_uri(l_file);
+	l_bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+	if (l_bus && l_uri) {
+		l_uris[0] = l_uri; l_uris[1] = NULL;
+		l_reply = g_dbus_connection_call_sync(l_bus, "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+			"org.freedesktop.FileManager1", "ShowItems", g_variant_new("(^ass)", l_uris, ""), NULL,
+			G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
+		if (l_reply) { ok = 1; g_variant_unref(l_reply); }
+	}
+	if (l_bus) g_object_unref(l_bus);
+	if (!ok) {
+		l_parent = g_file_get_parent(l_file);
+		if (l_parent) {
+			l_folder = g_file_get_uri(l_parent);
+			ok = l_folder && g_app_info_launch_default_for_uri(l_folder, NULL, NULL) ? 1 : 0;
+			g_free(l_folder);
+			g_object_unref(l_parent);
+		}
+	}
+	g_free(l_uri);
+	g_object_unref(l_file);
+	return ok;
+}
+
+/* 1z-c: is there a usable route to a network, as the system sees it (not whether a given server
+   answers)? GIO's GNetworkMonitor `network-available' (a default route), cached: read when the
+   first question starts the monitor, then changed only by its `network-changed' signal, which
+   the main loop delivers, and only when its own answer changes (the first not at all after a
+   test's report), so a test's `shell_network_test_report' stands until the network really
+   changes. No shell_app. */
+static gint s_online = 1, s_network_reported = 0;
+static GNetworkMonitor *s_network = NULL;
+static int s_network_last = -1;
+static void shell_network_changed(GNetworkMonitor *a_monitor, gboolean a_available, gpointer a_data)
+{
+	int l_now = a_available ? 1 : 0;
+	(void)a_monitor; (void)a_data;
+	if (l_now != s_network_last) {
+		if (s_network_last != -1 || !s_network_reported) g_atomic_int_set(&s_online, l_now);
+		s_network_last = l_now;
+	}
+}
+int shell_network_online(void)
+{
+	if (!s_network) {
+		s_network = g_network_monitor_get_default();
+		if (s_network) {
+			shell_network_changed(s_network, g_network_monitor_get_network_available(s_network), NULL);
+			g_signal_connect(s_network, "network-changed", G_CALLBACK(shell_network_changed), NULL);
+		}
+	}
+	return g_atomic_int_get(&s_online);
+}
+/* Tests: feed the same cache the monitor keeps. */
+void shell_network_test_report(int l_online) { s_network_reported = 1; g_atomic_int_set(&s_online, l_online ? 1 : 0); }
 
 /* Wayland: the xdg-desktop-portal, at the end of this file */
 static int shell_portal_hotkey_register(int l_id, int l_mods, int l_vk);

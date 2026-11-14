@@ -81,6 +81,28 @@ feature -- Access
 			end
 		end
 
+	scale (a_index: INTEGER): INTEGER
+			-- 1z-c: that monitor's own scale x 100 (100 at 96 dots per inch, 200 on a
+			-- Retina screen, 150 at 150%): Windows' GetDpiForMonitor, macOS's
+			-- backingScaleFactor, GDK's gdk_monitor_get_scale.
+		require
+			valid: valid_index (a_index)
+		do
+			Result := c_field (a_index - 1, 9).max (1)
+		ensure
+			positive: Result > 0
+		end
+
+	change_count: INTEGER
+			-- 1z-c: how many times the system's monitors have changed (plugged,
+			-- unplugged, rearranged, rescaled) since the program first asked. Poll it
+			-- and `refresh' when it moves; the snapshot does not change by itself.
+		do
+			Result := c_change_count
+		ensure
+			non_negative: Result >= 0
+		end
+
 	primary_index: INTEGER
 			-- Index of the primary monitor (0 if the snapshot has none).
 		local
@@ -146,6 +168,11 @@ feature {NONE} -- Externals
 	c_field (a_i, a_f: INTEGER): INTEGER
 		external "C inline use %"simple_shell.h%""
 		alias "return shell_monitor_field($a_i, $a_f);"
+		end
+
+	c_change_count: INTEGER
+		external "C inline use %"simple_shell.h%""
+		alias "return shell_monitors_change_count();"
 		end
 
 	c_name (a_i: INTEGER; a_buf: POINTER; a_cap: INTEGER): INTEGER

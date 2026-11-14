@@ -5,6 +5,7 @@
    Clib/Makefile (shell_appkit_stubs.c). */
 
 #import <Cocoa/Cocoa.h>
+#import <Network/Network.h>
 #import <CoreText/CoreText.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <Carbon/Carbon.h>
@@ -1680,9 +1681,14 @@ int shell_spell_ignore(const void *word)
 
 /* Each screen as Windows' GetMonitorInfo answers it, in pixels from the main screen's
    top-left: the monitor (0-3: left, top, right, bottom), its work area without the menu bar
-   and Dock (4-7), and whether it is the primary one (8, the screen with the menu bar). */
+   and Dock (4-7), and whether it is the primary one (8, the screen with the menu bar).
+   Field 9 (1z-c) is that screen's own scale x 100. Fields 0-7 are one coordinate space at the
+   MAIN screen's scale, so a program's logical pixels are those divided by the primary's
+   scale, which are exactly NSScreen points, on a 1x screen beside a 2x one too. */
 #define SHELL_MONITOR_CAP 16
-static int s_mon[SHELL_MONITOR_CAP][9];
+static int s_mon[SHELL_MONITOR_CAP][10];
+static int s_mon_changes;
+static id s_mon_observer;
 static unichar s_mon_name[SHELL_MONITOR_CAP][32];
 static int s_mon_count = 0;
 
@@ -1691,6 +1697,12 @@ int shell_monitors_refresh(void)
 	NSArray<NSScreen *> *l_all = [NSScreen screens];
 	NSScreen *l_main = [l_all count] ? l_all[0] : nil;
 	double k = l_main ? [l_main backingScaleFactor] : 1.0, l_top = l_main ? NSMaxY([l_main frame]) : 0;
+	/* 1z-c: count the system's screen changes (plugged, unplugged, rearranged, rescaled), for
+	   a program to notice by polling `shell_monitors_change_count'. No shell_app: a simple_gui
+	   program's NSApp posts the notification. */
+	if (!s_mon_observer)
+		s_mon_observer = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidChangeScreenParametersNotification
+			object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *n) { (void)n; s_mon_changes++; }];
 	s_mon_count = 0;
 	for (NSScreen *c in l_all) {
 		if (s_mon_count == SHELL_MONITOR_CAP) break;
@@ -1701,6 +1713,7 @@ int shell_monitors_refresh(void)
 		m[4] = (int)lround(v.origin.x * k); m[5] = (int)lround((l_top - NSMaxY(v)) * k);
 		m[6] = (int)lround(NSMaxX(v) * k); m[7] = (int)lround((l_top - v.origin.y) * k);
 		m[8] = c == l_main ? 1 : 0;
+		m[9] = (int)lround([c backingScaleFactor] * 100);
 		/* Every screen has a name, as on Windows (\\.\DISPLAY1): a Mac with no physical
 		   display runs a virtual one whose localizedName is empty, so then "Display" and its
 		   CGDirectDisplayID. */
@@ -1713,7 +1726,8 @@ int shell_monitors_refresh(void)
 	}
 	return s_mon_count;
 }
-int shell_monitor_field(int l_i, int l_f) { return (l_i >= 0 && l_i < s_mon_count && l_f >= 0 && l_f <= 8) ? s_mon[l_i][l_f] : 0; }
+int shell_monitor_field(int l_i, int l_f) { return (l_i >= 0 && l_i < s_mon_count && l_f >= 0 && l_f <= 9) ? s_mon[l_i][l_f] : 0; }
+int shell_monitors_change_count(void) { return s_mon_changes; }
 
 /* The screen's name, UTF-16 into `l_buf' (the caller reads 16-bit units). */
 int shell_monitor_name(int l_i, void *l_buf, int l_cap)
@@ -2334,6 +2348,36 @@ int shell_shell_open(const void *path)
 	if ([u isFileURL] && ![[NSFileManager defaultManager] fileExistsAtPath:[u path]]) return 0;
 	return [[NSWorkspace sharedWorkspace] openURL:u] ? 1 : 0;
 }
+
+/* 1z-c: show the file or folder at `path' selected in the Finder, as Windows' Explorer /select
+   does: 1 when it exists and the Finder was asked. No shell_app. */
+int shell_reveal(const void *path)
+{
+	NSString *t = [shell_text(path) stringByExpandingTildeInPath];
+	if ([t length] == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:t]) return 0;
+	[[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:t]]];
+	return 1;
+}
+
+/* 1z-c: is there a usable route to a network, as the system sees it (not whether a given server
+   answers)? A cached answer, kept by an nw_path_monitor on its own queue that starts with the
+   first question; until its first report (milliseconds) it answers 1. `test_report' feeds the
+   same cache, which the monitor changes only on a real change of path. No shell_app. */
+static atomic_int s_online = 1;
+static nw_path_monitor_t s_path_monitor;
+int shell_network_online(void)
+{
+	if (!s_path_monitor) {
+		s_path_monitor = nw_path_monitor_create();
+		nw_path_monitor_set_queue(s_path_monitor, dispatch_queue_create("simple_shell.network", DISPATCH_QUEUE_SERIAL));
+		nw_path_monitor_set_update_handler(s_path_monitor, ^(nw_path_t p) {
+			atomic_store(&s_online, nw_path_get_status(p) == nw_path_status_satisfied ? 1 : 0);
+		});
+		nw_path_monitor_start(s_path_monitor);
+	}
+	return atomic_load(&s_online);
+}
+void shell_network_test_report(int l_online) { atomic_store(&s_online, l_online ? 1 : 0); }
 
 /* The application's icon (the Dock's), where Windows answers the main window's HICON. */
 void *shell_main_icon(void) { shell_app(); return (__bridge void *)[NSApp applicationIconImage]; }

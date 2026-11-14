@@ -93,6 +93,7 @@ int shell_main_is_shown(void);
 int shell_minutes_of_day(void);
 int shell_monitor_field(int l_i, int l_f);
 int shell_monitor_name(int l_i, void* l_buf, int l_cap);
+int shell_monitors_change_count(void);   /* 1z-c: bumped on each change of the screens */
 int shell_monitors_refresh(void);
 int shell_motion_changed(unsigned int l_spi);
 int shell_next_event(int* out4);
@@ -183,6 +184,9 @@ void shell_set_start_hidden(int l_on);
 void shell_set_window_icon(const void* path);
 int shell_setting_changed(const void* l_area);
 int shell_shell_open(const void* path);
+int shell_reveal(const void* path);   /* 1z-c: select the file in the file manager */
+int shell_network_online(void);   /* 1z-c: a cached 1/0 */
+void shell_network_test_report(int l_online);   /* 1z-c: tests feed the same cache */
 int shell_shift_down(void);
 int shell_shift_held(void);
 void shell_show_main(int l_on);

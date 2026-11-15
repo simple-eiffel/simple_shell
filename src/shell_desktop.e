@@ -257,12 +257,95 @@ feature -- Shell
 
 	open_externally (a_path: READABLE_STRING_GENERAL): BOOLEAN
 			-- Hand `a_path' (file, folder or URL) to the OS shell's
-			-- 'open' verb; False when the shell refuses.
+			-- 'open' verb; False when the shell refuses. In test mode the
+			-- request is recorded in `test_open_requests' instead, and taken.
 		local
 			ns: NATIVE_STRING
 		do
-			create ns.make (a_path)
-			Result := c_shell_open (ns.item) = 1
+			if is_test_mode then
+				test_open_requests.extend (Open_request_prefix + a_path.to_string_32)
+				Result := not a_path.is_empty
+			else
+				create ns.make (a_path)
+				Result := c_shell_open (ns.item) = 1
+			end
+		end
+
+	reveal (a_path: READABLE_STRING_GENERAL): BOOLEAN
+			-- Show the file or folder at `a_path' selected in the file manager:
+			-- Explorer (SHOpenFolderAndSelectItems), the Finder
+			-- (activateFileViewerSelectingURLs) or Files and its kin (the
+			-- FileManager1 ShowItems D-Bus call; where no file manager answers it,
+			-- the folder holding it opens with nothing selected). True when it
+			-- exists and the system took the request; whether the user sees it is
+			-- the system's business. In test mode the request is recorded in
+			-- `test_open_requests' instead, and taken when the path exists.
+		require
+			named: not a_path.is_empty
+		local
+			ns: NATIVE_STRING
+		do
+			if is_test_mode then
+				test_open_requests.extend (Reveal_request_prefix + a_path.to_string_32)
+				Result := path_exists (a_path)
+			else
+				create ns.make (a_path)
+				Result := c_reveal (ns.item) = 1
+			end
+		ensure
+			recorded: is_test_mode implies test_open_requests.count = old test_open_requests.count + 1
+			exists_when_taken: (is_test_mode and Result) implies path_exists (a_path)
+		end
+
+feature -- Test mode (simple_gui 1z-c)
+
+	is_test_mode: BOOLEAN
+			-- Are open and reveal requests recorded in `test_open_requests' instead
+			-- of performed? So a test opens no browser, file manager or file. One
+			-- setting for every SHELL_DESKTOP on this processor.
+		do
+			Result := test_mode_cell.item
+		end
+
+	set_test_mode (a_on: BOOLEAN)
+			-- Record open and reveal requests instead of performing them (`a_on'),
+			-- or perform them again. Turning it on starts `test_open_requests' empty.
+		do
+			test_mode_cell.put (a_on)
+			if a_on then
+				test_open_requests.wipe_out
+			end
+		ensure
+			set: is_test_mode = a_on
+			started_empty: a_on implies test_open_requests.is_empty
+		end
+
+	test_open_requests: ARRAYED_LIST [STRING_32]
+			-- The requests made in test mode, oldest first: `Open_request_prefix' or
+			-- `Reveal_request_prefix' followed by the path or URL as it was given.
+			-- One list for every SHELL_DESKTOP on this processor.
+		once
+			create Result.make (4)
+		end
+
+	Open_request_prefix: STRING_32 = "open "
+	Reveal_request_prefix: STRING_32 = "reveal "
+			-- How each kind of request starts in `test_open_requests'.
+
+	path_exists (a_path: READABLE_STRING_GENERAL): BOOLEAN
+			-- Is there a file or a folder at `a_path'?
+		local
+			l_files: FILE_UTILITIES
+		do
+			Result := not a_path.is_empty and then (l_files.file_exists (a_path) or l_files.directory_exists (a_path))
+		end
+
+feature {NONE} -- Test mode implementation
+
+	test_mode_cell: CELL [BOOLEAN]
+			-- `is_test_mode', one per processor.
+		once
+			create Result.put (False)
 		end
 
 feature {NONE} -- Externals
@@ -305,6 +388,17 @@ feature {NONE} -- Externals
 			"C blocking inline use %"simple_shell.h%""
 		alias
 			"return shell_shell_open((const wchar_t*)$a_path);"
+		end
+
+	c_reveal (a_path: POINTER): INTEGER
+			-- 1z-c: select the item in the file manager. `blocking': Explorer's COM
+			-- call and the D-Bus round trip (up to five seconds while the bus starts a
+			-- file manager) both wait. SAFE as `c_shell_open': the path is a
+			-- NATIVE_STRING on the C heap.
+		external
+			"C blocking inline use %"simple_shell.h%""
+		alias
+			"return shell_reveal((const wchar_t*)$a_path);"
 		end
 
 end

@@ -573,6 +573,75 @@ feature -- Monitors (1.11.0)
 			assert ("primary holds the origin", m.index_at (0, 0) = m.primary_index)
 		end
 
+feature -- App services (simple_gui 1z-c)
+
+	test_reveal_and_open_are_recorded_in_test_mode
+			-- In test mode a reveal or an open is recorded, never performed, so nothing opens: a
+			-- reveal of a file that is there is taken, one of a missing file refused, an open taken.
+			-- The setting is one for every SHELL_DESKTOP on the processor.
+		local
+			d: SHELL_DESKTOP
+			l_file: PLAIN_TEXT_FILE
+			l_path: STRING_32
+		do
+			create d
+			d.set_test_mode (True)
+			l_path := temp_path ("simple_shell_reveal_test.txt")
+			create l_file.make_create_read_write (l_path)
+			l_file.put_string ("reveal me")
+			l_file.close
+			assert ("a file that is there is taken", d.reveal (l_path))
+			assert ("a missing file is refused", not d.reveal (l_path + {STRING_32} ".missing"))
+			assert ("an open is taken", d.open_externally ("https://www.eiffel.org/"))
+			assert_integers_equal ("three recorded", 3, d.test_open_requests.count)
+			assert ("the reveal as asked", d.test_open_requests.first.same_string ({STRING_32} "reveal " + l_path))
+			assert ("the open as asked", d.test_open_requests.last.same_string ({STRING_32} "open https://www.eiffel.org/"))
+			assert ("one setting for every desktop", (create {SHELL_DESKTOP}).is_test_mode)
+			d.set_test_mode (False)
+			assert ("performing again", not (create {SHELL_DESKTOP}).is_test_mode)
+			l_file.delete
+		end
+
+	test_network_answers_at_once_and_takes_reports
+			-- The real question answers at once, never waiting on the network; a test's report
+			-- stands in for the system's answer until the network really changes.
+		local
+			n: SHELL_NETWORK
+			d: SHELL_DESKTOP
+			l_start: REAL_64
+			l_real: BOOLEAN
+		do
+			create n
+			create d
+			l_start := d.now_ms
+			l_real := n.is_online
+			assert ("answered within half a second", d.now_ms - l_start < 500.0)
+			n.test_report (False)
+			assert ("offline as reported", not n.is_online)
+			n.test_report (True)
+			assert ("online as reported", n.is_online)
+			assert ("one cache for every query", (create {SHELL_NETWORK}).is_online)
+			n.test_report (l_real)
+		end
+
+	test_monitor_scales_and_changes
+			-- Each monitor has its own scale, at least 100 (x 100); with nothing plugged, unplugged
+			-- or moved, the change count stands still, and the snapshot is left as it was.
+		local
+			m: SHELL_MONITORS
+			i, l_count, l_changes: INTEGER
+		do
+			create m.make
+			l_count := m.count
+			from i := 1 until i > m.count loop
+				assert ("scaled " + i.out, m.scale (i) >= 100)
+				i := i + 1
+			end
+			l_changes := m.change_count
+			assert_integers_equal ("standing still", l_changes, m.change_count)
+			assert_integers_equal ("snapshot kept", l_count, m.count)
+		end
+
 feature {NONE} -- Panel probes
 
 	red_pixels (a_desktop: SHELL_DESKTOP; a_x, a_y, a_w, a_h: INTEGER): INTEGER

@@ -2,6 +2,23 @@
 
 All notable changes to simple_shell.
 
+## Unreleased (simple_gui 1z-c: app services)
+
+### Added
+
+- `SHELL_DESKTOP.reveal (a_path)`: show a file or folder selected in the file manager. True when it exists and the system took the request.
+  - **Windows:** `SHOpenFolderAndSelectItems`.
+  - **macOS:** `NSWorkspace activateFileViewerSelectingURLs:`.
+  - **Linux:** the `org.freedesktop.FileManager1.ShowItems` D-Bus call. Where no file manager answers it, the folder holding the item opens with nothing selected (a named deviation).
+- `SHELL_DESKTOP.set_test_mode`, `is_test_mode` and `test_open_requests`: in test mode, `open_externally` and `reveal` record the request ("open <path>", "reveal <path>") instead of performing it, so tests open no browser, file manager or file. One setting per processor.
+- `SHELL_NETWORK`: `is_online`, a cached answer to "does the system have a usable route to a network?", kept by the platform's monitor, which starts on the first question.
+  - **Windows:** the Network List Manager's `get_IsConnectedToInternet`, asked by a watcher thread at once, after each address change (`NotifyAddrChange`) and every two seconds.
+  - **macOS:** `nw_path_monitor`, online when the path is satisfied.
+  - **Linux:** GIO's `GNetworkMonitor` `network-available`.
+  - `test_report (a_online)` feeds the same cache; the monitor overwrites it only on a real change.
+- `SHELL_MONITORS.scale (i)`: each monitor's own scale x 100 (field 9): `GetDpiForMonitor` (asked on a per-monitor-aware thread), `backingScaleFactor`, `gdk_monitor_get_scale`.
+- `SHELL_MONITORS.change_count`: how many times the monitors changed (plugged, unplugged, rearranged, rescaled). Windows and Linux compare each call's look with the last; macOS counts `NSApplicationDidChangeScreenParametersNotification`.
+
 ## 1.41.0 - 2026-11-11
 
 ### Added

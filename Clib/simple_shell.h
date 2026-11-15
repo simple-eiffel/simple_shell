@@ -2313,32 +2313,73 @@ static void shell_panel_fill(int l_slot, int l_rgb) {
    right one (a webcam sits on ONE monitor). Snapshot taken by
    shell_monitors_refresh; fields 0..3 bounds (left, top, right, bottom),
    4..7 work area, 8 primary flag. Virtual-screen coordinates, in the
-   process's DPI awareness (system-aware since shell_create_window). ---- */
+   process's DPI awareness (system-aware since shell_create_window).
+   Field 9 (simple_gui 1z-c) is that monitor's own scale x 100, whatever the
+   process's awareness: GetDpiForMonitor asked on a per-monitor-aware thread. ---- */
 #define SHELL_MONITOR_CAP 16
+#define SHELL_MONITOR_FIELDS 10
 SHELL_SHARED int     s_shell_mon_count = 0;
-SHELL_SHARED int     s_shell_mon[SHELL_MONITOR_CAP][9] = {{0}};
+SHELL_SHARED int     s_shell_mon[SHELL_MONITOR_CAP][SHELL_MONITOR_FIELDS] = {{0}};
 SHELL_SHARED wchar_t s_shell_mon_name[SHELL_MONITOR_CAP][32] = {{0}};
 
-static BOOL CALLBACK shell_monitor_enum(HMONITOR l_mon, HDC l_hdc, LPRECT l_rect, LPARAM l_data) {
+/* 1z-c: the monitor's own scale x 100 (100 at 96 dots per inch). A system-aware thread is told
+   the system's DPI for every monitor, so the question is asked on a per-monitor-aware (v2)
+   thread context, put back at once. Both calls are looked up at run time: shcore and the
+   thread context are Windows 8.1 and 10 1607, beyond the SDK level ISE's C is built for. */
+typedef HRESULT (WINAPI *shell_dpi_for_monitor_fn)(HMONITOR, int, UINT*, UINT*);
+typedef void* (WINAPI *shell_thread_dpi_context_fn)(void*);
+static int shell_monitor_scale(HMONITOR l_mon) {
+    static shell_dpi_for_monitor_fn l_get = 0;
+    static shell_thread_dpi_context_fn l_set = 0;
+    static int l_looked = 0;
+    UINT l_dpi_x = 0, l_dpi_y = 0;
+    void* l_before = 0;
+    HDC l_screen;
+    if (!l_looked) {
+        HMODULE l_shcore = LoadLibraryW(L"shcore.dll");
+        HMODULE l_user = GetModuleHandleW(L"user32.dll");
+        l_get = l_shcore ? (shell_dpi_for_monitor_fn)(void*)GetProcAddress(l_shcore, "GetDpiForMonitor") : 0;
+        l_set = l_user ? (shell_thread_dpi_context_fn)(void*)GetProcAddress(l_user, "SetThreadDpiAwarenessContext") : 0;
+        l_looked = 1;
+    }
+    if (l_set) l_before = l_set((void*)(INT_PTR)-4);   /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */
+    if (!l_get || FAILED(l_get(l_mon, 0 /* MDT_EFFECTIVE_DPI */, &l_dpi_x, &l_dpi_y))) l_dpi_x = 0;
+    if (l_set && l_before) l_set(l_before);
+    if (l_dpi_x == 0) {
+        l_screen = GetDC(0);
+        l_dpi_x = l_screen ? (UINT)GetDeviceCaps(l_screen, LOGPIXELSX) : 96;
+        if (l_screen) ReleaseDC(0, l_screen);
+    }
+    return l_dpi_x > 0 ? MulDiv((int)l_dpi_x, 100, 96) : 100;
+}
+
+/* One monitor's fields into `l_out' (SHELL_MONITOR_FIELDS of them) and its device name into
+   `l_name' (32 units, or none when 0); 0 when Windows will not describe it. */
+static int shell_monitor_describe(HMONITOR l_mon, int* l_out, wchar_t* l_name) {
     MONITORINFOEXW l_mi;
+    ZeroMemory(&l_mi, sizeof(l_mi));
+    l_mi.cbSize = sizeof(l_mi);
+    if (!GetMonitorInfoW(l_mon, (LPMONITORINFO)&l_mi)) return 0;
+    l_out[0] = l_mi.rcMonitor.left;
+    l_out[1] = l_mi.rcMonitor.top;
+    l_out[2] = l_mi.rcMonitor.right;
+    l_out[3] = l_mi.rcMonitor.bottom;
+    l_out[4] = l_mi.rcWork.left;
+    l_out[5] = l_mi.rcWork.top;
+    l_out[6] = l_mi.rcWork.right;
+    l_out[7] = l_mi.rcWork.bottom;
+    l_out[8] = (l_mi.dwFlags & MONITORINFOF_PRIMARY) ? 1 : 0;
+    l_out[9] = shell_monitor_scale(l_mon);
+    if (l_name) lstrcpynW(l_name, l_mi.szDevice, 32);
+    return 1;
+}
+
+static BOOL CALLBACK shell_monitor_enum(HMONITOR l_mon, HDC l_hdc, LPRECT l_rect, LPARAM l_data) {
     int l_i = s_shell_mon_count;
     (void)l_hdc; (void)l_rect; (void)l_data;
     if (l_i >= SHELL_MONITOR_CAP) return FALSE;
-    ZeroMemory(&l_mi, sizeof(l_mi));
-    l_mi.cbSize = sizeof(l_mi);
-    if (GetMonitorInfoW(l_mon, (LPMONITORINFO)&l_mi)) {
-        s_shell_mon[l_i][0] = l_mi.rcMonitor.left;
-        s_shell_mon[l_i][1] = l_mi.rcMonitor.top;
-        s_shell_mon[l_i][2] = l_mi.rcMonitor.right;
-        s_shell_mon[l_i][3] = l_mi.rcMonitor.bottom;
-        s_shell_mon[l_i][4] = l_mi.rcWork.left;
-        s_shell_mon[l_i][5] = l_mi.rcWork.top;
-        s_shell_mon[l_i][6] = l_mi.rcWork.right;
-        s_shell_mon[l_i][7] = l_mi.rcWork.bottom;
-        s_shell_mon[l_i][8] = (l_mi.dwFlags & MONITORINFOF_PRIMARY) ? 1 : 0;
-        lstrcpynW(s_shell_mon_name[l_i], l_mi.szDevice, 32);
+    if (shell_monitor_describe(l_mon, s_shell_mon[l_i], s_shell_mon_name[l_i]))
         s_shell_mon_count = l_i + 1;
-    }
     return TRUE;
 }
 
@@ -2351,7 +2392,135 @@ static int shell_monitors_refresh(void) {
 static int shell_monitor_count(void) { return s_shell_mon_count; }
 
 static int shell_monitor_field(int l_i, int l_f) {
-    return (l_i >= 0 && l_i < s_shell_mon_count && l_f >= 0 && l_f <= 8) ? s_shell_mon[l_i][l_f] : 0;
+    return (l_i >= 0 && l_i < s_shell_mon_count && l_f >= 0 && l_f < SHELL_MONITOR_FIELDS) ? s_shell_mon[l_i][l_f] : 0;
+}
+
+/* 1z-c: how many times the monitors changed (plugged, unplugged, rearranged, rescaled, or a
+   work area moved), for a program to notice by polling. Each call compares the monitors as
+   they are now with the last call's, so no window and no message is needed; the first call
+   only takes the first look. Separate from the `shell_monitors_refresh' snapshot, which it
+   never disturbs. */
+typedef struct { int l_count; int l_fields[SHELL_MONITOR_CAP][SHELL_MONITOR_FIELDS]; } shell_monitor_look;
+SHELL_SHARED int s_shell_mon_changes = 0;
+SHELL_SHARED int s_shell_mon_looked = 0;
+SHELL_SHARED shell_monitor_look s_shell_mon_last = {0};
+
+static BOOL CALLBACK shell_monitor_look_enum(HMONITOR l_mon, HDC l_hdc, LPRECT l_rect, LPARAM l_data) {
+    shell_monitor_look* l_look = (shell_monitor_look*)l_data;
+    (void)l_hdc; (void)l_rect;
+    if (l_look->l_count >= SHELL_MONITOR_CAP) return FALSE;
+    if (shell_monitor_describe(l_mon, l_look->l_fields[l_look->l_count], 0)) l_look->l_count++;
+    return TRUE;
+}
+
+static int shell_monitors_change_count(void) {
+    shell_monitor_look l_now;
+    ZeroMemory(&l_now, sizeof(l_now));
+    EnumDisplayMonitors(0, 0, shell_monitor_look_enum, (LPARAM)&l_now);
+    if (s_shell_mon_looked && memcmp(&l_now, &s_shell_mon_last, sizeof(l_now)) != 0) s_shell_mon_changes++;
+    s_shell_mon_last = l_now;
+    s_shell_mon_looked = 1;
+    return s_shell_mon_changes;
+}
+#include <objbase.h>
+#include <netlistmgr.h>
+#pragma comment(lib, "ole32.lib")
+
+/* 1z-c: show the file or folder at `path' selected in an Explorer window (the shell's
+   SHOpenFolderAndSelectItems, which wants COM on the calling thread): 1 when it exists and
+   Explorer took the request. The three shell32 calls are looked up at run time, as they are
+   beyond the SDK level ISE's C is built for. */
+typedef void* (WINAPI *shell_pidl_from_path_fn)(const wchar_t*);
+typedef void (WINAPI *shell_pidl_free_fn)(void*);
+typedef HRESULT (WINAPI *shell_open_selecting_fn)(const void*, UINT, const void**, DWORD);
+static int shell_reveal(const wchar_t* path) {
+    HMODULE l_shell32 = LoadLibraryW(L"shell32.dll");
+    shell_pidl_from_path_fn l_make = l_shell32 ? (shell_pidl_from_path_fn)(void*)GetProcAddress(l_shell32, "ILCreateFromPathW") : 0;
+    shell_pidl_free_fn l_free = l_shell32 ? (shell_pidl_free_fn)(void*)GetProcAddress(l_shell32, "ILFree") : 0;
+    shell_open_selecting_fn l_open = l_shell32 ? (shell_open_selecting_fn)(void*)GetProcAddress(l_shell32, "SHOpenFolderAndSelectItems") : 0;
+    wchar_t l_full[MAX_PATH * 4];
+    void* l_item;
+    HRESULT l_com, l_hr = E_FAIL;
+    DWORD l_n;
+    if (!path || !*path || !l_make || !l_free || !l_open) return 0;
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return 0;
+    l_n = GetFullPathNameW(path, MAX_PATH * 4, l_full, 0);
+    if (l_n == 0 || l_n >= MAX_PATH * 4) return 0;
+    l_com = CoInitializeEx(0, COINIT_APARTMENTTHREADED);
+    l_item = l_make(l_full);
+    if (l_item) {
+        l_hr = l_open(l_item, 0, 0, 0);
+        l_free(l_item);
+    }
+    if (SUCCEEDED(l_com)) CoUninitialize();
+    return SUCCEEDED(l_hr) ? 1 : 0;
+}
+
+/* 1z-c: is there a usable route to a network, as the system sees it (not whether a given server
+   answers)? A cached answer, kept by a watcher thread that starts with the first question: it
+   asks the Network List Manager (INetworkListManager::get_IsConnectedToInternet) at once, then
+   again after each change of the machine's addresses (NotifyAddrChange) and every two seconds.
+   Until its first answer, and where the manager is missing, the answer is 1. The watcher writes
+   only when its own answer changes, and its first answer not at all after a test's report, so
+   a test's `shell_network_test_report' stands until the network really changes. */
+SHELL_SHARED volatile LONG s_shell_online = 1;
+SHELL_SHARED volatile LONG s_shell_network_started = 0;
+SHELL_SHARED volatile LONG s_shell_network_reported = 0;   /* a test reported before the first answer */
+static const GUID s_shell_clsid_network_list = { 0xDCB00C01, 0x570F, 0x4A9B, { 0x8D, 0x69, 0x19, 0x9F, 0xDB, 0xA5, 0x72, 0x3B } };
+static const GUID s_shell_iid_network_list = { 0xDCB00000, 0x570F, 0x4A9B, { 0x8D, 0x69, 0x19, 0x9F, 0xDB, 0xA5, 0x72, 0x3B } };
+typedef DWORD (WINAPI *shell_notify_addresses_fn)(PHANDLE, LPOVERLAPPED);
+
+static DWORD WINAPI shell_network_watch(LPVOID l_unused) {
+    INetworkListManager* l_manager = 0;
+    HMODULE l_ip = LoadLibraryW(L"iphlpapi.dll");
+    shell_notify_addresses_fn l_notify = l_ip ? (shell_notify_addresses_fn)(void*)GetProcAddress(l_ip, "NotifyAddrChange") : 0;
+    OVERLAPPED l_wait;
+    HANDLE l_unused_handle = 0;
+    VARIANT_BOOL l_connected;
+    int l_last = -1, l_now, l_pending = 0;
+    DWORD l_asked;
+    (void)l_unused;
+    if (FAILED(CoInitializeEx(0, COINIT_MULTITHREADED))) return 0;
+    if (FAILED(CoCreateInstance(&s_shell_clsid_network_list, 0, CLSCTX_ALL, &s_shell_iid_network_list, (void**)&l_manager)) || !l_manager) {
+        CoUninitialize();
+        return 0;
+    }
+    ZeroMemory(&l_wait, sizeof(l_wait));
+    l_wait.hEvent = CreateEventW(0, FALSE, FALSE, 0);
+    for (;;) {
+        l_connected = VARIANT_FALSE;
+        if (SUCCEEDED(l_manager->lpVtbl->get_IsConnectedToInternet(l_manager, &l_connected))) {
+            l_now = l_connected == VARIANT_TRUE ? 1 : 0;
+            if (l_now != l_last) {
+                if (l_last != -1 || !s_shell_network_reported) InterlockedExchange(&s_shell_online, l_now);
+                l_last = l_now;
+            }
+        }
+        if (l_notify && l_wait.hEvent && !l_pending) {
+            l_asked = l_notify(&l_unused_handle, &l_wait);
+            l_pending = (l_asked == ERROR_IO_PENDING) ? 1 : 0;
+        }
+        if (l_pending) {
+            if (WaitForSingleObject(l_wait.hEvent, 2000) == WAIT_OBJECT_0) l_pending = 0;
+        } else {
+            Sleep(2000);
+        }
+    }
+}
+
+static int shell_network_online(void) {
+    HANDLE l_thread;
+    if (InterlockedCompareExchange(&s_shell_network_started, 1, 0) == 0) {
+        l_thread = CreateThread(0, 0, shell_network_watch, 0, 0, 0);
+        if (l_thread) CloseHandle(l_thread);
+    }
+    return (int)s_shell_online;
+}
+
+/* Tests: feed the same cache the watcher keeps. */
+static void shell_network_test_report(int l_online) {
+    InterlockedExchange(&s_shell_network_reported, 1);
+    InterlockedExchange(&s_shell_online, l_online ? 1 : 0);
 }
 
 static int shell_monitor_name(int l_i, wchar_t* l_buf, int l_cap) {

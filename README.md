@@ -64,7 +64,8 @@ end
 | `SHELL_CLIPBOARD` | Unicode text get/set, and every bitmap read, with history-manager retry (size read-back since 1.12.1); 1M-character headroom; **bitmap put and get** (`set_image`, CF_DIB from an ARGB32 buffer; `image_into`, the DIB back into an ARGB32 buffer, 24/32-bit, alpha forced opaque, refused rather than overrun on a size mismatch) with size read-back |
 | `SHELL_INPUT` | **synthesised input** via SendInput: `pointer_x` / `pointer_y` (calibration), `click_at` (focus lands and stays) / `click_at_quietly` (pointer and foreground restored), `press_chord`, `paste`, `press_enter`, Unicode `type_text`; virtual-desktop bounds guard on every click |
 | `SHELL_SPELLER` | Windows inbox `ISpellChecker` (COM): misspelling ranges + suggestions; degrades to no findings, never to failure |
-| `SHELL_DESKTOP` | virtual-screen metrics, **pure screen grab** into a caller ARGB32 buffer, `now_ms` (QPC), `minutes_of_day`, `open_externally` |; the primary **work area** (1.27.0) |
+| `SHELL_DESKTOP` | virtual-screen metrics, **pure screen grab** into a caller ARGB32 buffer, `now_ms` (QPC), `minutes_of_day`, `open_externally` |
+; the primary **work area** (1.27.0) |
 | `SHELL_OVERLAY` | frozen-desktop topmost overlay (the region-picker pattern) |
 | `SHELL_STRIP` | small topmost tool-window strip (the dictation-bar pattern) |
 | `SHELL_OUTLINES` | click-through colored frame regions on the desktop (the region-outline pattern) |
@@ -256,10 +257,12 @@ GTK filters); monitors; and opening a file or address in its default program.
 What Wayland does not allow: placing a window or reading where it is (a window's place is
 its size; panel moves are not reported), the global pointer position, and the screen grab
 (it needs the desktop portal; not written yet). Global hotkeys and input synthesis need
-portals too. Not yet: spelling, printing, the overlay and strip, the tray, and the panel
-extras (grips, opacity, click-through). `Clib/make_stubs.pl` keeps the rest honest: 61
-entry points answer "not available" on Linux. Serving the accessibility table to AT-SPI
-(checked with Orca) comes last, by Larry's order.
+portals too. Spelling, printing, the overlay and strip, the tray and the panel extras
+(grips, opacity, click-through) are written for Linux. `Clib/make_stubs.pl` keeps the rest
+honest: 16 entry points answer "not available" on Linux, the same 16 as on the Mac. They
+are the accessibility table's serving (`shell_uia_*`), which reaches AT-SPI (checked with
+Orca) last, by Larry's order, and the shell's own frame-tick source, which simple_gui does
+not use (it drives its own frame clock).
 
 Of simple_widgets' 8 failures on Linux: three are Windows drive-letter tests and one is the
 screen-reader test (as on the Mac), one is the screen grab, and three are text tests being
